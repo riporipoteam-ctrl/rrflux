@@ -1,0 +1,47 @@
+# Deploys the RRFlux backend (Cloud Functions + Firestore rules) on every
+# push to main that touches firebase/.
+#
+# One-time setup (repo owner): Firebase console -> Project Settings ->
+# Service accounts -> "Generate new private key" for flux-544a6, then
+# GitHub repo -> Settings -> Secrets and variables -> Actions ->
+# "New repository secret" named FIREBASE_SERVICE_ACCOUNT with the whole
+# JSON file contents pasted in. After that, deploys are fully automatic.
+
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "firebase/**"
+      - ".github/workflows/deploy-backend.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firebase
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install firebase-tools
+        run: npm install -g firebase-tools
+
+      - name: Install function dependencies
+        run: |
+          npm install --prefix functions/auth
+          npm install --prefix functions/api
+
+      - name: Deploy functions and Firestore rules
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$FIREBASE_SERVICE_ACCOUNT" > "$HOME/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$HOME/sa.json"
+          firebase deploy --only functions,firestore:rules \
+            --project flux-544a6 --non-interactive
