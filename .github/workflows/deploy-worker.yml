@@ -1,0 +1,29 @@
+# Deploys the RRFlux edge translator (Cloudflare Worker) on every push to
+# main that touches worker/.
+#
+# One-time setup (repo owner): create a FREE Cloudflare account (no card),
+# then My Profile -> API Tokens -> Create Token using the
+# "Edit Cloudflare Workers" template. Add it as a GitHub repo secret named
+# CLOUDFLARE_API_TOKEN (Settings -> Secrets and variables -> Actions).
+# After that, deploys are fully automatic.
+
+name: Deploy edge translator
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - ".github/workflows/deploy-worker.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: worker
