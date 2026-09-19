@@ -222,6 +222,17 @@ async fn update_game_files_inner(
         mut to_download,
         to_delete,
     } = manifest::diff(local_manifest.as_ref(), &remote);
+    // Visible in the installer log: without this, the log goes silent
+    // between "Checking game files..." and the first download progress,
+    // which looks exactly like a freeze.
+    println!(
+        "Manifest: {} files{}.",
+        remote.files.len(),
+        match &local_manifest {
+            Some(_) => " (checking for updates)",
+            None => " (first run)",
+        }
+    );
 
     // The manifest diff alone can't see local damage (interrupted runs,
     // deleted files): anything in the manifest that's missing on disk or
@@ -275,7 +286,15 @@ async fn update_game_files_inner(
 
     if !to_download.is_empty() {
         let window = ProgressWindow::new(window_title);
+        println!("Downloading {} files…", to_download.len());
         let opts = DownloadOptions::default();
+        // The NSIS installer log only shows our stdout, and the separate
+        // progress window can end up behind the installer — so also print
+        // throttled progress lines here. A silent 7GB download looks
+        // exactly like a frozen installer otherwise.
+        let print_every = (to_download.len() / 50).max(1);
+        let next_print =
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(print_every));
         let (bytes, fetched) = download_files(&client, &to_download, game_dir, &opts, move |p: Progress| {
             let frac = if p.files_total > 0 {
                 p.files_done as f64 / p.files_total as f64
@@ -297,6 +316,19 @@ async fn update_game_files_inner(
                 ),
             };
             window.set(frac, &label);
+            let threshold = next_print.load(std::sync::atomic::Ordering::SeqCst);
+            if p.files_done >= threshold || p.files_done == p.files_total {
+                next_print.store(
+                    p.files_done + print_every,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+                println!(
+                    "Downloaded {}/{} files ({:.0}%)…",
+                    p.files_done,
+                    p.files_total,
+                    frac * 100.0
+                );
+            }
         })
         .await?;
         outcome.downloaded = fetched;

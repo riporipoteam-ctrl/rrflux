@@ -111,6 +111,8 @@ const WM_DESTROY: u32 = 0x0002;
 #[cfg(windows)]
 const WS_POPUP: u32 = 0x8000_0000;
 #[cfg(windows)]
+const WS_EX_TOPMOST: u32 = 0x0000_0008;
+#[cfg(windows)]
 const WS_CAPTION: u32 = 0x00C0_0000;
 #[cfg(windows)]
 const WS_SYSMENU: u32 = 0x0008_0000;
@@ -243,8 +245,11 @@ impl ProgressWindow {
             let x = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
             let y = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
             let title_w = wide(&title);
+            // Topmost: the installer window is centered on screen too, and the
+            // progress popup would otherwise open directly behind it,
+            // leaving the user with no visible progress at all.
             let hwnd = CreateWindowExW(
-                0,
+                WS_EX_TOPMOST,
                 class_name.as_ptr(),
                 title_w.as_ptr(),
                 WS_POPUP | WS_CAPTION | WS_SYSMENU,
