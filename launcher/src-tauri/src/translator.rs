@@ -131,12 +131,12 @@ pub async fn serve(
 ) -> Result<(), String> {
     let app = Router::new()
         .route("/Account/LoginWithToken", get(login_with_token))
-        .route("/api/versioncheck/*rest", get(versioncheck))
-        .route("/api/config/*rest", get(config))
+        .route("/api/versioncheck/{*rest}", get(versioncheck))
+        .route("/api/config/{*rest}", get(config))
         .route("/api/players/v2/me", get(player_me))
-        .route("/api/sanitize/*rest", get(sanitize))
+        .route("/api/sanitize/{*rest}", get(sanitize))
         .route("/2/httpapi", get(telemetry).post(telemetry))
-        .route("/api/*rest", get(game_fallback).post(game_fallback))
+        .route("/api/{*rest}", get(game_fallback).post(game_fallback))
         .fallback(get(game_fallback))
         .with_state(session);
 
