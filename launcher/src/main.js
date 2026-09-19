@@ -4,7 +4,7 @@ const { listen } = window.__TAURI__.event;
 
 // Where the launcher downloads the game from. Set it once in Settings —
 // saved locally, so changing hosts never needs a launcher rebuild.
-const DEFAULT_MANIFEST_URL = "https://example.invalid/fluxrec/manifest.json";
+const DEFAULT_MANIFEST_URL = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/manifest.json";
 const manifestUrl = () =>
   (localStorage.getItem("fluxrec_manifest_url") || "").trim() || DEFAULT_MANIFEST_URL;
 
