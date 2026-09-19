@@ -1,0 +1,27 @@
+# Never commit secrets.
+*.pem
+*.key
+*.p12
+*.pfx
+service-account*.json
+*-key.json
+
+# Local config with credentials
+config/secrets.*
+.env
+.env.*
+
+# Build outputs
+dist/
+*.exe
+!launcher/setup.nsi
+
+# Downloaded game builds (large; fetched by tooling, not git)
+build/
+*.zip
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
