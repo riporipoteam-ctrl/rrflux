@@ -1,5 +1,5 @@
 [package]
-name = "rrflux-launcher"
+name = "fluxrec-launcher"
 version = "0.1.0"
 edition = "2021"
 
