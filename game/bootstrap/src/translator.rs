@@ -275,7 +275,13 @@ fn ensure_certs(cert_dir: &Path) -> Result<(Vec<u8>, Vec<u8>), String> {
     let srv_key_path = cert_dir.join("server-key.pem");
     let installed_marker = cert_dir.join("ca-installed");
 
+    // If certs exist, ensure the CA is trusted (marker may be missing if
+    // a previous run generated certs but failed to install trust).
     if ca_pem_path.exists() && srv_pem_path.exists() && srv_key_path.exists() {
+        if !installed_marker.exists() {
+            install_ca_trust(&ca_pem_path)?;
+            let _ = std::fs::write(&installed_marker, b"1");
+        }
         let cert_pem = std::fs::read(&srv_pem_path).map_err(|e| format!("read server.pem: {e}"))?;
         let key_pem = std::fs::read(&srv_key_path).map_err(|e| format!("read server-key.pem: {e}"))?;
         return Ok((cert_pem, key_pem));
