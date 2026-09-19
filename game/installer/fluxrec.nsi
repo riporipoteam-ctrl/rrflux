@@ -43,14 +43,23 @@ Section "Flux Rec"
 
   ; Fetch the full game (one-time) straight into $INSTDIR\game.
   ; The downloader shows its own progress window, downloads files in
-  ; parallel, resumes where it left off, and keeps the PC awake.
+  ; parallel, resumes interrupted files where they broke off, and keeps
+  ; the PC awake. Flaky connections get a few automatic retries; every
+  ; retry resumes partial files instead of starting over.
   ; After this, the bootstrapper auto-updates on every launch, so
   ; setup never needs to run again.
   DetailPrint "Downloading game files (one-time)..."
+  StrCpy $R9 0
+  download_retry:
   nsExec::ExecToLog '"$INSTDIR\fluxrec-download.exe" --manifest "${MANIFEST_URL}" --dir "$INSTDIR\game" --state-dir "$INSTDIR"'
   Pop $0
   ${If} $0 != "0"
-    MessageBox MB_ICONSTOP "The game download failed, so setup cannot continue.$\nCheck your internet connection and run the installer again — it resumes where it left off."
+    IntOp $R9 $R9 + 1
+    ${If} $R9 < 3
+      DetailPrint "Download interrupted -- retrying ($R9/3), resuming partial files..."
+      Goto download_retry
+    ${EndIf}
+    MessageBox MB_ICONSTOP "The game download failed, so setup cannot continue.$\nCheck your internet connection and run the installer again -- it resumes where it left off."
     Abort
   ${EndIf}
 

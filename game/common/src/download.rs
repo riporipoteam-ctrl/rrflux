@@ -73,12 +73,68 @@ async fn hash_matches_blocking(path: &Path, sha256: &str) -> Result<bool, String
         .map_err(|e| format!("verify task failed: {e}"))
 }
 
+async fn stream_body(
+    resp: reqwest::Response,
+    tmp: &Path,
+    what: &str,
+    append: bool,
+    mut bytes: u64,
+) -> Result<u64, String> {
+    let mut out = if append {
+        tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(tmp)
+            .await
+            .map_err(|e| e.to_string())?
+    } else {
+        tokio::fs::File::create(tmp)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("download failed for {what}: {e}"))?;
+        out.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        bytes += chunk.len() as u64;
+    }
+    out.flush().await.map_err(|e| e.to_string())?;
+    drop(out);
+    Ok(bytes)
+}
+
 async fn fetch_one(
     client: &reqwest::Client,
     url: &str,
     tmp: &Path,
     what: &str,
 ) -> Result<u64, String> {
+    if let Some(parent) = tmp.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    // Resume: if a .part file survived an earlier attempt (or an earlier
+    // installer run), ask the server to continue where it stopped instead
+    // of starting over. write_all never leaves a torn tail, so the part
+    // file is always a clean prefix of the remote file.
+    let resume_from: u64 = tokio::fs::metadata(tmp)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+    if resume_from > 0 {
+        let resp = client
+            .get(url)
+            .header(reqwest::header::RANGE, format!("bytes={resume_from}-"))
+            .send()
+            .await
+            .map_err(|e| format!("download failed for {what}: {e}"))?;
+        if resp.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+            return stream_body(resp, tmp, what, true, resume_from).await;
+        }
+        // Server ignored the range or rejected it (416): the part file is
+        // stale, drop it and do a clean full download below.
+        let _ = tokio::fs::remove_file(tmp).await;
+    }
     let resp = client
         .get(url)
         .send()
@@ -90,24 +146,7 @@ async fn fetch_one(
             resp.status()
         ));
     }
-    if let Some(parent) = tmp.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    let mut out = tokio::fs::File::create(tmp)
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut stream = resp.bytes_stream();
-    let mut bytes: u64 = 0;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("download failed for {what}: {e}"))?;
-        out.write_all(&chunk).await.map_err(|e| e.to_string())?;
-        bytes += chunk.len() as u64;
-    }
-    out.flush().await.map_err(|e| e.to_string())?;
-    drop(out);
-    Ok(bytes)
+    stream_body(resp, tmp, what, false, 0).await
 }
 
 async fn download_one(
@@ -146,8 +185,15 @@ async fn download_one(
             Err(e) => last_err = e,
         }
     }
-    let _ = tokio::fs::remove_file(&tmp).await;
-    Err(format!("{} (after {} tries)", last_err, opts.retries + 1))
+    // NOTE: on final failure the .part file is deliberately KEPT (not
+    // deleted): the next installer run resumes it via HTTP Range instead
+    // of downloading from scratch. The installer dialog already promises
+    // "it resumes where it left off" — this makes it true.
+    Err(format!(
+        "{} (after {} tries; partial file kept, re-run to resume)",
+        last_err,
+        opts.retries + 1
+    ))
 }
 
 /// Download `files` into `dir`, calling `on_progress` after each file.
