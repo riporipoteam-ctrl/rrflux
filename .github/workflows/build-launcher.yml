@@ -1,4 +1,4 @@
-# Builds the RRFlux Launcher setup.exe on every push to main that touches
+# Builds the Flux Rec setup.exe on every push to main that touches
 # launcher/. The Windows NSIS installer is uploaded as a build artifact —
 # players download it and run it; no other steps needed on their side.
 
@@ -39,5 +39,5 @@ jobs:
       - name: Upload setup.exe
         uses: actions/upload-artifact@v4
         with:
-          name: RRFlux-Launcher-setup
+          name: FluxRec-setup
           path: launcher/src-tauri/target/release/bundle/nsis/*.exe
