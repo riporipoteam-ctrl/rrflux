@@ -50,10 +50,6 @@ fn msgbox(text: &str) {
     }
 }
 
-// Clean-room Steam API stub (see steam_api64_stub.dll). Replaces the game's
-// steam_api64.dll so SteamAPI_Init succeeds without the Steam client.
-const STEAM_STUB_DLL: &[u8] = include_bytes!("steam_api64_stub.dll");
-
 fn data_dir() -> PathBuf {
     data_dir_opt().unwrap_or_else(|| PathBuf::from(".").join("FluxRec"))
 }
@@ -258,23 +254,16 @@ async fn async_main() {
         fatal("Game files not found.\n\nPlease reinstall Flux Rec.".into());
     }
 
-    // The 2022 client needs SteamAPI_Init to succeed. Instead of requiring
-    // the Steam client, we swap in our own clean-room steam_api64.dll stub
-    // that reports "ready". No Valve code, no Steam required.
+    // NOTE: The Steam stub DLL was crashing the game (bad vtable).
+    // Removed for now — the game will show "Failed to initialize Steam
+    // Platform" if Steam isn't running, but it won't crash.
+    // TODO: Build a proper stub with a Windows toolchain.
+    // Restore the original DLL if we backed it up.
     {
         let stub_dll = game_dir.join("RecRoom_Data/Plugins/x86_64/steam_api64.dll");
         let backup_dll = game_dir.join("RecRoom_Data/Plugins/x86_64/steam_api64.dll.fluxrec-backup");
-        // Only replace if it's not already our stub (check size as a heuristic).
-        let needs_replace = std::fs::metadata(&stub_dll)
-            .map(|m| m.len() != STEAM_STUB_DLL.len() as u64)
-            .unwrap_or(true);
-        if needs_replace && stub_dll.exists() {
-            if !backup_dll.exists() {
-                let _ = std::fs::rename(&stub_dll, &backup_dll);
-            }
-            if let Err(e) = std::fs::write(&stub_dll, STEAM_STUB_DLL) {
-                crash_log(&format!("couldn't install Steam stub: {e}"));
-            }
+        if backup_dll.exists() {
+            let _ = std::fs::rename(&backup_dll, &stub_dll);
         }
     }
 
