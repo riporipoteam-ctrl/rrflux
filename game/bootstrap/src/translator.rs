@@ -1,12 +1,17 @@
 // Flux Rec local translator — answers the patched 2022 client's Rec Room API
-// calls from 127.0.0.1:80. No cloud needed for this: Photon relays
-// multiplayer, Firebase holds identity/saves, and this tiny server translates
-// between the game and Firebase right on the player's PC.
+// calls over HTTPS from 127.0.0.1:443 (plus plain HTTP on 127.0.0.1:80 for
+// stray calls). No cloud needed for this: Photon relays multiplayer,
+// Firebase holds identity/saves, and this tiny server translates between
+// the game and Firebase right on the player's PC.
 //
-// Why local works:
-//   - Windows lets any user-mode app bind 127.0.0.1:80 (no admin needed).
-//   - "127.0.0.1" (9 chars) fits the client's <=12-char auth hostname slot.
-//   - The patcher downgrades the endpoint scheme https:// -> http://.
+// Why local HTTPS works:
+//   - Windows lets any user-mode app bind 127.0.0.1:443 (no admin needed).
+//   - The client keeps the original https:// scheme and only the hostname
+//     is patched to `localhost` (the game's HTTP stack rejects plain
+//     http:// URLs with "Invalid URI scheme").
+//   - On first run the bootstrap generates a local CA + localhost server
+//     cert and installs the CA into the *current user's* Trusted Root
+//     store (no admin needed). The game then trusts https://localhost.
 //
 // Trust model: loopback only, so only local processes can reach it. The
 // session is created by a silent anonymous Firebase Auth sign-up (verified
@@ -23,7 +28,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::{Path, PathBuf}, sync::Arc};
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug, Default)]
@@ -162,10 +167,13 @@ async fn game_fallback() -> (StatusCode, Json<Value>) {
     )
 }
 
-/// Bind 127.0.0.1:80 and serve forever. Sends Ok(()) on `ready` once the
-/// socket is bound, or Err with the bind failure.
+/// Bind 127.0.0.1:443 (HTTPS) and 127.0.0.1:80 (HTTP) and serve forever.
+/// Sends Ok(()) on `ready` once both sockets are bound, or Err with the
+/// bind/cert failure. `data_dir` is %LOCALAPPDATA%\FluxRec — certs live in
+/// `<data_dir>/certs` so the CA stays stable across runs.
 pub async fn serve(
     session: SharedSession,
+    data_dir: PathBuf,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
 ) {
     // NOTE: axum 0.7 wildcard syntax is `/*rest` (`{*rest}` is 0.8+ and
@@ -179,7 +187,7 @@ pub async fn serve(
         .route("/api/players/v2/me", get(player_me))
         .route("/api/sanitize/*rest", get(sanitize))
         // Telemetry sink: the patched client sends Amplitude traffic to
-        // http://127.0.0.1/httpapi and /identify (harmless either way).
+        // https://localhost/httpapi and /identify (harmless either way).
         .route("/httpapi", get(telemetry).post(telemetry))
         .route("/identify", get(telemetry).post(telemetry))
         .route("/api/*rest", get(game_fallback).post(game_fallback))
@@ -187,14 +195,165 @@ pub async fn serve(
         .layer(axum::middleware::from_fn(log_middleware))
         .with_state(session);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 80));
-    let listener = match tokio::net::TcpListener::bind(addr).await {
+    // TLS certs first — without them there is no https://localhost.
+    let cert_dir = data_dir.join("certs");
+    let (cert_pem, key_pem) = match ensure_certs(&cert_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = ready.send(Err(e));
+            return;
+        }
+    };
+
+    // Plain HTTP on :80 for stray calls (kept from the old design).
+    let http_app = app.clone();
+    let http_listener = match tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 80))).await {
         Ok(l) => l,
         Err(e) => {
             let _ = ready.send(Err(format!("cannot bind 127.0.0.1:80 ({e})")));
             return;
         }
     };
+    tokio::spawn(async move {
+        let _ = axum::serve(http_listener, http_app).await;
+    });
+
+    // HTTPS on :443 — this is what the game actually uses. `localhost`
+    // resolves to ::1 first on most systems, so listen on both IPv4 and
+    // IPv6 loopback. Bind the std listeners first so a squatted port
+    // surfaces as an error here.
+    let tls = match axum_server::tls_rustls::RustlsConfig::from_pem(cert_pem, key_pem).await {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = ready.send(Err(format!("invalid TLS cert ({e})")));
+            return;
+        }
+    };
+    let mut tls_tasks = Vec::new();
+    let mut bound_any = false;
+    for addr in [
+        SocketAddr::from(([127, 0, 0, 1], 443)),
+        SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 443)),
+    ] {
+        match std::net::TcpListener::bind(addr) {
+            Ok(l) => {
+                // The explicit ::1 bind covers systems where the socket
+                // isn't dual-stack.
+                let tls = tls.clone();
+                let app = app.clone();
+                tls_tasks.push(tokio::spawn(async move {
+                    let server = axum_server::tls_rustls::from_tcp_rustls(l, tls);
+                    let _ = server.serve(app.into_make_service()).await;
+                }));
+                bound_any = true;
+            }
+            Err(e) => {
+                // IPv6 loopback may not exist; IPv4 is the one that matters.
+                log_req("WARN", &format!("cannot bind {addr} ({e})"));
+            }
+        }
+    }
+    if !bound_any {
+        let _ = ready.send(Err("cannot bind 127.0.0.1:443 (in use?)".into()));
+        return;
+    }
     let _ = ready.send(Ok(()));
-    let _ = axum::serve(listener, app).await;
+    for t in tls_tasks {
+        let _ = t.await;
+    }
+}
+
+/// Ensure `<cert_dir>/ca.pem` (local CA) + `server.pem`/`server-key.pem`
+/// exist, installing the CA into the current user's Trusted Root store on
+/// first creation. Returns (server_cert_pem, server_key_pem).
+fn ensure_certs(cert_dir: &Path) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let ca_pem_path = cert_dir.join("ca.pem");
+    let srv_pem_path = cert_dir.join("server.pem");
+    let srv_key_path = cert_dir.join("server-key.pem");
+    let installed_marker = cert_dir.join("ca-installed");
+
+    if ca_pem_path.exists() && srv_pem_path.exists() && srv_key_path.exists() {
+        let cert_pem = std::fs::read(&srv_pem_path).map_err(|e| format!("read server.pem: {e}"))?;
+        let key_pem = std::fs::read(&srv_key_path).map_err(|e| format!("read server-key.pem: {e}"))?;
+        return Ok((cert_pem, key_pem));
+    }
+    std::fs::create_dir_all(cert_dir).map_err(|e| format!("create cert dir: {e}"))?;
+
+    let (ca_pem, srv_pem, srv_key_pem) = generate_certs().map_err(|e| format!("generate certs: {e}"))?;
+    std::fs::write(&ca_pem_path, &ca_pem).map_err(|e| format!("write ca.pem: {e}"))?;
+    std::fs::write(&srv_pem_path, &srv_pem).map_err(|e| format!("write server.pem: {e}"))?;
+    std::fs::write(&srv_key_path, &srv_key_pem).map_err(|e| format!("write server-key.pem: {e}"))?;
+
+    if !installed_marker.exists() {
+        install_ca_trust(&ca_pem_path)?;
+        let _ = std::fs::write(&installed_marker, b"1");
+    }
+    Ok((srv_pem.into_bytes(), srv_key_pem.into_bytes()))
+}
+
+/// Generate a local CA and a localhost server cert signed by it.
+/// Returns (ca_pem, server_pem, server_key_pem).
+fn generate_certs() -> Result<(String, String, String), String> {
+    use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, SanType};
+    use std::net::IpAddr;
+
+    let ca_key = KeyPair::generate().map_err(|e| format!("ca key: {e}"))?;
+    let mut ca_params = CertificateParams::default();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params
+        .distinguished_name
+        .push(DnType::CommonName, "Flux Rec Local CA");
+    ca_params.not_before = rcgen::date_time_ymd(2026, 1, 1);
+    ca_params.not_after = rcgen::date_time_ymd(2046, 1, 1);
+    let ca = ca_params
+        .self_signed(&ca_key)
+        .map_err(|e| format!("ca: {e}"))?;
+
+    let srv_key = KeyPair::generate().map_err(|e| format!("server key: {e}"))?;
+    let mut srv_params = CertificateParams::new(vec!["localhost".to_string()])
+        .map_err(|e| format!("server params: {e}"))?;
+    srv_params
+        .distinguished_name
+        .push(DnType::CommonName, "localhost");
+    srv_params
+        .subject_alt_names
+        .push(SanType::IpAddress(IpAddr::from([127, 0, 0, 1])));
+    srv_params.not_before = rcgen::date_time_ymd(2026, 1, 1);
+    srv_params.not_after = rcgen::date_time_ymd(2046, 1, 1);
+    let srv = srv_params
+        .signed_by(&srv_key, &ca, &ca_key)
+        .map_err(|e| format!("server: {e}"))?;
+
+    Ok((ca.pem(), srv.pem(), srv_key.serialize_pem()))
+}
+
+/// Install the CA into the current user's Trusted Root store (no admin
+/// needed on Windows). Non-Windows builds skip this — the test harness
+/// installs the CA into the Wine prefix manually.
+#[cfg(windows)]
+fn install_ca_trust(ca_pem: &Path) -> Result<(), String> {
+    let out = std::process::Command::new("certutil")
+        .args([
+            "-user",
+            "-addstore",
+            "-f",
+            "Root",
+            &ca_pem.to_string_lossy(),
+        ])
+        .output()
+        .map_err(|e| format!("couldn't run certutil: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "Flux Rec couldn't trust its local game server.\n\n\
+             certutil said: {}\n\n\
+             Try running Flux Rec once as administrator, then normally.",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn install_ca_trust(_ca_pem: &Path) -> Result<(), String> {
+    Ok(())
 }

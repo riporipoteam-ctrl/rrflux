@@ -7,8 +7,9 @@
 //      the setup only ever runs once.
 //   1. If another Flux Rec is already running, exits quietly.
 //   2. Signs in silently (anonymous Firebase account, cached locally).
-//   3. Starts the local translator on 127.0.0.1:80, which the patched game
-//      client talks to. If port 80 is taken, figures out by what and says so.
+//   3. Starts the local translator on 127.0.0.1:443 (HTTPS) + :80 (HTTP),
+//      which the patched game client talks to. If port 443 is taken,
+//      figures out by what and says so.
 //   4. Launches RecRoom.exe and waits for it. If the game dies instantly,
 //      explains why instead of vanishing silently.
 
@@ -50,11 +51,15 @@ fn msgbox(text: &str) {
 }
 
 fn data_dir() -> PathBuf {
+    data_dir_opt().unwrap_or_else(|| PathBuf::from(".").join("FluxRec"))
+}
+
+fn data_dir_opt() -> Option<PathBuf> {
     std::env::var("LOCALAPPDATA")
         .map(PathBuf::from)
         .or_else(|_| std::env::var("APPDATA").map(PathBuf::from))
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("FluxRec")
+        .ok()
+        .map(|p| p.join("FluxRec"))
 }
 
 fn crash_log(msg: &str) {
@@ -80,15 +85,21 @@ fn fatal(msg: String) -> ! {
     std::process::exit(1);
 }
 
-/// Is another Flux Rec already running its translator? Ask it.
+/// Is another Flux Rec already running its translator? Ask it over HTTPS,
+/// trusting our own local CA.
 async fn translator_alive() -> bool {
-    let Ok(c) = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-    else {
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(2));
+    if let Some(dir) = data_dir_opt() {        let ca_path = dir.join("certs").join("ca.pem");
+        if let Ok(pem) = std::fs::read(&ca_path) {
+            if let Ok(ca) = reqwest::Certificate::from_pem(&pem) {
+                builder = builder.add_root_certificate(ca);
+            }
+        }
+    }
+    let Ok(c) = builder.build() else {
         return false;
     };
-    match c.get("http://127.0.0.1/health").send().await {
+    match c.get("https://127.0.0.1/health").send().await {
         Ok(r) => r
             .json::<serde_json::Value>()
             .await
@@ -113,16 +124,17 @@ fn process_name(pid: u32) -> Option<String> {
     }
 }
 
-/// Who is squatting on port 80? Returns (pid, image name).
-fn port_80_holder() -> Option<(u32, String)> {
+/// Who is squatting on the given local port? Returns (pid, image name).
+fn port_holder(port: u16) -> Option<(u32, String)> {
     let out = Command::new("netstat").args(["-ano"]).output().ok()?;
+    let want = format!(":{port}");
     for line in String::from_utf8_lossy(&out.stdout).lines() {
         let p: Vec<&str> = line.split_whitespace().collect();
-        // TCP    0.0.0.0:80    0.0.0.0:0    LISTENING    1234
+        // TCP    0.0.0.0:443    0.0.0.0:0    LISTENING    1234
         if p.len() < 5 || p[0] != "TCP" || p[3] != "LISTENING" {
             continue;
         }
-        if !p[1].ends_with(":80") {
+        if !p[1].ends_with(&want) {
             continue;
         }
         if let Ok(pid) = p[4].parse::<u32>() {
@@ -138,9 +150,9 @@ fn is_our_exe(name: &str) -> bool {
 }
 
 fn describe_bind_error(e: &str) -> String {
-    match port_80_holder() {
+    match port_holder(443) {
         Some((pid, name)) => format!(
-            "Flux Rec needs local port 80, but \"{name}\" (PID {pid}) is using it.\n\n\
+            "Flux Rec needs local port 443, but \"{name}\" (PID {pid}) is using it.\n\n\
              Close {name} and start Flux Rec again.\n\n\
              (technical: {e})"
         ),
@@ -245,22 +257,24 @@ async fn async_main() {
     // endpoints the client actually needs.
     translator::set_log_dir(dir.clone());
 
-    // 2. Local translator on 127.0.0.1:80. One retry if a stale Flux Rec
-    //    process is squatting the port; otherwise name the culprit.
+    // 2. Local translator on 127.0.0.1:443 (HTTPS) + :80 (HTTP). One retry
+    //    if a stale Flux Rec process is squatting the port; otherwise name
+    //    the culprit.
     let mut started = false;
     for attempt in 0..2 {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let s3 = session.clone();
-        tokio::spawn(translator::serve(s3, tx));
+        let d3 = dir.clone();
+        tokio::spawn(translator::serve(s3, d3, tx));
         match rx.await {
             Ok(Ok(())) => {
                 started = true;
                 break;
             }
             Ok(Err(e)) => {
-                let ours = port_80_holder().map(|(_, n)| is_our_exe(&n)).unwrap_or(false);
+                let ours = port_holder(443).map(|(_, n)| is_our_exe(&n)).unwrap_or(false);
                 if attempt == 0 && ours {
-                    if let Some((pid, _)) = port_80_holder() {
+                    if let Some((pid, _)) = port_holder(443) {
                         let _ = Command::new("taskkill")
                             .args(["/PID", &pid.to_string(), "/F"])
                             .output();
