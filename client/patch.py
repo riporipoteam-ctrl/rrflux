@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""
+RRFlux client patcher v1 — redirects a Rec Room client build to RRFlux servers.
+
+Patches (in place, with .bak backups):
+  1. RecRoom_Data/il2cpp_data/Metadata/global-metadata.dat  (metadata v27)
+     - Replaces endpoint host literals: auth/api/web/telemetry.
+     - Replacement hosts must be SHORTER-or-equal to the originals: literal
+       bytes are overwritten in place (zero-padded) and the literal length
+       field in the string-literal table is updated. Longer hosts are rejected.
+  2. RecRoom_Data/resources.assets
+     - Swaps the two Photon App ID GUIDs found after the PhotonServerSettings
+       marker. GUIDs are always 36 chars, so the swap is trivially length-safe.
+
+Usage:
+    patch.py --build <path-to-a-COPY-of-the-build> \\
+        --auth-host <host> --api-host <host> \\
+        [--web-host <host>] [--telemetry-host <host>] \\
+        [--photon-guid-1 <guid>] [--photon-guid-2 <guid>]
+
+COPY THE PRISTINE BUILD FIRST. Never patch the original: the script refuses
+to run twice on the same tree (it checks for .bak files).
+
+Photon/App ID values are passed on the command line (or env vars) and are
+never written anywhere except into the patched binary copy.
+"""
+
+import argparse
+import os
+import re
+import shutil
+import struct
+import sys
+
+GUID_RE = re.compile(rb"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                     rb"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+# ---------------------------------------------------------------- metadata
+def parse_metadata(path):
+    with open(path, "rb") as f:
+        data = bytearray(f.read())
+    magic, version = struct.unpack("<II", data[0:8])
+    if magic != 0xFAB11BAF:
+        raise SystemExit(f"not an IL2CPP metadata file: {path}")
+    if version != 27:
+        raise SystemExit(f"unsupported metadata version {version} (expected 27)")
+    # v27 header: stringLiteralOffset/Size = literal TABLE, then Data = raw bytes
+    (table_off, table_size, data_off, data_size) = struct.unpack(
+        "<4i", data[8:24])
+    n = table_size // 8
+    return data, table_off, data_off, n
+
+
+def iter_literals(data, table_off, data_off, n):
+    for i in range(n):
+        length, off = struct.unpack("<Ii", data[table_off + i * 8:
+                                                table_off + i * 8 + 8])
+        yield i, length, off
+
+
+def patch_metadata(path, replacements):
+    """replacements: list of (old_substr, new_substr), applied longest-first."""
+    data, table_off, data_off, n = parse_metadata(path)
+    reps = sorted(replacements, key=lambda r: -len(r[0]))
+    changed = []
+    for i, length, off in iter_literals(data, table_off, data_off, n):
+        if length == 0 or length > 512:
+            continue
+        raw = bytes(data[data_off + off:data_off + off + length])
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        new_text = text
+        for old, new in reps:
+            if old in new_text:
+                new_text = new_text.replace(old, new)
+        if new_text == text:
+            continue
+        new_raw = new_text.encode("utf-8")
+        if len(new_raw) > length:
+            raise SystemExit(
+                f"replacement too long for literal #{i} "
+                f"({len(new_raw)} > {length} bytes): {text!r} -> {new_text!r}\n"
+                f"Pick a shorter hostname.")
+        # overwrite bytes, zero-pad the remainder, update length field
+        data[data_off + off:data_off + off + length] = b"\x00" * length
+        data[data_off + off:data_off + off + len(new_raw)] = new_raw
+        struct.pack_into("<I", data, table_off + i * 8, len(new_raw))
+        changed.append((i, text, new_text))
+    backup = path + ".bak"
+    shutil.copy2(path, backup)
+    with open(path, "wb") as f:
+        f.write(data)
+    return changed, backup
+
+
+# ------------------------------------------------------------------ assets
+def patch_assets(path, guid1, guid2):
+    with open(path, "rb") as f:
+        data = bytearray(f.read())
+    marker = data.find(b"PhotonServerSettings")
+    if marker == -1:
+        raise SystemExit("PhotonServerSettings marker not found in assets")
+    found = [(m.start(), m.group()) for m in GUID_RE.finditer(data)]
+    if len(found) < 2:
+        raise SystemExit(f"expected 2 Photon GUIDs, found {len(found)}")
+    # the two GUIDs right after the marker are the App IDs
+    after = [g for off, g in found if off > marker][:2]
+    if len(after) < 2:
+        raise SystemExit("could not locate the two Photon App ID GUIDs")
+    swaps = []
+    if guid1:
+        swaps.append((after[0], guid1.encode()))
+    if guid2:
+        swaps.append((after[1], guid2.encode()))
+    for old, new in swaps:
+        if len(new) != 36 or not GUID_RE.fullmatch(new):
+            raise SystemExit(f"not a valid GUID: {new!r}")
+        data = data.replace(old, new)
+    backup = path + ".bak"
+    shutil.copy2(path, backup)
+    with open(path, "wb") as f:
+        f.write(data)
+    return [(o.decode(), n.decode()) for o, n in swaps], backup
+
+
+# ----------------------------------------------------------------------
+def main():
+    ap = argparse.ArgumentParser(description="RRFlux client patcher v1")
+    ap.add_argument("--build", required=True,
+                    help="path to a COPY of the pristine build")
+    ap.add_argument("--auth-host",
+                    default=os.environ.get("RRFLUX_AUTH_HOST"),
+                    help="replaces auth.rec.net (<=12 chars)")
+    ap.add_argument("--api-host",
+                    default=os.environ.get("RRFLUX_API_HOST"),
+                    help="replaces ns.rec.net (<=10 chars)")
+    ap.add_argument("--web-host", default=os.environ.get("RRFLUX_WEB_HOST"),
+                    help="replaces rec.net in web links (<=7 chars)")
+    ap.add_argument("--telemetry-host",
+                    default=os.environ.get("RRFLUX_TELEMETRY_HOST"),
+                    help="replaces api2.amplitude.com (<=18 chars)")
+    ap.add_argument("--photon-guid-1",
+                    default=os.environ.get("RRFLUX_PHOTON_GUID_1"),
+                    help="replaces 1st Photon App ID GUID after the marker")
+    ap.add_argument("--photon-guid-2",
+                    default=os.environ.get("RRFLUX_PHOTON_GUID_2"),
+                    help="replaces 2nd Photon App ID GUID after the marker")
+    args = ap.parse_args()
+
+    meta = os.path.join(args.build, "RecRoom_Data", "il2cpp_data",
+                        "Metadata", "global-metadata.dat")
+    assets = os.path.join(args.build, "RecRoom_Data", "resources.assets")
+    for p in (meta, assets):
+        if not os.path.isfile(p):
+            raise SystemExit(f"missing: {p}")
+        if os.path.exists(p + ".bak"):
+            raise SystemExit(f"already patched (found {p}.bak); "
+                             f"start from a fresh copy")
+
+    reps = []
+    if args.auth_host:
+        reps.append(("auth.rec.net", args.auth_host))
+    if args.api_host:
+        reps.append(("ns.rec.net", args.api_host))
+    if args.telemetry_host:
+        reps.append(("api2.amplitude.com", args.telemetry_host))
+    if args.web_host:
+        reps.append(("rec.net", args.web_host))
+    if not reps and not (args.photon_guid_1 or args.photon_guid_2):
+        raise SystemExit("nothing to patch: pass at least one replacement")
+
+    if reps:
+        changed, bak = patch_metadata(meta, reps)
+        print(f"[metadata] backup: {bak}")
+        print(f"[metadata] patched {len(changed)} literals:")
+        for i, old, new in changed:
+            print(f"  #{i}: {old!r}\n      -> {new!r}")
+    if args.photon_guid_1 or args.photon_guid_2:
+        swaps, bak = patch_assets(assets, args.photon_guid_1,
+                                  args.photon_guid_2)
+        print(f"[assets] backup: {bak}")
+        for old, new in swaps:
+            print(f"[assets] GUID {old}\n      -> {new}")
+    print("done.")
+
+
+if __name__ == "__main__":
+    main()
