@@ -1,12 +1,13 @@
 [package]
-name = "fluxrec"
+name = "fluxrec-common"
 version = "0.3.0"
 edition = "2021"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-axum = "0.7"
+reqwest = { version = "0.12", features = ["stream", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
-fluxrec-common = { path = "../common" }
+sha2 = "0.10"
+hex = "0.4"
+futures-util = "0.3"

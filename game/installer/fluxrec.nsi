@@ -34,17 +34,23 @@ RequestExecutionLevel user
 Section "Flux Rec"
   SetOutPath "$INSTDIR"
 
-  ; Headless bootstrapper (this is what the shortcuts point at) +
-  ; the download helper used below.
+  ; Headless bootstrapper (this is what the shortcuts point at),
+  ; the download helper used below, and the self-updater the
+  ; bootstrapper uses to replace itself on auto-update.
   File "${STAGEDIR}\Flux Rec.exe"
   File "${STAGEDIR}\fluxrec-download.exe"
+  File "${STAGEDIR}\fluxrec-selfupdate.exe"
 
-  ; Fetch the full game (~7 GB, one-time) straight into $INSTDIR\game.
-  DetailPrint "Downloading game files (one-time, about 7 GB)..."
-  nsExec::ExecToLog '"$INSTDIR\fluxrec-download.exe" --manifest "${MANIFEST_URL}" --dir "$INSTDIR\game"'
+  ; Fetch the full game (one-time) straight into $INSTDIR\game.
+  ; The downloader shows its own progress window, downloads files in
+  ; parallel, resumes where it left off, and keeps the PC awake.
+  ; After this, the bootstrapper auto-updates on every launch, so
+  ; setup never needs to run again.
+  DetailPrint "Downloading game files (one-time)..."
+  nsExec::ExecToLog '"$INSTDIR\fluxrec-download.exe" --manifest "${MANIFEST_URL}" --dir "$INSTDIR\game" --state-dir "$INSTDIR"'
   Pop $0
   ${If} $0 != "0"
-    MessageBox MB_ICONSTOP "The game download failed, so setup cannot continue.$\nCheck your internet connection and run the installer again."
+    MessageBox MB_ICONSTOP "The game download failed, so setup cannot continue.$\nCheck your internet connection and run the installer again — it resumes where it left off."
     Abort
   ${EndIf}
 
@@ -61,7 +67,13 @@ Section "Uninstall"
   Delete "$DESKTOP\Flux Rec.lnk"
   RMDir /r "$INSTDIR\game"
   Delete "$INSTDIR\Flux Rec.exe"
+  Delete "$INSTDIR\Flux Rec.new.exe"
   Delete "$INSTDIR\fluxrec-download.exe"
+  Delete "$INSTDIR\fluxrec-selfupdate.exe"
+  Delete "$INSTDIR\manifest.json"
+  Delete "$INSTDIR\manifest.etag"
+  Delete "$INSTDIR\translator.log"
+  Delete "$INSTDIR\crash.log"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$SMPROGRAMS\Flux Rec"
   RMDir "$INSTDIR"

@@ -2,6 +2,9 @@
 // player is concerned; there is no launcher window and no login screen).
 //
 // Double-clicking the desktop icon:
+//   0. Self-updates: a newer bootstrapper or changed game files download
+//      automatically (parallel, resumable, no sleeping mid-download), so
+//      the setup only ever runs once.
 //   1. If another Flux Rec is already running, exits quietly.
 //   2. Signs in silently (anonymous Firebase account, cached locally).
 //   3. Starts the local translator on 127.0.0.1:80, which the patched game
@@ -160,17 +163,63 @@ async fn async_main() {
         .unwrap_or_else(|| PathBuf::from("."));
     let game_dir = exe_dir.join("game");
     let game_exe = game_dir.join("RecRoom.exe");
-    if !game_exe.exists() {
-        fatal("Game files not found.\n\nPlease reinstall Flux Rec.".into());
-    }
+    let dir = data_dir();
+    let _ = std::fs::create_dir_all(&dir);
 
     // Already running? Bow out quietly — the running copy owns the game.
     if translator_alive().await {
         return;
     }
 
-    let dir = data_dir();
-    let _ = std::fs::create_dir_all(&dir);
+    // 0. Self-update: if a newer bootstrapper is published, download it,
+    //    hand it to the self-updater, and exit — the new copy takes over.
+    //    Fail-soft: update checks must never block playing.
+    let this_exe = std::env::current_exe().unwrap_or_else(|_| exe_dir.join("Flux Rec.exe"));
+    let new_exe = exe_dir.join("Flux Rec.new.exe");
+    match fluxrec_common::update::check_bootstrap_update(env!("CARGO_PKG_VERSION"), &new_exe).await
+    {
+        Ok(fluxrec_common::update::BootstrapUpdate::Available { .. }) => {
+            let updater = exe_dir.join("fluxrec-selfupdate.exe");
+            if updater.exists() {
+                let from_s = new_exe.to_string_lossy().into_owned();
+                let to_s = this_exe.to_string_lossy().into_owned();
+                let _ = Command::new(&updater)
+                    .args(["--from", from_s.as_str(), "--to", to_s.as_str(), "--launch"])
+                    .spawn();
+                std::process::exit(0);
+            }
+            let _ = std::fs::remove_file(&new_exe);
+        }
+        Ok(fluxrec_common::update::BootstrapUpdate::UpToDate) => {}
+        Err(e) => crash_log(&format!("bootstrap update check skipped: {e}")),
+    }
+
+    // 0b. Game files: fetch only what changed since last time (parallel,
+    //     resumable, keeps the PC awake). Shows a progress window while busy.
+    match fluxrec_common::update::update_game_files(
+        fluxrec_common::MANIFEST_URL,
+        &game_dir,
+        &dir,
+        "Flux Rec",
+    )
+    .await
+    {
+        Ok(o) => {
+            if o.downloaded > 0 || o.deleted > 0 {
+                crash_log(&format!(
+                    "game files updated: {} downloaded, {} removed",
+                    o.downloaded, o.deleted
+                ));
+            }
+        }
+        Err(e) => fatal(format!(
+            "Couldn't update the game files:\n{e}\n\nCheck your internet connection and try again."
+        )),
+    }
+
+    if !game_exe.exists() {
+        fatal("Game files not found.\n\nPlease reinstall Flux Rec.".into());
+    }
 
     // 1. Silent sign-in (anonymous Firebase account).
     let session: SharedSession = Default::default();

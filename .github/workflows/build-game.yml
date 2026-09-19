@@ -16,6 +16,8 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -34,7 +36,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path stage | Out-Null
           Copy-Item "game\target\release\fluxrec.exe" "stage\Flux Rec.exe"
+          Copy-Item "game\target\release\fluxrec.exe" "stage\FluxRec-bootstrap.exe"
           Copy-Item "game\target\release\fluxrec-download.exe" "stage\fluxrec-download.exe"
+          Copy-Item "game\target\release\fluxrec-selfupdate.exe" "stage\fluxrec-selfupdate.exe"
 
       - name: Ensure NSIS
         shell: powershell
@@ -51,6 +55,19 @@ jobs:
           $outfile = "$pwd\game\installer\FluxRec-Setup.exe"
           # Absolute path: choco's PATH update isn't visible to this step.
           & "C:\Program Files (x86)\NSIS\makensis.exe" "/DVERSION=$ver" "/DSTAGEDIR=$stage" "/DOUTFILE=$outfile" game\installer\fluxrec.nsi
+
+      - name: Publish prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ver = (Select-String -Path game\bootstrap\Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches.Groups[1].Value
+          $tag = "v$ver"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --prerelease --title "Flux Rec v$ver" --notes "No launcher: install and the game opens directly. Self-updates on launch — setup only runs once."
+          }
+          gh release upload $tag "game\installer\FluxRec-Setup.exe" "stage\FluxRec-bootstrap.exe" --clobber
 
       - name: Upload setup.exe
         uses: actions/upload-artifact@v4
