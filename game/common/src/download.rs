@@ -45,9 +45,11 @@ pub struct Progress {
 
 pub fn sha256_of_file(path: &Path) -> Result<String, String> {
     use sha2::Digest as _;
-    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    // Large read buffer: game files are gigabytes, small reads crawl.
+    let mut reader = std::io::BufReader::with_capacity(1024 * 1024, f);
     let mut hasher = sha2::Sha256::new();
-    std::io::copy(&mut f, &mut hasher).map_err(|e| e.to_string())?;
+    std::io::copy(&mut reader, &mut hasher).map_err(|e| e.to_string())?;
     Ok(hex::encode(hasher.finalize()))
 }
 
@@ -58,6 +60,16 @@ fn hash_matches(path: &Path, sha256: &str) -> bool {
     sha256_of_file(path)
         .map(|h| h.eq_ignore_ascii_case(sha256))
         .unwrap_or(false)
+}
+
+/// Hash check that never blocks the async runtime: hashing gigabytes on a
+/// worker thread starves the whole runtime (network stalls, UI freezes).
+async fn hash_matches_blocking(path: &Path, sha256: &str) -> Result<bool, String> {
+    let path = path.to_path_buf();
+    let sha256 = sha256.to_string();
+    tokio::task::spawn_blocking(move || hash_matches(&path, &sha256))
+        .await
+        .map_err(|e| format!("verify task failed: {e}"))
 }
 
 async fn fetch_one(
@@ -107,8 +119,9 @@ async fn download_one(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    // Resume: already valid on disk.
-    if hash_matches(&dest, &entry.sha256) {
+    // Resume: already valid on disk (checked off the async runtime so
+    // hashing big files can't stall downloads or the progress window).
+    if hash_matches_blocking(&dest, &entry.sha256).await? {
         return Ok((0, false));
     }
     let tmp = dir.join(format!("{}.part", entry.path));
@@ -119,7 +132,9 @@ async fn download_one(
         }
         match fetch_one(&client, &entry.url, &tmp, &entry.path).await {
             Ok(bytes) => {
-                if !entry.sha256.is_empty() && !hash_matches(&tmp, &entry.sha256) {
+                if !entry.sha256.is_empty()
+                    && !hash_matches_blocking(&tmp, &entry.sha256).await?
+                {
                     last_err = format!("hash mismatch: {}", entry.path);
                     let _ = tokio::fs::remove_file(&tmp).await;
                     continue;

@@ -183,10 +183,18 @@ async fn async_main() {
             if updater.exists() {
                 let from_s = new_exe.to_string_lossy().into_owned();
                 let to_s = this_exe.to_string_lossy().into_owned();
-                let _ = Command::new(&updater)
+                match Command::new(&updater)
                     .args(["--from", from_s.as_str(), "--to", to_s.as_str(), "--launch"])
-                    .spawn();
-                std::process::exit(0);
+                    .spawn()
+                {
+                    // Updater takes over: it waits for us to exit, swaps the
+                    // exe, and relaunches.
+                    Ok(_) => std::process::exit(0),
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&new_exe);
+                        crash_log(&format!("self-updater failed to start: {e}"));
+                    }
+                }
             }
             let _ = std::fs::remove_file(&new_exe);
         }

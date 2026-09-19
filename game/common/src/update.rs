@@ -209,9 +209,16 @@ pub async fn update_game_files(
             } else {
                 1.0
             };
+            // While nothing has been fetched yet we're still verifying the
+            // files already on disk — say so instead of looking frozen.
+            let verb = if p.bytes_done == 0 {
+                "Checking game files"
+            } else {
+                "Downloading game files"
+            };
             let label = match p.bytes_total {
                 Some(bt) if bt > 0 => format!(
-                    "Downloading game files… {}/{} files ({:.1}/{:.1} MB)\n{}",
+                    "{verb}… {}/{} files ({:.1}/{:.1} MB)\n{}",
                     p.files_done,
                     p.files_total,
                     p.bytes_done as f64 / 1048576.0,
@@ -219,7 +226,7 @@ pub async fn update_game_files(
                     p.current_file
                 ),
                 _ => format!(
-                    "Downloading game files… {}/{} files\n{}",
+                    "{verb}… {}/{} files\n{}",
                     p.files_done, p.files_total, p.current_file
                 ),
             };
