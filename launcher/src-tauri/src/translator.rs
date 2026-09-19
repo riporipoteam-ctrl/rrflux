@@ -1,4 +1,4 @@
-// RRFlux local translator — answers the patched 2022 client's Rec Room API
+// Flux Rec local translator — answers the patched 2022 client's Rec Room API
 // calls from 127.0.0.1:80. No cloud needed for this: Photon relays
 // multiplayer, Firebase holds identity/saves, and this tiny server translates
 // between the game and Firebase right on the player's PC.
@@ -119,7 +119,7 @@ async fn game_fallback() -> (StatusCode, Json<Value>) {
     // …). Implemented as the client proves it needs them.
     j(
         StatusCode::NOT_FOUND,
-        json!({"error": "not implemented in RRFlux v1"}),
+        json!({"error": "not implemented in Flux Rec v1"}),
     )
 }
 
