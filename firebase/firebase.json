@@ -1,0 +1,37 @@
+// firebase.json — RRFlux hosting + functions wiring.
+//
+// Short-domain plan (fits the client's hostname budgets):
+//   API  -> rrflux.gg            (7 chars,  <=10 for ns.rec.net slot)
+//   Auth -> auth.rrflux.gg       (12 chars, <=12 for auth.rec.net slot)
+// Both are Firebase Hosting custom domains; rewrites route to functions.
+// Telemetry host (<=18): sink to a dead endpoint or our api — TBD.
+//
+// Deploy: `firebase deploy --only functions,firestore:rules,hosting`
+// (functions can also be pasted into the Cloud console inline editor).
+
+{
+  "functions": [
+    {
+      "source": "functions/auth",
+      "codebase": "rrflux-auth",
+      "runtime": "nodejs20"
+    },
+    {
+      "source": "functions/api",
+      "codebase": "rrflux-api",
+      "runtime": "nodejs20"
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": "hosting-public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      { "source": "/Account/**", "function": { "functionId": "loginWithToken", "codebase": "rrflux-auth" } },
+      { "source": "/api/**", "function": { "functionId": "api", "codebase": "rrflux-api" } },
+      { "source": "/v1/**", "function": { "functionId": "api", "codebase": "rrflux-api" } }
+    ]
+  }
+}
