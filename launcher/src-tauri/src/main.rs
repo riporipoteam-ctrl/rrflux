@@ -177,8 +177,8 @@ struct AppState {
 }
 
 #[tauri::command]
-async fn translator_status(state: State<'_, AppState>) -> bool {
-    state.translator_ok.load(Ordering::SeqCst)
+async fn translator_status(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.translator_ok.load(Ordering::SeqCst))
 }
 
 /// Real Firebase Auth sign-in (email/password) via the public Identity
