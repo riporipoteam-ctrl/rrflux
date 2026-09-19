@@ -219,19 +219,21 @@ def main():
     reps = []
     if args.local:
         # Local-translator mode: the launcher serves the Rec Room API itself
-        # on 127.0.0.1:80. "localhost" (9 chars) fits every hostname slot.
+        # on 127.0.0.1:443 (HTTPS). "localhost" (9 chars) fits every hostname slot.
         # We use "localhost" (not "127.0.0.1") because the original hosts
         # (ns.rec.net, auth.rec.net) were hostnames, not IPs. Using a bare
         # IP can trigger IP-specific URI construction paths (e.g. building
         # "127.0.0.1:port" without a scheme) that throw "Invalid URI scheme"
         # in Mono's new Uri(). "localhost" is syntactically a valid URI
         # scheme-name, resolves to 127.0.0.1, and preserves the original
-        # hostname code paths. Scheme is downgraded https:// -> http://
-        # for the local URLs (fixpoint pass in patch_metadata handles
-        # the ordering).
+        # hostname code paths.
+        # IMPORTANT (2026-09-19): Do NOT downgrade https:// -> http://.
+        # The game's HTTP wrapper validates that API URLs use https://
+        # and throws "Invalid URI scheme" for http:// URLs. The local
+        # translator must serve HTTPS (with a cert the game trusts).
         for host in ("auth.rec.net", "ns.rec.net", "api2.amplitude.com"):
             reps.append((host, "localhost"))
-        reps.append(("https://localhost", "http://localhost"))
+        # (https://localhost -> http://localhost downgrade REMOVED 2026-09-19)
     else:
         if args.auth_host:
             reps.append(("auth.rec.net", args.auth_host))
