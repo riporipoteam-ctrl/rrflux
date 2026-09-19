@@ -225,6 +225,7 @@ async fn sign_in(
     }
     let uid = body["localId"].as_str().unwrap_or("").to_string();
     let id_token = body["idToken"].as_str().unwrap_or("").to_string();
+    let refresh_token = body["refreshToken"].as_str().unwrap_or("").to_string();
     let username = body
         .get("displayName")
         .and_then(|v| v.as_str())
@@ -243,9 +244,58 @@ async fn sign_in(
     *state.session.lock().await = Some(translator::Session {
         uid: uid.clone(),
         id_token,
+        refresh_token,
         username: username.clone(),
     });
     Ok(serde_json::json!({ "uid": uid, "username": username }))
+}
+
+/// Firebase ID tokens expire after 1 hour. This loop wakes every 50 minutes
+/// and swaps the stored refresh token for a fresh ID token, so long
+/// play sessions (and the translator's Firestore calls) keep working.
+/// Failures are silent — worst case the user signs in again.
+async fn refresh_loop(session: SharedSession) {
+    let api_key = env!("FIREBASE_WEB_API_KEY");
+    let url = format!("https://securetoken.googleapis.com/v1/token?key={api_key}");
+    let client = reqwest::Client::new();
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(50 * 60)).await;
+        let rt = session
+            .lock()
+            .await
+            .as_ref()
+            .map(|s| s.refresh_token.clone())
+            .unwrap_or_default();
+        if rt.is_empty() {
+            continue;
+        }
+        let form = serde_urlencoded::to_string([
+            ("grant_type", "refresh_token"),
+            ("refresh_token", rt.as_str()),
+        ]);
+        let Ok(form) = form else { continue };
+        let Ok(resp) = client
+            .post(&url)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(form)
+            .send()
+            .await
+        else {
+            continue;
+        };
+        let Ok(body) = resp.json::<serde_json::Value>().await else {
+            continue;
+        };
+        if let (Some(id), Some(new_rt)) = (
+            body.get("id_token").and_then(|v| v.as_str()),
+            body.get("refresh_token").and_then(|v| v.as_str()),
+        ) {
+            if let Some(s) = session.lock().await.as_mut() {
+                s.id_token = id.to_string();
+                s.refresh_token = new_rt.to_string();
+            }
+        }
+    }
 }
 
 fn main() {
@@ -262,6 +312,8 @@ fn main() {
             // Firebase session — no cloud server involved.
             let handle = app.handle().clone();
             let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+            // Clone before the first spawn moves `session`.
+            let session_for_refresh = session.clone();
             tokio::spawn(async move {
                 if let Err(e) = translator::serve(session, ready_tx).await {
                     eprintln!("{e}");
@@ -275,6 +327,10 @@ fn main() {
                 if !ok {
                     eprintln!("translator failed to start (is port 80 busy?)");
                 }
+            });
+            // Keep the Firebase ID token fresh (it expires hourly).
+            tokio::spawn(async move {
+                refresh_loop(session_for_refresh).await;
             });
             Ok(())
         })

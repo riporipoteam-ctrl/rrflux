@@ -29,6 +29,7 @@ use tokio::sync::Mutex;
 pub struct Session {
     pub uid: String,
     pub id_token: String,
+    pub refresh_token: String,
     pub username: String,
 }
 

@@ -26,6 +26,10 @@
   input:focus { border-color: var(--accent); }
   .err { color: var(--err); font-size: 13px; min-height: 18px; margin-top: 10px; }
   .foot { margin-top: 24px; font-size: 11px; color: var(--dim); }
+  .settings { margin-top: 16px; font-size: 13px; color: var(--dim); }
+  .settings summary { cursor: pointer; letter-spacing: 1px; text-transform: uppercase; font-size: 11px; }
+  .settings input { margin-top: 4px; font-size: 13px; padding: 10px; }
+  .hint { font-size: 11px; color: var(--dim); margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -48,6 +52,12 @@
     <div class="bar-wrap"><div class="bar" id="bar"></div></div>
     <div class="pct" id="pct"></div>
     <button id="action" disabled>…</button>
+    <details class="settings">
+      <summary>Settings</summary>
+      <label for="manifest-url">Game manifest URL</label>
+      <input id="manifest-url" type="url" placeholder="https://…/manifest.json" />
+      <div class="hint">Where the launcher downloads the game files from.</div>
+    </details>
   </div>
 
   <div class="foot">Private build — for Ripo Team players only.</div>

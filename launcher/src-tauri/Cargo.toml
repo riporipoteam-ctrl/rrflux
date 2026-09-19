@@ -16,6 +16,7 @@ axum = "0.7"
 sha2 = "0.10"
 hex = "0.4"
 futures-util = "0.3"
+serde_urlencoded = "0.7"
 
 [features]
 default = ["custom-protocol"]

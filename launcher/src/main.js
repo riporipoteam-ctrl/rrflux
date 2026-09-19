@@ -2,7 +2,11 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
-const MANIFEST_URL = "https://example.invalid/rrflux/manifest.json"; // TODO: real host
+// Where the launcher downloads the game from. Set it once in Settings —
+// saved locally, so changing hosts never needs a launcher rebuild.
+const DEFAULT_MANIFEST_URL = "https://example.invalid/rrflux/manifest.json";
+const manifestUrl = () =>
+  (localStorage.getItem("rrflux_manifest_url") || "").trim() || DEFAULT_MANIFEST_URL;
 
 const loginCard = document.getElementById("login-card");
 const mainCard = document.getElementById("main-card");
@@ -15,6 +19,15 @@ const statusEl = document.getElementById("status");
 const barEl = document.getElementById("bar");
 const pctEl = document.getElementById("pct");
 const actionBtn = document.getElementById("action");
+const manifestUrlEl = document.getElementById("manifest-url");
+
+// Persist the manifest URL setting.
+manifestUrlEl.value = localStorage.getItem("rrflux_manifest_url") || "";
+manifestUrlEl.addEventListener("change", () => {
+  const v = manifestUrlEl.value.trim();
+  if (v) localStorage.setItem("rrflux_manifest_url", v);
+  else localStorage.removeItem("rrflux_manifest_url");
+});
 
 const fmtMB = (n) => (n / 1048576).toFixed(1) + " MB";
 
@@ -77,7 +90,7 @@ async function install() {
   actionBtn.disabled = true;
   try {
     setStatus("Fetching manifest…");
-    const manifestJson = await invoke("fetch_manifest", { manifestUrl: MANIFEST_URL });
+    const manifestJson = await invoke("fetch_manifest", { manifestUrl: manifestUrl() });
     const manifest = JSON.parse(manifestJson);
     setStatus(`Downloading ${manifest.files.length} files…`);
     await listen("progress", (e) => {
