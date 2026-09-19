@@ -1,5 +1,11 @@
 # RRFlux Firebase backend
 
+> **Superseded (2026-09-19):** the Cloud Functions below need the Blaze plan,
+> so the live translator is now the Cloudflare Worker in `../worker/`
+> (free tier, no billing). This directory keeps the Firestore rules
+> (`firestore.rules`, still deployed and live) and the original function
+> sources for reference.
+
 Two Cloud Functions (Node.js 20) + Firestore rules + Hosting rewrites.
 
 | Function | Source | Handles |
