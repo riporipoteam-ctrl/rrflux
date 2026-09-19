@@ -174,7 +174,7 @@ impl ProgressWindow {
         }
         #[cfg(not(windows))]
         {
-            eprintln!("[{title}] starting…");
+            eprintln!("[{title}] starting...");
             Self {
                 last_permille: std::sync::Mutex::new(0),
                 title: title.to_string(),

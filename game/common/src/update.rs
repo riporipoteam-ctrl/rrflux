@@ -286,7 +286,7 @@ async fn update_game_files_inner(
 
     if !to_download.is_empty() {
         let window = ProgressWindow::new(window_title);
-        println!("Downloading {} files…", to_download.len());
+        println!("Downloading {} files...", to_download.len());
         let opts = DownloadOptions::default();
         // The NSIS installer log only shows our stdout, and the separate
         // progress window can end up behind the installer — so also print
@@ -303,7 +303,7 @@ async fn update_game_files_inner(
             };
             let label = match p.bytes_total {
                 Some(bt) if bt > 0 => format!(
-                    "Downloading game files… {}/{} files ({:.1}/{:.1} MB)\n{}",
+                    "Downloading game files... {}/{} files ({:.1}/{:.1} MB)\n{}",
                     p.files_done,
                     p.files_total,
                     p.bytes_done as f64 / 1048576.0,
@@ -311,7 +311,7 @@ async fn update_game_files_inner(
                     p.current_file
                 ),
                 _ => format!(
-                    "Downloading game files… {}/{} files\n{}",
+                    "Downloading game files... {}/{} files\n{}",
                     p.files_done, p.files_total, p.current_file
                 ),
             };
@@ -323,7 +323,7 @@ async fn update_game_files_inner(
                     std::sync::atomic::Ordering::SeqCst,
                 );
                 println!(
-                    "Downloaded {}/{} files ({:.0}%)…",
+                    "Downloaded {}/{} files ({:.0}%)...",
                     p.files_done,
                     p.files_total,
                     frac * 100.0

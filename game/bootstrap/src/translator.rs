@@ -168,15 +168,18 @@ pub async fn serve(
     session: SharedSession,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
 ) {
+    // NOTE: axum 0.7 wildcard syntax is `/*rest` (`{*rest}` is 0.8+ and
+    // panics here at startup, which used to kill the local server before
+    // it could signal ready).
     let app = Router::new()
         .route("/health", get(health))
         .route("/Account/LoginWithToken", get(login_with_token))
-        .route("/api/versioncheck/{*rest}", get(versioncheck))
-        .route("/api/config/{*rest}", get(config))
+        .route("/api/versioncheck/*rest", get(versioncheck))
+        .route("/api/config/*rest", get(config))
         .route("/api/players/v2/me", get(player_me))
-        .route("/api/sanitize/{*rest}", get(sanitize))
+        .route("/api/sanitize/*rest", get(sanitize))
         .route("/2/httpapi", get(telemetry).post(telemetry))
-        .route("/api/{*rest}", get(game_fallback).post(game_fallback))
+        .route("/api/*rest", get(game_fallback).post(game_fallback))
         .fallback(get(game_fallback))
         .layer(axum::middleware::from_fn(log_middleware))
         .with_state(session);

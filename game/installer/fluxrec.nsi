@@ -27,6 +27,10 @@ OutFile "${OUTFILE}"
 InstallDir "$LOCALAPPDATA\FluxRec"
 RequestExecutionLevel user
 
+; Branded icon for the installer, uninstaller, and shortcuts.
+!define MUI_ICON "${STAGEDIR}\fluxrec.ico"
+!define MUI_UNICON "${STAGEDIR}\fluxrec.ico"
+
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
@@ -40,6 +44,7 @@ Section "Flux Rec"
   File "${STAGEDIR}\Flux Rec.exe"
   File "${STAGEDIR}\fluxrec-download.exe"
   File "${STAGEDIR}\fluxrec-selfupdate.exe"
+  File "${STAGEDIR}\fluxrec.ico"
 
   ; Fetch the full game (one-time) straight into $INSTDIR\game.
   ; The downloader shows its own progress window, downloads files in
@@ -65,8 +70,8 @@ Section "Flux Rec"
 
   ; Shortcuts: the game, directly.
   CreateDirectory "$SMPROGRAMS\Flux Rec"
-  CreateShortcut "$SMPROGRAMS\Flux Rec\Flux Rec.lnk" "$INSTDIR\Flux Rec.exe"
-  CreateShortcut "$DESKTOP\Flux Rec.lnk" "$INSTDIR\Flux Rec.exe"
+  CreateShortcut "$SMPROGRAMS\Flux Rec\Flux Rec.lnk" "$INSTDIR\Flux Rec.exe" "" "$INSTDIR\fluxrec.ico"
+  CreateShortcut "$DESKTOP\Flux Rec.lnk" "$INSTDIR\Flux Rec.exe" "" "$INSTDIR\fluxrec.ico"
 
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 SectionEnd
@@ -79,6 +84,7 @@ Section "Uninstall"
   Delete "$INSTDIR\Flux Rec.new.exe"
   Delete "$INSTDIR\fluxrec-download.exe"
   Delete "$INSTDIR\fluxrec-selfupdate.exe"
+  Delete "$INSTDIR\fluxrec.ico"
   Delete "$INSTDIR\manifest.json"
   Delete "$INSTDIR\manifest.etag"
   Delete "$INSTDIR\translator.log"
