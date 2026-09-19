@@ -28,8 +28,14 @@ Primary method: the reproducible `client/patch.py` script (no manual hex edits).
 - **No certificate pinning indicators** found (only stock .NET/Mono TLS API
   names). The client almost certainly uses default cert validation → our
   servers just need valid TLS certs.
-- **Anti-cheat**: EAC ships as files; CodeStage ACTk embedded in the client.
-  Both need neutering (pending — EAC servers are gone anyway).
+- **Anti-cheat**: EAC is neutered by `patch.py` (default on):
+  deletes the `EasyAntiCheat/` installer dir and replaces
+  `RecRoom_Data/Plugins/x86_64/EasyAntiCheat.dll` with a minimal stub DLL
+  (`client/eac_stub.py` builds it in pure Python — no Windows toolchain).
+  The stub exports the 11 `Cerberus_*` functions the client P/Invokes as
+  no-ops, so `EasyAntiCheat.Runtime.Initialize()` resolves and runs against
+  dead stubs instead of the defunct EAC backend. CodeStage ACTk detectors
+  are embedded client-side only; left in place for v1 (private server).
 - Known residual: 2 copies of the amplitude URLs also live in the
   `fieldAndParameterDefaultValueData` blob (reflection-only default values).
   The runtime code path uses the patched literals; telemetry failing is
