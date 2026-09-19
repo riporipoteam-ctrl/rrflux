@@ -59,6 +59,32 @@ async function doLogin() {
 }
 
 loginBtn.onclick = doLogin;
+const signupBtn = document.getElementById("signup-btn");
+async function doSignUp() {
+  loginErr.textContent = "";
+  loginBtn.disabled = true;
+  signupBtn.disabled = true;
+  signupBtn.textContent = "CREATING…";
+  try {
+    const s = await invoke("sign_up", {
+      email: emailEl.value.trim(),
+      password: passwordEl.value,
+    });
+    passwordEl.value = "";
+    whoEl.textContent = s.username;
+    loginCard.classList.add("hidden");
+    mainCard.classList.remove("hidden");
+    await refresh();
+  } catch (e) {
+    loginErr.textContent = String(e);
+    signupBtn.textContent = "CREATE ACCOUNT";
+  } finally {
+    loginBtn.disabled = false;
+    loginBtn.textContent = "SIGN IN";
+    signupBtn.disabled = false;
+  }
+}
+signupBtn.onclick = doSignUp;
 passwordEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
 emailEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
 

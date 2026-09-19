@@ -315,6 +315,63 @@ async fn sign_in(
     Ok(serde_json::json!({ "uid": uid, "username": username }))
 }
 
+/// Create a new Flux Rec account (email + password) via Firebase Auth.
+/// The account is signed in immediately, exactly like sign_in.
+#[tauri::command]
+async fn sign_up(
+    state: State<'_, AppState>,
+    email: String,
+    password: String,
+) -> Result<serde_json::Value, String> {
+    let api_key = env!("FIREBASE_WEB_API_KEY");
+    let url =
+        format!("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={api_key}");
+    let body: serde_json::Value = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({
+            "email": email,
+            "password": password,
+            "returnSecureToken": true,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("auth request failed: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("auth response unreadable: {e}"))?;
+    if let Some(msg) = body
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+    {
+        return Err(match msg {
+            "EMAIL_EXISTS" => "an account with that email already exists".to_string(),
+            "INVALID_EMAIL" => "that email doesn't look valid".to_string(),
+            "WEAK_PASSWORD" => "password must be at least 6 characters".to_string(),
+            "OPERATION_NOT_ALLOWED" => "sign-up is disabled for this project".to_string(),
+            _ => format!("sign-up failed: {msg}"),
+        });
+    }
+    let uid = body["localId"].as_str().unwrap_or("").to_string();
+    let id_token = body["idToken"].as_str().unwrap_or("").to_string();
+    let refresh_token = body["refreshToken"].as_str().unwrap_or("").to_string();
+    let username = email
+        .split('@')
+        .next()
+        .unwrap_or("player")
+        .to_string();
+    if uid.is_empty() || id_token.is_empty() {
+        return Err("auth returned an incomplete session".into());
+    }
+    *state.session.lock().await = Some(translator::Session {
+        uid: uid.clone(),
+        id_token,
+        refresh_token,
+        username: username.clone(),
+    });
+    Ok(serde_json::json!({ "uid": uid, "username": username }))
+}
+
 /// Firebase ID tokens expire after 1 hour. This loop wakes every 50 minutes
 /// and swaps the stored refresh token for a fresh ID token, so long
 /// play sessions (and the translator's Firestore calls) keep working.
@@ -409,6 +466,7 @@ fn main() {
             launch_game,
             game_installed,
             sign_in,
+            sign_up,
             translator_status,
         ])
         .run(tauri::generate_context!())
