@@ -11,6 +11,11 @@ Patches (in place, with .bak backups):
   2. RecRoom_Data/resources.assets
      - Swaps the two Photon App ID GUIDs found after the PhotonServerSettings
        marker. GUIDs are always 36 chars, so the swap is trivially length-safe.
+     - Role mapping (verified by binary layout, 2026-09-19): the two GUIDs
+       sit 44 bytes apart = 36-char GUID + 4-byte length prefix + one empty
+       string between them. That matches PUN 2's PhotonServerSettings field
+       order AppIdRealtime, AppIdChat, AppIdVoice with Chat empty (Rec Room
+       never used Photon Chat). So GUID #1 = AppIdRealtime, #2 = AppIdVoice.
   3. EasyAntiCheat neutering (default on, --keep-eac to skip)
      - Deletes the EasyAntiCheat/ installer directory (service setup files).
      - Replaces RecRoom_Data/Plugins/x86_64/EasyAntiCheat.dll with a minimal
@@ -187,10 +192,10 @@ def main():
                     help="replaces api2.amplitude.com (<=18 chars)")
     ap.add_argument("--photon-guid-1",
                     default=os.environ.get("RRFLUX_PHOTON_GUID_1"),
-                    help="replaces 1st Photon App ID GUID after the marker")
+                    help="replaces AppIdRealtime (1st GUID after the marker)")
     ap.add_argument("--photon-guid-2",
                     default=os.environ.get("RRFLUX_PHOTON_GUID_2"),
-                    help="replaces 2nd Photon App ID GUID after the marker")
+                    help="replaces AppIdVoice (2nd GUID after the marker)")
     ap.add_argument("--keep-eac", action="store_true",
                     help="skip EAC neutering (not recommended: EAC backend "
                          "is dead)")
