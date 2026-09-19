@@ -1,9 +1,9 @@
-RRFLUX LAUNCHER — PRIVATE PREVIEW LICENSE
+FLUX REC — PRIVATE PREVIEW LICENSE
 Copyright (c) 2026 Ripo Team. All rights reserved.
 
 This software is provided for private testing purposes only.
 
-1. You may install and use the RRFlux Launcher and the associated
+1. You may install and use Flux Rec and the associated
    game build on your own devices for personal, non-commercial use.
 2. You may not redistribute, re-upload, mirror, or share the
    installer, the downloaded game files, or access credentials
