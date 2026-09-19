@@ -149,6 +149,22 @@ fn is_our_exe(name: &str) -> bool {
     name.eq_ignore_ascii_case("Flux Rec.exe") || name.eq_ignore_ascii_case("fluxrec.exe")
 }
 
+/// The 2022 client initializes the Steam platform on startup
+/// (SteamAPI_Init). Without the Steam client running, it stops at
+/// "Failed to initialize Steam Platform". Steam is free; the game
+/// itself still talks only to the local Flux Rec server.
+fn is_steam_running() -> bool {
+    Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq steam.exe", "/FO", "CSV", "/NH"])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .to_ascii_lowercase()
+                .contains("steam.exe")
+        })
+        .unwrap_or(false)
+}
+
 fn describe_bind_error(e: &str) -> String {
     match port_holder(443) {
         Some((pid, name)) => format!(
@@ -161,6 +177,19 @@ fn describe_bind_error(e: &str) -> String {
 }
 
 fn main() {
+    // Log panics to %LOCALAPPDATA%\FluxRec\panic.log so a crashing
+    // background task (like the translator) leaves a trace we can show.
+    let pd = data_dir();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write as _;
+        let _ = std::fs::create_dir_all(&pd);
+        let msg = format!("PANIC: {}\n", info);
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(pd.join("panic.log"))
+            .and_then(|mut f| f.write_all(msg.as_bytes()));
+    }));
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -241,6 +270,17 @@ async fn async_main() {
         fatal("Game files not found.\n\nPlease reinstall Flux Rec.".into());
     }
 
+    // The 2022 client needs the Steam client running for its platform
+    // init; otherwise it stops at "Failed to initialize Steam Platform".
+    if !is_steam_running() {
+        fatal(
+            "Flux Rec needs the Steam client running.\n\n\
+             Please start Steam (free at store.steampowered.com), \
+             then launch Flux Rec again."
+                .into(),
+        );
+    }
+
     // 1. Silent sign-in (anonymous Firebase account).
     let session: SharedSession = Default::default();
     match auth::ensure_session(&dir).await {
@@ -284,7 +324,19 @@ async fn async_main() {
                 }
                 fatal(describe_bind_error(&e));
             }
-            Err(_) => fatal("The local game server died during startup.".into()),
+            Err(_) => {
+                // The serve task died without sending — almost always a
+                // panic. The panic hook logs to panic.log; surface it.
+                let panic_info = std::fs::read_to_string(dir.join("panic.log"))
+                    .ok()
+                    .and_then(|c| c.lines().last().map(|l| l.to_string()))
+                    .unwrap_or_else(|| "no details captured".into());
+                fatal(format!(
+                    "The local game server died during startup.\n\n\
+                     Details: {panic_info}\n\n\
+                     A log was saved to %LOCALAPPDATA%\\FluxRec\\panic.log"
+                ));
+            }
         }
     }
     if !started {
