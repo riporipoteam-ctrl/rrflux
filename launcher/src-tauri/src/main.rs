@@ -380,12 +380,15 @@ fn main() {
             let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
             // Clone before the first spawn moves `session`.
             let session_for_refresh = session.clone();
-            tokio::spawn(async move {
+            // NB: `setup` runs outside the Tokio runtime, so plain
+            // `tokio::spawn` panics here ("no reactor running"). Route
+            // through Tauri's runtime instead.
+            tauri::async_runtime::spawn(async move {
                 if let Err(e) = translator::serve(session, ready_tx).await {
                     eprintln!("{e}");
                 }
             });
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 let ok = ready_rx.await.is_ok();
                 if let Some(s) = handle.try_state::<AppState>() {
                     s.translator_ok.store(ok, Ordering::SeqCst);
@@ -395,7 +398,7 @@ fn main() {
                 }
             });
             // Keep the Firebase ID token fresh (it expires hourly).
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 refresh_loop(session_for_refresh).await;
             });
             Ok(())
