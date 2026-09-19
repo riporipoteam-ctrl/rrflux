@@ -30,7 +30,7 @@ Usage:
         [--photon-guid-1 <guid>] [--photon-guid-2 <guid>]
 
     patch.py --build <copy> --local      # recommended: local translator mode
-        (auth/api/telemetry -> 127.0.0.1, http; no cloud translator needed)
+        (auth/api/telemetry -> localhost, http; no cloud translator needed)
 
 COPY THE PRISTINE BUILD FIRST. Never patch the original: the script refuses
 to run twice on the same tree (it checks for .bak files).
@@ -201,7 +201,7 @@ def main():
                          "is dead)")
     ap.add_argument("--local", action="store_true",
                     help="point auth/api/telemetry at the launcher's local "
-                         "translator (127.0.0.1:80, plain http). This is the "
+                         "translator (localhost:80, plain http). This is the "
                          "recommended RRFlux mode: no cloud translator, no "
                          "custom domain needed. Overrides --auth-host etc.")
     args = ap.parse_args()
@@ -219,12 +219,19 @@ def main():
     reps = []
     if args.local:
         # Local-translator mode: the launcher serves the Rec Room API itself
-        # on 127.0.0.1:80. "127.0.0.1" (9 chars) fits every hostname slot,
-        # and the scheme is downgraded https:// -> http:// for the local
-        # URLs (fixpoint pass in patch_metadata handles the ordering).
+        # on 127.0.0.1:80. "localhost" (9 chars) fits every hostname slot.
+        # We use "localhost" (not "127.0.0.1") because the original hosts
+        # (ns.rec.net, auth.rec.net) were hostnames, not IPs. Using a bare
+        # IP can trigger IP-specific URI construction paths (e.g. building
+        # "127.0.0.1:port" without a scheme) that throw "Invalid URI scheme"
+        # in Mono's new Uri(). "localhost" is syntactically a valid URI
+        # scheme-name, resolves to 127.0.0.1, and preserves the original
+        # hostname code paths. Scheme is downgraded https:// -> http://
+        # for the local URLs (fixpoint pass in patch_metadata handles
+        # the ordering).
         for host in ("auth.rec.net", "ns.rec.net", "api2.amplitude.com"):
-            reps.append((host, "127.0.0.1"))
-        reps.append(("https://127.0.0.1", "http://127.0.0.1"))
+            reps.append((host, "localhost"))
+        reps.append(("https://localhost", "http://localhost"))
     else:
         if args.auth_host:
             reps.append(("auth.rec.net", args.auth_host))

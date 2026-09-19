@@ -178,7 +178,10 @@ pub async fn serve(
         .route("/api/config/*rest", get(config))
         .route("/api/players/v2/me", get(player_me))
         .route("/api/sanitize/*rest", get(sanitize))
-        .route("/2/httpapi", get(telemetry).post(telemetry))
+        // Telemetry sink: the patched client sends Amplitude traffic to
+        // http://127.0.0.1/httpapi and /identify (harmless either way).
+        .route("/httpapi", get(telemetry).post(telemetry))
+        .route("/identify", get(telemetry).post(telemetry))
         .route("/api/*rest", get(game_fallback).post(game_fallback))
         .fallback(get(game_fallback))
         .layer(axum::middleware::from_fn(log_middleware))
