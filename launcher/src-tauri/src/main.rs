@@ -1,4 +1,4 @@
-// RRFlux Launcher backend — download, verify, sign in, translate, launch.
+// Flux Rec launcher backend — download, verify, sign in, translate, launch.
 // Build on Windows: `tauri build` (or `cargo tauri build`).
 // Requires FIREBASE_WEB_API_KEY in the build environment (GitHub secret).
 
@@ -14,6 +14,58 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager, State, Window};
 use tokio::io::AsyncWriteExt;
 use translator::SharedSession;
+
+/// Where crash diagnostics go: %LOCALAPPDATA%\FluxRec\crash.log
+/// (falls back to the temp dir). The launcher runs with
+/// windows_subsystem, so panics are silent — this file is how
+/// we see them.
+fn crash_log_path() -> PathBuf {
+    std::env::var("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("FluxRec")
+        .join("crash.log")
+}
+
+fn append_crash_log(line: &str) {
+    let path = crash_log_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// Install a panic hook that writes every panic to the crash log,
+/// then mark startup so we can tell "crashed" apart from "killed
+/// externally (antivirus?)".
+fn init_crash_logging() {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    append_crash_log(&format!("--- Flux Rec launcher start (epoch {ts}) ---"));
+    std::panic::set_hook(Box::new(|info| {
+        let loc = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "?".into());
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic>".into());
+        append_crash_log(&format!("PANIC at {loc}: {payload}"));
+        eprintln!("Flux Rec launcher crashed: {payload} ({loc})");
+    }));
+}
 
 #[derive(Debug, Deserialize)]
 struct ManifestFile {
@@ -39,14 +91,17 @@ struct Progress {
 
 fn game_dir() -> Result<PathBuf, String> {
     let base = dirs_data_dir().ok_or("could not resolve app data dir")?;
-    Ok(base.join("RRFlux").join("game"))
+    Ok(base.join("FluxRec").join("game"))
 }
 
 fn dirs_data_dir() -> Option<PathBuf> {
-    std::env::var("PROGRAMDATA")
+    // Prefer the user's own profile: a per-machine install runs the app
+    // as a standard user, who cannot write to PROGRAMDATA.
+    std::env::var("LOCALAPPDATA")
         .map(PathBuf::from)
         .ok()
         .or_else(|| std::env::var("APPDATA").map(PathBuf::from).ok())
+        .or_else(|| std::env::var("PROGRAMDATA").map(PathBuf::from).ok())
 }
 
 async fn sha256_of(path: &PathBuf) -> Result<String, String> {
@@ -155,12 +210,22 @@ async fn launch_game(extra_args: Vec<String>) -> Result<(), String> {
     if !exe.exists() {
         return Err("game not installed yet".into());
     }
-    std::process::Command::new(&exe)
+    let mut child = std::process::Command::new(&exe)
         .args(&extra_args)
         .current_dir(game_dir()?)
         .spawn()
         .map_err(|e| e.to_string())?;
-    Ok(())
+    // If the game dies within 3s, report it instead of pretending it launched.
+    // (Suspects for an instant exit: the EAC stub DLL, Steam checks, translator.)
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    match child.try_wait().map_err(|e| e.to_string())? {
+        Some(status) => {
+            let msg = format!("game exited immediately (status: {status})");
+            append_crash_log(&msg);
+            Err(msg)
+        }
+        None => Ok(()),
+    }
 }
 
 #[tauri::command]
@@ -299,6 +364,7 @@ async fn refresh_loop(session: SharedSession) {
 }
 
 fn main() {
+    init_crash_logging();
     let session: SharedSession = Default::default();
     let state = AppState {
         session: session.clone(),
@@ -343,5 +409,5 @@ fn main() {
             translator_status,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running RRFlux launcher");
+        .expect("error while running Flux Rec launcher");
 }
