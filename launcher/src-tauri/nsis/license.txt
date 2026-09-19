@@ -1,0 +1,16 @@
+RRFLUX LAUNCHER — PRIVATE PREVIEW LICENSE
+Copyright (c) 2026 Ripo Team. All rights reserved.
+
+This software is provided for private testing purposes only.
+
+1. You may install and use the RRFlux Launcher and the associated
+   game build on your own devices for personal, non-commercial use.
+2. You may not redistribute, re-upload, mirror, or share the
+   installer, the downloaded game files, or access credentials
+   with anyone outside the private test group.
+3. The game build is a modified archival client provided as-is,
+   without warranty of any kind. Ripo Team is not liable for any
+   damage arising from its use.
+4. Ripo Team may revoke access at any time.
+
+By installing this software you agree to these terms.
