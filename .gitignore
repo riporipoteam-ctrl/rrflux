@@ -26,3 +26,6 @@ Thumbs.db
 .vscode/
 .idea/
 __pycache__/
+
+# Rust build outputs
+target/

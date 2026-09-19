@@ -1,0 +1,58 @@
+# Builds the Flux Rec game installer on every push to main that touches
+# game/. No Tauri, no launcher UI: this compiles the headless bootstrapper
+# ("Flux Rec.exe") and the download helper, then wraps them in an NSIS
+# installer that fetches the full game during setup. Players install and
+# double-click — that's it.
+
+name: Build game
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "game/**"
+      - ".github/workflows/build-game.yml"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build game binaries
+        working-directory: game
+        env:
+          # Baked into the bootstrapper at compile time for the silent
+          # anonymous Firebase sign-in (public web API key, not a secret).
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+        run: cargo build --release
+
+      - name: Stage files
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path stage | Out-Null
+          Copy-Item "game\target\release\fluxrec.exe" "stage\Flux Rec.exe"
+          Copy-Item "game\target\release\fluxrec-download.exe" "stage\fluxrec-download.exe"
+
+      - name: Ensure NSIS
+        shell: powershell
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y
+          }
+
+      - name: Build installer
+        shell: powershell
+        run: |
+          $ver = (Select-String -Path game\bootstrap\Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches.Groups[1].Value
+          $stage = (Resolve-Path stage).Path
+          $outfile = "$pwd\game\installer\FluxRec-Setup.exe"
+          makensis "/DVERSION=$ver" "/DSTAGEDIR=$stage" "/DOUTFILE=$outfile" game\installer\fluxrec.nsi
+
+      - name: Upload setup.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: FluxRec-setup
+          path: game/installer/FluxRec-Setup.exe
