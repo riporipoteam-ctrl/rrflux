@@ -25,6 +25,29 @@ struct VersionInfo {
     bootstrap_url: String,
 }
 
+/// Append one timestamped line to the update log in the state dir.
+/// This is the diagnostic lifeline: if an update ever stalls or fails on
+/// a player's PC, this file shows exactly how far it got.
+fn log_line(state_dir: &Path, msg: &str) {
+    use std::io::Write as _;
+    let path = state_dir.join("fluxrec-update.log");
+    // Cheap rotation: start fresh past ~1MB.
+    if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) > 1_000_000 {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "[{ts}] {msg}");
+    }
+}
+
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
@@ -108,7 +131,24 @@ pub struct GameUpdateOutcome {
 /// Bring the game dir up to date with the remote manifest.
 /// Shows `progress` only while files actually need downloading.
 /// Returns how many files changed. Errors are fatal for the caller.
+///
+/// Checking is instant by design: files already on disk are trusted without
+/// re-hashing (re-hashing gigabytes froze slower PCs). Fresh downloads are
+/// still SHA-256 verified before being put in place.
 pub async fn update_game_files(
+    manifest_url: &str,
+    game_dir: &Path,
+    state_dir: &Path,
+    window_title: &str,
+) -> Result<GameUpdateOutcome, String> {
+    let r = update_game_files_inner(manifest_url, game_dir, state_dir, window_title).await;
+    if let Err(e) = &r {
+        log_line(state_dir, &format!("ERROR: {e}"));
+    }
+    r
+}
+
+async fn update_game_files_inner(
     manifest_url: &str,
     game_dir: &Path,
     state_dir: &Path,
@@ -118,6 +158,10 @@ pub async fn update_game_files(
     let client = http_client()?;
     std::fs::create_dir_all(game_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(state_dir).map_err(|e| e.to_string())?;
+    log_line(
+        state_dir,
+        &format!("update start (common v{})", env!("CARGO_PKG_VERSION")),
+    );
 
     // What do we have locally?
     let local = manifest::load_local(state_dir);
@@ -166,8 +210,16 @@ pub async fn update_game_files(
     };
 
     let remote: Manifest = manifest::parse(&remote_bytes)?;
+    log_line(
+        state_dir,
+        &format!(
+            "manifest: {} files, local_manifest={}",
+            remote.files.len(),
+            local_manifest.is_some()
+        ),
+    );
     let Diff {
-        to_download: mut to_download,
+        mut to_download,
         to_delete,
     } = manifest::diff(local_manifest.as_ref(), &remote);
 
@@ -195,6 +247,27 @@ pub async fn update_game_files(
         to_download.extend(extra);
     }
 
+    // First-run migration (no local manifest yet — e.g. files left by the
+    // previous installer): those files were hash-verified when originally
+    // downloaded, so trust what's on disk and only fetch what's missing.
+    // This is what keeps the check instant instead of re-hashing gigabytes.
+    // On later runs the local manifest exists, so changed files are always
+    // re-downloaded even though they're present.
+    let mut trusted = 0usize;
+    if local_manifest.is_none() {
+        let before = to_download.len();
+        to_download.retain(|f| !game_dir.join(&f.path).exists());
+        trusted = before - to_download.len();
+    }
+    log_line(
+        state_dir,
+        &format!(
+            "check done: {} to download, {} trusted as-is",
+            to_download.len(),
+            trusted
+        ),
+    );
+
     let mut outcome = GameUpdateOutcome {
         downloaded: 0,
         deleted: 0,
@@ -209,16 +282,9 @@ pub async fn update_game_files(
             } else {
                 1.0
             };
-            // While nothing has been fetched yet we're still verifying the
-            // files already on disk — say so instead of looking frozen.
-            let verb = if p.bytes_done == 0 {
-                "Checking game files"
-            } else {
-                "Downloading game files"
-            };
             let label = match p.bytes_total {
                 Some(bt) if bt > 0 => format!(
-                    "{verb}… {}/{} files ({:.1}/{:.1} MB)\n{}",
+                    "Downloading game files… {}/{} files ({:.1}/{:.1} MB)\n{}",
                     p.files_done,
                     p.files_total,
                     p.bytes_done as f64 / 1048576.0,
@@ -226,7 +292,7 @@ pub async fn update_game_files(
                     p.current_file
                 ),
                 _ => format!(
-                    "{verb}… {}/{} files\n{}",
+                    "Downloading game files… {}/{} files\n{}",
                     p.files_done, p.files_total, p.current_file
                 ),
             };
@@ -258,6 +324,13 @@ pub async fn update_game_files(
 
     // Persist the new manifest + ETag so next launch can 304.
     manifest::save_local(state_dir, &remote_bytes, etag.as_deref())?;
+    log_line(
+        state_dir,
+        &format!(
+            "done: {} downloaded, {} deleted",
+            outcome.downloaded, outcome.deleted
+        ),
+    );
 
     Ok(outcome)
 }

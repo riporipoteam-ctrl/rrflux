@@ -1,8 +1,9 @@
 // Parallel file downloader with resume and retries.
 //
 // - Files download concurrently (default 12) over one shared connection pool.
-// - A file already on disk with a matching sha256 is skipped, so an
-//   interrupted run (sleep, crash, closed laptop) resumes where it left off.
+// - The caller decides which files need fetching; files already trusted on
+//   disk are filtered out before this runs, so nothing here re-verifies
+//   existing files (re-hashing gigabytes on the check path froze slower PCs).
 // - Each download goes to a ".part" temp file first and is renamed into
 //   place only after the hash verifies, so a half-written file never looks
 //   valid.
@@ -119,11 +120,9 @@ async fn download_one(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    // Resume: already valid on disk (checked off the async runtime so
-    // hashing big files can't stall downloads or the progress window).
-    if hash_matches_blocking(&dest, &entry.sha256).await? {
-        return Ok((0, false));
-    }
+    // NOTE: no existence/hash check here — the caller (update_game_files)
+    // filters out files already trusted on disk. Everything reaching this
+    // point is downloaded fresh and hash-verified below.
     let tmp = dir.join(format!("{}.part", entry.path));
     let mut last_err = String::new();
     for attempt in 0..=opts.retries {
