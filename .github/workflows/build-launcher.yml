@@ -29,5 +29,9 @@ jobs:
 
       - name: Build setup.exe
         uses: tauri-apps/tauri-action@v0
+        env:
+          # Baked into the launcher at compile time for Firebase Auth
+          # sign-in (public web API key, not a secret). Set as a repo secret.
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
         with:
           projectPath: launcher

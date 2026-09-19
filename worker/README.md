@@ -1,4 +1,12 @@
-# RRFlux edge translator (Cloudflare Worker)
+# RRFlux edge translator (Cloudflare Worker) — FALLBACK
+
+> **Status: fallback.** The primary design is now the **local translator**
+> built into the launcher (`launcher/src-tauri/src/translator.rs`): it serves
+> the same Rec Room API from `127.0.0.1:80` on the player's PC, so no cloud
+> translator, no extra account, and no custom domain are needed. This Worker
+> stays as a backup in case Windows testing shows the 2022 client refuses
+> plain-HTTP localhost calls. Nothing here is deployed until someone sets
+> `CLOUDFLARE_API_TOKEN`.
 
 The Nov 2022 game client only speaks Rec Room's HTTP API. Firebase speaks
 Firebase. Photon does multiplayer but not login. This Worker is the tiny

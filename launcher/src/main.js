@@ -4,6 +4,13 @@ const { listen } = window.__TAURI__.event;
 
 const MANIFEST_URL = "https://example.invalid/rrflux/manifest.json"; // TODO: real host
 
+const loginCard = document.getElementById("login-card");
+const mainCard = document.getElementById("main-card");
+const loginBtn = document.getElementById("login-btn");
+const loginErr = document.getElementById("login-err");
+const emailEl = document.getElementById("email");
+const passwordEl = document.getElementById("password");
+const whoEl = document.getElementById("who");
 const statusEl = document.getElementById("status");
 const barEl = document.getElementById("bar");
 const pctEl = document.getElementById("pct");
@@ -17,8 +24,40 @@ function setBar(frac) {
   pctEl.textContent = (frac * 100).toFixed(0) + "%";
 }
 
+async function doLogin() {
+  loginErr.textContent = "";
+  loginBtn.disabled = true;
+  loginBtn.textContent = "SIGNING IN…";
+  try {
+    const s = await invoke("sign_in", {
+      email: emailEl.value.trim(),
+      password: passwordEl.value,
+    });
+    passwordEl.value = "";
+    whoEl.textContent = s.username;
+    loginCard.classList.add("hidden");
+    mainCard.classList.remove("hidden");
+    await refresh();
+  } catch (e) {
+    loginErr.textContent = String(e);
+    loginBtn.disabled = false;
+    loginBtn.textContent = "SIGN IN";
+  }
+}
+
+loginBtn.onclick = doLogin;
+passwordEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+emailEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+
 async function refresh() {
   const installed = await invoke("game_installed");
+  const translatorOk = await invoke("translator_status");
+  if (!translatorOk) {
+    setStatus("Local translator failed to start (port 80 busy?). Restart the launcher.");
+    actionBtn.disabled = true;
+    actionBtn.textContent = "⚠ TRANSLATOR DOWN";
+    return;
+  }
   if (installed) {
     setStatus("Ready to play.");
     setBar(1);
@@ -60,11 +99,11 @@ async function install() {
 async function play() {
   setStatus("Launching…");
   try {
+    // The local translator (127.0.0.1:80) answers the game's API calls
+    // from the live Firebase session — no extra args needed.
     await invoke("launch_game", { extraArgs: [] });
     setStatus("Game is running. Have fun! 🎮");
   } catch (e) {
     setStatus("Launch failed: " + e);
   }
 }
-
-refresh();

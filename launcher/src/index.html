@@ -5,12 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>RRFlux</title>
 <style>
-  :root { --bg: #0d1117; --panel: #161b22; --accent: #7c3aed; --accent2: #06b6d4; --text: #e6edf3; --dim: #8b949e; }
+  :root { --bg: #0d1117; --panel: #161b22; --accent: #7c3aed; --accent2: #06b6d4; --text: #e6edf3; --dim: #8b949e; --err: #f85149; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; user-select: none; }
   .logo { font-size: 64px; font-weight: 800; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; letter-spacing: 2px; }
   .tag { color: var(--dim); margin: 8px 0 32px; font-size: 14px; letter-spacing: 4px; text-transform: uppercase; }
   .card { background: var(--panel); border: 1px solid #30363d; border-radius: 12px; padding: 28px 32px; width: 560px; }
+  .hidden { display: none; }
   .status { font-size: 14px; color: var(--dim); min-height: 20px; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bar-wrap { background: #0d1117; border-radius: 8px; height: 14px; overflow: hidden; border: 1px solid #30363d; }
   .bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 8px; transition: width .15s; }
@@ -18,18 +19,37 @@
   button { margin-top: 20px; width: 100%; padding: 14px; font-size: 16px; font-weight: 700; letter-spacing: 1px; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none; border-radius: 8px; cursor: pointer; }
   button:disabled { opacity: .4; cursor: default; }
   button:not(:disabled):hover { filter: brightness(1.15); }
+  .who { font-size: 13px; color: var(--dim); margin-bottom: 12px; }
+  .who b { color: var(--text); }
+  label { display: block; font-size: 12px; color: var(--dim); margin: 12px 0 6px; letter-spacing: 1px; text-transform: uppercase; }
+  input { width: 100%; padding: 12px; font-size: 15px; color: var(--text); background: #0d1117; border: 1px solid #30363d; border-radius: 8px; outline: none; }
+  input:focus { border-color: var(--accent); }
+  .err { color: var(--err); font-size: 13px; min-height: 18px; margin-top: 10px; }
   .foot { margin-top: 24px; font-size: 11px; color: var(--dim); }
 </style>
 </head>
 <body>
   <div class="logo">RRFLUX</div>
   <div class="tag">Ripo Team</div>
-  <div class="card">
+
+  <div class="card" id="login-card">
+    <div class="status">Sign in with your RRFlux account.</div>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" placeholder="you@example.com" />
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" />
+    <div class="err" id="login-err"></div>
+    <button id="login-btn">SIGN IN</button>
+  </div>
+
+  <div class="card hidden" id="main-card">
+    <div class="who">Signed in as <b id="who"></b></div>
     <div class="status" id="status">Checking installation…</div>
     <div class="bar-wrap"><div class="bar" id="bar"></div></div>
     <div class="pct" id="pct"></div>
     <button id="action" disabled>…</button>
   </div>
+
   <div class="foot">Private build — for Ripo Team players only.</div>
   <script src="main.js"></script>
 </body>

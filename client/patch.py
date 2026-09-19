@@ -24,6 +24,9 @@ Usage:
         [--web-host <host>] [--telemetry-host <host>] \\
         [--photon-guid-1 <guid>] [--photon-guid-2 <guid>]
 
+    patch.py --build <copy> --local      # recommended: local translator mode
+        (auth/api/telemetry -> 127.0.0.1, http; no cloud translator needed)
+
 COPY THE PRISTINE BUILD FIRST. Never patch the original: the script refuses
 to run twice on the same tree (it checks for .bak files).
 
@@ -69,35 +72,44 @@ def iter_literals(data, table_off, data_off, n):
 
 
 def patch_metadata(path, replacements):
-    """replacements: list of (old_substr, new_substr), applied longest-first."""
+    """replacements: list of (old_substr, new_substr), applied longest-first.
+
+    Runs to a fixpoint (bounded): a replacement may introduce text that a
+    later-listed replacement matches (e.g. --local first swaps the host,
+    then downgrades the scheme of the resulting 127.0.0.1 URL)."""
     data, table_off, data_off, n = parse_metadata(path)
     reps = sorted(replacements, key=lambda r: -len(r[0]))
     changed = []
-    for i, length, off in iter_literals(data, table_off, data_off, n):
-        if length == 0 or length > 512:
-            continue
-        raw = bytes(data[data_off + off:data_off + off + length])
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            continue
-        new_text = text
-        for old, new in reps:
-            if old in new_text:
-                new_text = new_text.replace(old, new)
-        if new_text == text:
-            continue
-        new_raw = new_text.encode("utf-8")
-        if len(new_raw) > length:
-            raise SystemExit(
-                f"replacement too long for literal #{i} "
-                f"({len(new_raw)} > {length} bytes): {text!r} -> {new_text!r}\n"
-                f"Pick a shorter hostname.")
-        # overwrite bytes, zero-pad the remainder, update length field
-        data[data_off + off:data_off + off + length] = b"\x00" * length
-        data[data_off + off:data_off + off + len(new_raw)] = new_raw
-        struct.pack_into("<I", data, table_off + i * 8, len(new_raw))
-        changed.append((i, text, new_text))
+    for _pass in range(5):
+        pass_changed = False
+        for i, length, off in iter_literals(data, table_off, data_off, n):
+            if length == 0 or length > 512:
+                continue
+            raw = bytes(data[data_off + off:data_off + off + length])
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            new_text = text
+            for old, new in reps:
+                if old in new_text:
+                    new_text = new_text.replace(old, new)
+            if new_text == text:
+                continue
+            new_raw = new_text.encode("utf-8")
+            if len(new_raw) > length:
+                raise SystemExit(
+                    f"replacement too long for literal #{i} "
+                    f"({len(new_raw)} > {length} bytes): {text!r} -> {new_text!r}\n"
+                    f"Pick a shorter hostname.")
+            # overwrite bytes, zero-pad the remainder, update length field
+            data[data_off + off:data_off + off + length] = b"\x00" * length
+            data[data_off + off:data_off + off + len(new_raw)] = new_raw
+            struct.pack_into("<I", data, table_off + i * 8, len(new_raw))
+            changed.append((i, text, new_text))
+            pass_changed = True
+        if not pass_changed:
+            break
     backup = path + ".bak"
     shutil.copy2(path, backup)
     with open(path, "wb") as f:
@@ -182,6 +194,11 @@ def main():
     ap.add_argument("--keep-eac", action="store_true",
                     help="skip EAC neutering (not recommended: EAC backend "
                          "is dead)")
+    ap.add_argument("--local", action="store_true",
+                    help="point auth/api/telemetry at the launcher's local "
+                         "translator (127.0.0.1:80, plain http). This is the "
+                         "recommended RRFlux mode: no cloud translator, no "
+                         "custom domain needed. Overrides --auth-host etc.")
     args = ap.parse_args()
 
     meta = os.path.join(args.build, "RecRoom_Data", "il2cpp_data",
@@ -195,12 +212,21 @@ def main():
                              f"start from a fresh copy")
 
     reps = []
-    if args.auth_host:
-        reps.append(("auth.rec.net", args.auth_host))
-    if args.api_host:
-        reps.append(("ns.rec.net", args.api_host))
-    if args.telemetry_host:
-        reps.append(("api2.amplitude.com", args.telemetry_host))
+    if args.local:
+        # Local-translator mode: the launcher serves the Rec Room API itself
+        # on 127.0.0.1:80. "127.0.0.1" (9 chars) fits every hostname slot,
+        # and the scheme is downgraded https:// -> http:// for the local
+        # URLs (fixpoint pass in patch_metadata handles the ordering).
+        for host in ("auth.rec.net", "ns.rec.net", "api2.amplitude.com"):
+            reps.append((host, "127.0.0.1"))
+        reps.append(("https://127.0.0.1", "http://127.0.0.1"))
+    else:
+        if args.auth_host:
+            reps.append(("auth.rec.net", args.auth_host))
+        if args.api_host:
+            reps.append(("ns.rec.net", args.api_host))
+        if args.telemetry_host:
+            reps.append(("api2.amplitude.com", args.telemetry_host))
     if args.web_host:
         reps.append(("rec.net", args.web_host))
     if not reps and not (args.photon_guid_1 or args.photon_guid_2) \
