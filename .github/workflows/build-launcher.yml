@@ -1,0 +1,33 @@
+# Builds the RRFlux Launcher setup.exe on every push to main that touches
+# launcher/. The Windows NSIS installer is uploaded as a build artifact —
+# players download it and run it; no other steps needed on their side.
+
+name: Build launcher
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "launcher/**"
+      - ".github/workflows/build-launcher.yml"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Tauri CLI
+        working-directory: launcher
+        run: npm install
+
+      - name: Build setup.exe
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: launcher
