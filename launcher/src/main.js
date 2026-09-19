@@ -1,12 +1,12 @@
-// RRFlux launcher frontend. Talks to the Rust backend via Tauri IPC.
+// Flux Rec launcher frontend. Talks to the Rust backend via Tauri IPC.
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 // Where the launcher downloads the game from. Set it once in Settings —
 // saved locally, so changing hosts never needs a launcher rebuild.
-const DEFAULT_MANIFEST_URL = "https://example.invalid/rrflux/manifest.json";
+const DEFAULT_MANIFEST_URL = "https://example.invalid/fluxrec/manifest.json";
 const manifestUrl = () =>
-  (localStorage.getItem("rrflux_manifest_url") || "").trim() || DEFAULT_MANIFEST_URL;
+  (localStorage.getItem("fluxrec_manifest_url") || "").trim() || DEFAULT_MANIFEST_URL;
 
 const loginCard = document.getElementById("login-card");
 const mainCard = document.getElementById("main-card");
@@ -22,11 +22,11 @@ const actionBtn = document.getElementById("action");
 const manifestUrlEl = document.getElementById("manifest-url");
 
 // Persist the manifest URL setting.
-manifestUrlEl.value = localStorage.getItem("rrflux_manifest_url") || "";
+manifestUrlEl.value = localStorage.getItem("fluxrec_manifest_url") || "";
 manifestUrlEl.addEventListener("change", () => {
   const v = manifestUrlEl.value.trim();
-  if (v) localStorage.setItem("rrflux_manifest_url", v);
-  else localStorage.removeItem("rrflux_manifest_url");
+  if (v) localStorage.setItem("fluxrec_manifest_url", v);
+  else localStorage.removeItem("fluxrec_manifest_url");
 });
 
 const fmtMB = (n) => (n / 1048576).toFixed(1) + " MB";
