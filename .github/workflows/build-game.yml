@@ -65,7 +65,7 @@ jobs:
           $tag = "v$ver"
           gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --prerelease --title "Flux Rec v$ver" --notes "No launcher: install and the game opens directly. Self-updates on launch — setup only runs once."
+            gh release create $tag --prerelease --title "Flux Rec v$ver" --notes "No launcher: install and the game opens directly. Self-updates on launch - setup only runs once."
           }
           gh release upload $tag "game\installer\FluxRec-Setup.exe" "stage\FluxRec-bootstrap.exe" --clobber
 
