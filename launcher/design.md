@@ -3,7 +3,21 @@
 Two pieces: the **installer** (`setup.exe`) and the **launcher app**.
 The installer is one-shot; the launcher is the player's daily driver.
 
-## setup.exe (NSIS) — installer
+## Decision (2026-09-19): Tauri
+
+Picked **Tauri** over C#/WPF:
+- **Tiny installer** (~5–15 MB vs 60–150 MB self-contained .NET) — first impressions matter.
+- **Modern UI** with web tech (gamer aesthetic is easy; XAML is not).
+- **Rust backend** — fast streaming downloads, SHA-256 verify, process launch.
+- **Built-in NSIS bundler** → `setup.exe` for free (replaces the hand-written `setup.nsi` below, kept for reference).
+- **Built-in updater** — game + launcher updates without reinstalls.
+- WebView2 is preinstalled on Win10/11 — non-issue in 2026.
+
+Scaffold: `launcher/src-tauri/` (Rust backend: manifest fetch, resumable
+download w/ progress events, SHA-256 verify, game launch) + `launcher/src/`
+(frontend). Build on Windows with `tauri build`.
+
+## setup.exe (NSIS) — installer reference
 
 - Built with NSIS (`makensis`), scripted in `launcher/setup.nsi`.
 - Installs to `%LOCALAPPDATA%\RRFlux` (user can change dir).
