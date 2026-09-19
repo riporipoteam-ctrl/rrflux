@@ -16,13 +16,14 @@
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
-    response::Json,
+    middleware::Next,
+    response::{Json, Response},
     routing::get,
     Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug, Default)]
@@ -35,6 +36,40 @@ pub struct Session {
 
 /// The signed-in player, if any. Set by the bootstrap's silent auth.
 pub type SharedSession = Arc<Mutex<Option<Session>>>;
+
+// Where request logs go (%LOCALAPPDATA%\FluxRec\translator.log), set by the
+// bootstrap. Lets us see exactly which endpoints the game client calls,
+// which is how new game-surface endpoints get implemented.
+static LOG_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+pub fn set_log_dir(dir: PathBuf) {
+    let _ = LOG_DIR.set(dir);
+}
+
+fn log_req(method: &str, path_and_query: &str) {
+    if let Some(dir) = LOG_DIR.get() {
+        use std::io::Write as _;
+        let line = format!("{method} {path_and_query}\n");
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("translator.log"))
+            .and_then(|mut f| f.write_all(line.as_bytes()));
+    }
+}
+
+async fn log_middleware(
+    req: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let pq = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_default();
+    log_req(req.method().as_str(), &pq);
+    next.run(req).await
+}
 
 #[derive(Deserialize)]
 #[allow(non_snake_case)] // field names must match the game's query params
@@ -143,6 +178,7 @@ pub async fn serve(
         .route("/2/httpapi", get(telemetry).post(telemetry))
         .route("/api/{*rest}", get(game_fallback).post(game_fallback))
         .fallback(get(game_fallback))
+        .layer(axum::middleware::from_fn(log_middleware))
         .with_state(session);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 80));

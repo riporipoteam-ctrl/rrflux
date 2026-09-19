@@ -183,6 +183,10 @@ async fn async_main() {
     let d2 = dir.clone();
     tokio::spawn(async move { auth::refresh_loop(s2, d2).await; });
 
+    // Log every request the game makes — that's how we learn which
+    // endpoints the client actually needs.
+    translator::set_log_dir(dir.clone());
+
     // 2. Local translator on 127.0.0.1:80. One retry if a stale Flux Rec
     //    process is squatting the port; otherwise name the culprit.
     let mut started = false;
