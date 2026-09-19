@@ -28,7 +28,9 @@ pub struct DownloadOptions {
 impl Default for DownloadOptions {
     fn default() -> Self {
         Self {
-            concurrency: 12,
+            // Hugging Face rate-limits anonymous IPs (HTTP 429). 12 parallel
+            // connections was tripping it; 4 stays under the radar.
+            concurrency: 4,
             retries: 3,
         }
     }
@@ -140,6 +142,14 @@ async fn fetch_one(
         .send()
         .await
         .map_err(|e| format!("download failed for {what}: {e}"))?;
+    if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        // Hugging Face rate limit: wait it out instead of failing fast.
+        // The caller retries with its own backoff; we signal with a
+        // distinctive message so the log shows what happened.
+        return Err(format!(
+            "download failed for {what}: HTTP 429 Too Many Requests (rate limited, will retry)"
+        ));
+    }
     if !resp.status().is_success() {
         return Err(format!(
             "download failed for {what}: HTTP {}",
@@ -166,7 +176,15 @@ async fn download_one(
     let mut last_err = String::new();
     for attempt in 0..=opts.retries {
         if attempt > 0 {
-            tokio::time::sleep(Duration::from_secs(1 << attempt.min(4))).await;
+            // Longer wait for rate limits (429): 15s, 30s, 60s.
+            // Normal errors: 2s, 4s, 8s.
+            let is_rate_limited = last_err.contains("429");
+            let wait_secs = if is_rate_limited {
+                15 * (1 << (attempt - 1).min(2)) // 15, 30, 60
+            } else {
+                1 << attempt.min(4) // 2, 4, 8, 16
+            };
+            tokio::time::sleep(Duration::from_secs(wait_secs)).await;
         }
         match fetch_one(&client, &entry.url, &tmp, &entry.path).await {
             Ok(bytes) => {

@@ -170,22 +170,60 @@ async fn update_game_files_inner(
         .and_then(|(bytes, _)| manifest::parse(bytes).ok());
 
     // Fetch the remote manifest (conditional request when we have an ETag).
+    // Hugging Face rate-limits anonymous IPs (HTTP 429). Back off hard on
+    // 429 instead of hammering: 10s, 30s, 60s, then give up.
     let mut req = client.get(manifest_url);
     if let Some((_, Some(etag))) = &local {
         req = req.header(reqwest::header::IF_NONE_MATCH, etag);
     }
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            // Offline but we have game files: carry on; the game itself
-            // will report connection problems at sign-in.
-            if local_manifest.is_some() {
-                return Ok(GameUpdateOutcome {
-                    downloaded: 0,
-                    deleted: 0,
-                });
+    let resp = {
+        let mut last_err = String::new();
+        let mut result = None;
+        for attempt in 0..4 {
+            if attempt > 0 {
+                let wait = [10, 30, 60][attempt - 1];
+                log_line(state_dir, &format!("manifest 429, waiting {wait}s (attempt {attempt}/3)"));
+                println!("Rate limited by download server, waiting {wait}s...");
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+                // Rebuild the request (req was consumed by send()).
+                let mut r = client.get(manifest_url);
+                if let Some((_, Some(etag))) = &local {
+                    r = r.header(reqwest::header::IF_NONE_MATCH, etag);
+                }
+                req = r;
             }
-            return Err(format!("couldn't fetch the game manifest: {e}"));
+            match req.send().await {
+                Ok(r) => {
+                    if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < 3 {
+                        last_err = "HTTP 429 Too Many Requests".to_string();
+                        // Need to rebuild req for next iteration; do it at loop top.
+                        // Temporarily store a fresh request builder.
+                        let mut r2 = client.get(manifest_url);
+                        if let Some((_, Some(etag))) = &local {
+                            r2 = r2.header(reqwest::header::IF_NONE_MATCH, etag);
+                        }
+                        req = r2;
+                        continue;
+                    }
+                    result = Some(r);
+                    break;
+                }
+                Err(e) => {
+                    // Offline but we have game files: carry on; the game itself
+                    // will report connection problems at sign-in.
+                    if local_manifest.is_some() {
+                        return Ok(GameUpdateOutcome {
+                            downloaded: 0,
+                            deleted: 0,
+                        });
+                    }
+                    return Err(format!("couldn't fetch the game manifest: {e}"));
+                }
+            }
+        }
+        match result {
+            Some(r) => r,
+            None => return Err(format!("manifest request failed: {last_err} (rate limited, try again later)")),
         }
     };
 
