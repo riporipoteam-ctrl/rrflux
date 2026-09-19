@@ -29,6 +29,13 @@ service cloud.firestore {
         resource.data.hostUid == request.auth.uid;
     }
 
+    // Launcher manifest: public read (needed before sign-in for updates),
+    // written only via Admin SDK / console.
+    match /meta/manifest {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Everything else: deny by default.
     match /{document=**} {
       allow read, write: if false;
