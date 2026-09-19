@@ -49,7 +49,8 @@ jobs:
           $ver = (Select-String -Path game\bootstrap\Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches.Groups[1].Value
           $stage = (Resolve-Path stage).Path
           $outfile = "$pwd\game\installer\FluxRec-Setup.exe"
-          makensis "/DVERSION=$ver" "/DSTAGEDIR=$stage" "/DOUTFILE=$outfile" game\installer\fluxrec.nsi
+          # Absolute path: choco's PATH update isn't visible to this step.
+          & "C:\Program Files (x86)\NSIS\makensis.exe" "/DVERSION=$ver" "/DSTAGEDIR=$stage" "/DOUTFILE=$outfile" game\installer\fluxrec.nsi
 
       - name: Upload setup.exe
         uses: actions/upload-artifact@v4
