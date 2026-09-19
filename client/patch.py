@@ -11,6 +11,12 @@ Patches (in place, with .bak backups):
   2. RecRoom_Data/resources.assets
      - Swaps the two Photon App ID GUIDs found after the PhotonServerSettings
        marker. GUIDs are always 36 chars, so the swap is trivially length-safe.
+  3. EasyAntiCheat neutering (default on, --keep-eac to skip)
+     - Deletes the EasyAntiCheat/ installer directory (service setup files).
+     - Replaces RecRoom_Data/Plugins/x86_64/EasyAntiCheat.dll with a minimal
+       stub DLL exporting the 11 Cerberus_* functions as no-ops, so the
+       client's EasyAntiCheat.Runtime.Initialize() resolves and runs against
+       dead stubs instead of the (defunct) EAC backend.
 
 Usage:
     patch.py --build <path-to-a-COPY-of-the-build> \\
@@ -31,6 +37,9 @@ import re
 import shutil
 import struct
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from eac_stub import build_stub_dll
 
 GUID_RE = re.compile(rb"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                      rb"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
@@ -126,6 +135,28 @@ def patch_assets(path, guid1, guid2):
     return [(o.decode(), n.decode()) for o, n in swaps], backup
 
 
+# --------------------------------------------------------------------- eac
+def neuter_eac(build):
+    """Delete EAC installer dir; swap the EAC plugin DLL for a no-op stub."""
+    steps = []
+    eac_dir = os.path.join(build, "EasyAntiCheat")
+    if os.path.isdir(eac_dir):
+        shutil.rmtree(eac_dir)
+        steps.append(f"removed {eac_dir}/")
+    dll = os.path.join(build, "RecRoom_Data", "Plugins", "x86_64",
+                       "EasyAntiCheat.dll")
+    if os.path.isfile(dll):
+        bak = dll + ".bak"
+        if not os.path.exists(bak):
+            shutil.copy2(dll, bak)
+        with open(dll, "wb") as f:
+            f.write(build_stub_dll())
+        steps.append(f"replaced {dll} with no-op stub (backup: {bak})")
+    else:
+        steps.append("EAC plugin DLL not found, nothing to stub")
+    return steps
+
+
 # ----------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="RRFlux client patcher v1")
@@ -148,6 +179,9 @@ def main():
     ap.add_argument("--photon-guid-2",
                     default=os.environ.get("RRFLUX_PHOTON_GUID_2"),
                     help="replaces 2nd Photon App ID GUID after the marker")
+    ap.add_argument("--keep-eac", action="store_true",
+                    help="skip EAC neutering (not recommended: EAC backend "
+                         "is dead)")
     args = ap.parse_args()
 
     meta = os.path.join(args.build, "RecRoom_Data", "il2cpp_data",
@@ -169,8 +203,13 @@ def main():
         reps.append(("api2.amplitude.com", args.telemetry_host))
     if args.web_host:
         reps.append(("rec.net", args.web_host))
-    if not reps and not (args.photon_guid_1 or args.photon_guid_2):
+    if not reps and not (args.photon_guid_1 or args.photon_guid_2) \
+            and args.keep_eac:
         raise SystemExit("nothing to patch: pass at least one replacement")
+
+    if not args.keep_eac:
+        for step in neuter_eac(args.build):
+            print(f"[eac] {step}")
 
     if reps:
         changed, bak = patch_metadata(meta, reps)
