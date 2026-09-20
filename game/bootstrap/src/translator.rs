@@ -408,6 +408,56 @@ async fn telemetry() -> (StatusCode, Json<Value>) {
     j(StatusCode::OK, json!({"ok": true}))
 }
 
+/// Name-server service-discovery document.
+/// The patched 2022 client was pointed at https://localhost (bare host),
+/// so it issues `GET /` to discover every service URL. Answer with the
+/// flat {ServiceName: "https://localhost"} map (36 labels, Dorknet-style).
+/// Without this the client has no service URLs and hangs at
+/// "Connecting to RecNet".
+async fn nameserver() -> (StatusCode, Json<Value>) {
+    j(
+        StatusCode::OK,
+        json!({
+            "WWW": "https://localhost",
+            "API": "https://localhost",
+            "Accounts": "https://localhost",
+            "Auth": "https://localhost",
+            "BugReporting": "https://localhost",
+            "Cards": "https://localhost",
+            "CDN": "https://localhost",
+            "Chat": "https://localhost",
+            "Clubs": "https://localhost",
+            "CMS": "https://localhost",
+            "Commerce": "https://localhost",
+            "Data": "https://localhost",
+            "DataCollection": "https://localhost",
+            "Discovery": "https://localhost",
+            "Econ": "https://localhost",
+            "GameLogs": "https://localhost",
+            "Geo": "https://localhost",
+            "Images": "https://localhost",
+            "Leaderboard": "https://localhost",
+            "Link": "https://localhost",
+            "Lists": "https://localhost",
+            "Matchmaking": "https://localhost",
+            "Moderation": "https://localhost",
+            "NameServer": "https://localhost",
+            "Notifications": "https://localhost",
+            "PlatformNotifications": "https://localhost",
+            "PlayerSettings": "https://localhost",
+            "RoomComments": "https://localhost",
+            "RoomieIntegrations": "https://localhost",
+            "Rooms": "https://localhost",
+            "Storage": "https://localhost",
+            "Strings": "https://localhost",
+            "StringsCDN": "https://localhost",
+            "Studio": "https://localhost",
+            "Thorn": "https://localhost",
+            "Videos": "https://localhost"
+        }),
+    )
+}
+
 async fn game_fallback() -> (StatusCode, Json<Value>) {
     // Return 200 with empty object instead of 404. The 2022 client may
     // crash on unexpected 404s; empty 200 is safer for unimplemented
@@ -441,6 +491,10 @@ pub async fn serve(
     let app = Router::new()
         .route("/health", get(health))
         .route("/shutdown", post(shutdown))
+        // Name-server discovery: the client does GET https://localhost/
+        // (bare host) to learn every service URL. Must come before the
+        // fallback so `/` isn't answered with an empty object.
+        .route("/", get(nameserver))
         // CRL for the local CA (DER). The server cert's CRL Distribution
         // Point extension points here so Windows revocation checking
         // succeeds instead of failing with RevocationStatusUnknown.
