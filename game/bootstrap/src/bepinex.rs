@@ -38,7 +38,7 @@ const BEPINEX_BUNDLE_SHA256: &str =
 const PLUGIN_FILE: &str = "FluxRec.Plugin.dll";
 /// sha256 of the plugin DLL on the mirror.
 const PLUGIN_SHA256: &str =
-    "fb814c16497d2eedeb8b4edfd0ad551ad46e6f65f95";
+    "fb814c16497d2eedeb8b4edfd0ad551ad46e8c53241c9b272b1a3869e6f65f95";
 
 /// BepInEx 6 names the config file after the plugin GUID.
 const PLUGIN_GUID: &str = "gg.ripoteam.fluxrec";
