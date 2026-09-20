@@ -174,15 +174,21 @@ async fn download_one(
     // point is downloaded fresh and hash-verified below.
     let tmp = dir.join(format!("{}.part", entry.path));
     let mut last_err = String::new();
-    for attempt in 0..=opts.retries {
+    // Rate limits (HTTP 429 from Hugging Face) get their own generous retry
+    // budget: anonymous CI IPs can be throttled for several minutes, and a
+    // single 429 must never kill a multi-GB install. Normal errors keep the
+    // caller's smaller budget.
+    const RATE_LIMIT_RETRIES: u32 = 6; // 15s,30s,60s,120s,240s,240s ≈ 12 min worst case
+    let mut attempt: u32 = 0;
+    loop {
         if attempt > 0 {
-            // Longer wait for rate limits (429): 15s, 30s, 60s.
-            // Normal errors: 2s, 4s, 8s.
+            // Longer wait for rate limits (429): 15s, 30s, 60s, 120s, 240s...
+            // Normal errors: 2s, 4s, 8s, 16s.
             let is_rate_limited = last_err.contains("429");
             let wait_secs = if is_rate_limited {
-                15 * (1 << (attempt - 1).min(2)) // 15, 30, 60
+                (15u64 << (attempt - 1).min(4)).min(240)
             } else {
-                1 << attempt.min(4) // 2, 4, 8, 16
+                1u64 << attempt.min(4)
             };
             tokio::time::sleep(Duration::from_secs(wait_secs)).await;
         }
@@ -193,6 +199,10 @@ async fn download_one(
                 {
                     last_err = format!("hash mismatch: {}", entry.path);
                     let _ = tokio::fs::remove_file(&tmp).await;
+                    if attempt >= opts.retries {
+                        break;
+                    }
+                    attempt += 1;
                     continue;
                 }
                 tokio::fs::rename(&tmp, &dest)
@@ -200,7 +210,18 @@ async fn download_one(
                     .map_err(|e| e.to_string())?;
                 return Ok((bytes, true));
             }
-            Err(e) => last_err = e,
+            Err(e) => {
+                let budget = if e.contains("429") {
+                    RATE_LIMIT_RETRIES
+                } else {
+                    opts.retries
+                };
+                last_err = e;
+                if attempt >= budget {
+                    break;
+                }
+                attempt += 1;
+            }
         }
     }
     // NOTE: on final failure the .part file is deliberately KEPT (not
@@ -210,7 +231,7 @@ async fn download_one(
     Err(format!(
         "{} (after {} tries; partial file kept, re-run to resume)",
         last_err,
-        opts.retries + 1
+        attempt + 1
     ))
 }
 
