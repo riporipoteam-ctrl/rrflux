@@ -174,6 +174,44 @@ def neuter_eac(build):
     return steps
 
 
+# ------------------------------------------------------- tls bypass (2026-09-20)
+# The 2022 client's BouncyCastle TLS stack validates the server certificate
+# in LegacyTlsAuthentication.NotifyServerCertificate via a custom
+# ICertificateVerifyer. Our self-signed local CA is not in its trust anchors,
+# so the handshake fails with TlsFatalAlert user_canceled(90).
+# Patch: at GameAssembly.dll file offset 0x4a02688, the `je` that jumps to
+# the throw block (74 29) is replaced with `nop; nop` (90 90), so the
+# function always takes the success return path. The game only ever talks
+# TLS to our local backend, so accepting all certs here is safe.
+TLS_BYPASS_OFFSET = 0x4a02688
+TLS_BYPASS_ORIG = bytes.fromhex("74 29")
+TLS_BYPASS_PATCH = bytes.fromhex("90 90")
+
+def patch_tls_bypass(build):
+    """Neutralize BouncyCastle cert validation in GameAssembly.dll."""
+    dll = os.path.join(build, "GameAssembly.dll")
+    if not os.path.isfile(dll):
+        raise SystemExit(f"missing: {dll}")
+    with open(dll, "r+b") as f:
+        f.seek(TLS_BYPASS_OFFSET)
+        cur = f.read(len(TLS_BYPASS_ORIG))
+        if cur == TLS_BYPASS_PATCH:
+            return "already patched (TLS bypass present)"
+        if cur != TLS_BYPASS_ORIG:
+            raise SystemExit(
+                f"TLS bypass patch mismatch at 0x{TLS_BYPASS_OFFSET:x}: "
+                f"expected {TLS_BYPASS_ORIG.hex(' ')}, "
+                f"found {cur.hex(' ')}. "
+                f"Game binary may have changed; refusing to patch.")
+        bak = dll + ".bak"
+        if not os.path.exists(bak):
+            shutil.copy2(dll, bak)
+        f.seek(TLS_BYPASS_OFFSET)
+        f.write(TLS_BYPASS_PATCH)
+    return (f"patched TLS cert bypass at 0x{TLS_BYPASS_OFFSET:x} "
+            f"(backup: {dll}.bak)")
+
+
 # ----------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="RRFlux client patcher v1")
@@ -250,6 +288,16 @@ def main():
     if not args.keep_eac:
         for step in neuter_eac(args.build):
             print(f"[eac] {step}")
+
+    # TLS cert bypass: the 2022 client's BouncyCastle stack rejects our
+    # self-signed CA. Patch GameAssembly.dll to accept all certs.
+    # (Safe: the game only talks TLS to our local backend.)
+    try:
+        result = patch_tls_bypass(args.build)
+        print(f"[tls] {result}")
+    except SystemExit as e:
+        print(f"[tls] WARNING: {e}")
+        print("[tls] Continuing without TLS bypass; the game may fail to connect.")
 
     if reps:
         changed, bak = patch_metadata(meta, reps)
