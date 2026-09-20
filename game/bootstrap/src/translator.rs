@@ -118,7 +118,11 @@ async fn login_with_token(
     )
 }
 
-async fn versioncheck() -> (StatusCode, Json<Value>) {
+async fn versioncheck(Path(rest): Path<String>) -> (StatusCode, Json<Value>) {
+    // /api/versioncheck/islandedversions -> []
+    if rest == "islandedversions" {
+        return j(StatusCode::OK, json!([]));
+    }
     // Rec Room 2022 expects PascalCase fields. VersionStatus: 0 = current.
     j(StatusCode::OK, json!({
         "VersionStatus": 0,
@@ -126,10 +130,6 @@ async fn versioncheck() -> (StatusCode, Json<Value>) {
         "IsVersionIslanded": false,
         "IsCrossPlayDisabled": false
     }))
-}
-
-async fn islandedversions() -> (StatusCode, Json<Value>) {
-    j(StatusCode::OK, json!([]))
 }
 
 async fn config(Path(rest): Path<String>) -> (StatusCode, Json<Value>) {
@@ -261,7 +261,6 @@ pub async fn serve(
     let app = Router::new()
         .route("/health", get(health))
         .route("/Account/LoginWithToken", get(login_with_token))
-        .route("/api/versioncheck/islandedversions", get(islandedversions))
         .route("/api/versioncheck/*rest", get(versioncheck))
         .route("/api/config/*rest", get(config))
         .route("/api/gameconfigs/v1/all", get(gameconfigs))
