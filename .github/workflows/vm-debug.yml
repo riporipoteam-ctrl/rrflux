@@ -15,8 +15,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build bootstrap
-        env:
-          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
         run: cargo build --release --manifest-path game/bootstrap/Cargo.toml
 
       - name: Run Flux Rec and capture evidence
