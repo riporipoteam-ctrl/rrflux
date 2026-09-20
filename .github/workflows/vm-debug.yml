@@ -48,21 +48,14 @@ jobs:
 
           # Probe the translator health endpoint on both ports.
           # NOTE: windows-latest runners use Windows PowerShell 5.1, which has
-          # no -SkipCertificateCheck (PS 7+ only) — trust-all via policy instead.
-          Add-Type @"
-using System.Net;
-using System.Security.Cryptography.X509Certificates;
-public class TrustAllCertsPolicy : ICertificatePolicy {
-    public bool CheckValidationResult(ServicePoint sp, X509Certificate c, WebRequest r, int p) { return true; }
-}
-"@
-          [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+          # no -SkipCertificateCheck (PS 7+ only) — curl.exe -k instead.
           foreach ($url in @('https://127.0.0.1/health', 'http://127.0.0.1/health')) {
             $safe = ($url -replace '[^a-z0-9]', '_')
             try {
-              $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10
-              $r.Content | Out-File (Join-Path $t "health_$safe.json")
-              "health OK: $url ($($r.StatusCode))" | Out-File $note -Append
+              $out = Join-Path $t "health_$safe.json"
+              & curl.exe -sk --max-time 10 $url -o $out
+              if ($LASTEXITCODE -eq 0) { "health OK: $url" | Out-File $note -Append }
+              else { "health FAIL: $url :: curl exit $LASTEXITCODE" | Out-File $note -Append }
             } catch { "health FAIL: $url :: $($_.Exception.Message)" | Out-File $note -Append }
           }
 
