@@ -349,7 +349,7 @@ checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
 
 [[package]]
 name = "fluxrec"
-version = "0.4.2"
+version = "0.4.1"
 dependencies = [
  "axum",
  "axum-server",
@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec-common"
-version = "0.4.2"
+version = "0.4.1"
 dependencies = [
  "futures-util",
  "hex",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec-download"
-version = "0.4.2"
+version = "0.4.1"
 dependencies = [
  "fluxrec-common",
  "tokio",
@@ -385,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec-selfupdate"
-version = "0.4.2"
+version = "0.4.1"
 
 [[package]]
 name = "fnv"
