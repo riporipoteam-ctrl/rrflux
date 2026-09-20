@@ -1,0 +1,128 @@
+# vm-debug: run the real Flux Rec stack on a GitHub-hosted Windows machine
+# and capture logs + screenshot. Manual/debug only — never triggers releases.
+name: vm-debug
+on:
+  push:
+    branches: [vm-debug]
+
+jobs:
+  windows-run:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build bootstrap
+        run: cargo build --release --manifest-path game/bootstrap/Cargo.toml
+
+      - name: Run Flux Rec and capture evidence
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $t = 'C:\fluxtest'
+          New-Item -ItemType Directory -Force $t | Out-Null
+          Copy-Item game\target\release\fluxrec.exe (Join-Path $t 'FluxRec.exe')
+          $note = Join-Path $t 'steps.txt'
+          "staged at $(Get-Date -Format o)" | Out-File $note
+
+          # Elevation check (matters for the machine CA store install).
+          try { net session 2>&1 | Out-Null; "elevated: $($?) " | Out-File $note -Append } catch { "elevated: check failed" | Out-File $note -Append }
+
+          $p = Start-Process (Join-Path $t 'FluxRec.exe') -PassThru
+          "launcher pid: $($p.Id)" | Out-File $note -Append
+
+          # Wait up to ~30 min for RecRoom.exe (game download is several GB).
+          $game = $null
+          for ($i = 0; $i -lt 180; $i++) {
+            Start-Sleep 10
+            $game = Get-Process -Name RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($game) { "game seen at iter $i" | Out-File $note -Append; break }
+            if ($p.HasExited) { "launcher exited code $($p.ExitCode) at iter $i" | Out-File $note -Append; break }
+          }
+
+          # Probe the translator health endpoint on both ports.
+          foreach ($url in @('https://127.0.0.1/health', 'http://127.0.0.1/health')) {
+            $safe = ($url -replace '[^a-z0-9]', '_')
+            try {
+              $r = Invoke-WebRequest -Uri $url -SkipCertificateCheck -TimeoutSec 10
+              $r.Content | Out-File (Join-Path $t "health_$safe.json")
+              "health OK: $url ($($r.StatusCode))" | Out-File $note -Append
+            } catch { "health FAIL: $url :: $($_.Exception.Message)" | Out-File $note -Append }
+          }
+
+          if ($game) {
+            # Let the game run ~150s so it can hit the title screen, then screenshot.
+            Start-Sleep 150
+            try {
+              Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+              $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+              $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
+              $g = [System.Drawing.Graphics]::FromImage($bmp)
+              $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+              $bmp.Save((Join-Path $t 'screen.png'))
+              $g.Dispose(); $bmp.Dispose()
+              "screenshot saved" | Out-File $note -Append
+            } catch { "screenshot failed: $($_.Exception.Message)" | Out-File $note -Append }
+            # Second screenshot right before kill, in case the first was early.
+            Start-Sleep 30
+            try {
+              $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+              $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
+              $g = [System.Drawing.Graphics]::FromImage($bmp)
+              $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+              $bmp.Save((Join-Path $t 'screen2.png'))
+              $g.Dispose(); $bmp.Dispose()
+            } catch { }
+          } else {
+            "game never appeared" | Out-File $note -Append
+          }
+
+          # Verify the runtime TLS bypass bytes in the installed GameAssembly.dll.
+          $dll = Join-Path $t 'game\GameAssembly.dll'
+          if (Test-Path $dll) {
+            try {
+              $fs = [IO.File]::OpenRead($dll)
+              $fs.Seek(0x4a02688, 'Begin') | Out-Null
+              $buf = New-Object byte[] 2
+              $fs.Read($buf, 0, 2) | Out-Null
+              $fs.Close()
+              ("patch bytes at 0x4a02688: " + (($buf | ForEach-Object { $_.ToString('x2') }) -join ' ')) | Out-File $note -Append
+            } catch { "patch byte read failed: $($_.Exception.Message)" | Out-File $note -Append }
+          } else { "GameAssembly.dll not found" | Out-File $note -Append }
+
+          # Stop everything: game first (lets the launcher finish babysitting),
+          # then launcher/backend.
+          Get-Process -Name RecRoom -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 5
+          Get-Process -Name FluxRec -ErrorAction SilentlyContinue | Stop-Process -Force
+          "stopped at $(Get-Date -Format o)" | Out-File $note -Append
+
+      - name: Collect logs
+        if: always()
+        shell: powershell
+        run: |
+          $t = 'C:\fluxtest'
+          $c = Join-Path $t 'collected'
+          New-Item -ItemType Directory -Force $c | Out-Null
+          Copy-Item (Join-Path $t 'steps.txt') $c -ErrorAction SilentlyContinue
+          Copy-Item (Join-Path $t 'screen.png') $c -ErrorAction SilentlyContinue
+          Copy-Item (Join-Path $t 'screen2.png') $c -ErrorAction SilentlyContinue
+          Get-ChildItem (Join-Path $t 'health_*.json') -ErrorAction SilentlyContinue | Copy-Item -Destination $c
+          $ld = Join-Path $env:LOCALAPPDATA 'FluxRec'
+          if (Test-Path $ld) { Copy-Item (Join-Path $ld '*') $c -Recurse -ErrorAction SilentlyContinue }
+          # Unity Player.log (newest one wins)
+          $pl = Get-ChildItem (Join-Path $env:USERPROFILE 'AppData\LocalLow') -Recurse -Filter 'Player.log' -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($pl) { Copy-Item $pl.FullName (Join-Path $c 'Player.log') }
+          # WER crash dumps, if any
+          $wer = Join-Path $env:LOCALAPPDATA 'CrashDumps'
+          if (Test-Path $wer) { Copy-Item (Join-Path $wer '*RecRoom*') $c -ErrorAction SilentlyContinue }
+          Get-ChildItem $c | Format-Table Name, Length | Out-String | Out-File (Join-Path $c '_inventory.txt')
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vm-debug-evidence
+          path: C:\fluxtest\collected
