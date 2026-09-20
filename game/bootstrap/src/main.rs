@@ -307,8 +307,6 @@ async fn async_main() {
         fatal("Game files not found.\n\nPlease reinstall Flux Rec.".into());
     }
 
-    // NOTE: The Steam stub DLL was crashing the game (bad vtable).
-    // Removed for now — the game will show "Failed to initialize Steam
     // 1. Silent sign-in (anonymous Firebase account).
     let session: SharedSession = Default::default();
     match auth::ensure_session(&dir).await {
@@ -389,5 +387,27 @@ async fn async_main() {
         Err(e) => fatal(format!("Couldn't check on the game:\n{e}")),
     }
     // Wait until the player quits; the translator rides along and dies with us.
-    let _ = child.wait().await;
+    match child.wait().await {
+        Ok(status) if status.success() => {
+            // Normal exit (user quit the game).
+        }
+        Ok(status) => {
+            // Game crashed or exited with error. Upload logs for diagnosis.
+            let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "unknown".into());
+            crash_log(&format!("game exited with status: {status}"));
+            let log_url = upload_logs();
+            let msg = match log_url {
+                Some(url) => format!(
+                    "The game closed unexpectedly (exit code {code}).\n\nLog uploaded for support: {url}"
+                ),
+                None => format!(
+                    "The game closed unexpectedly (exit code {code}).\n\nSee %LOCALAPPDATA%\\FluxRec\\crash.log for details."
+                ),
+            };
+            msgbox(&msg);
+        }
+        Err(e) => {
+            crash_log(&format!("failed waiting for game: {e}"));
+        }
+    }
 }
