@@ -323,55 +323,91 @@ async fn update_game_files_inner(
     };
 
     if !to_download.is_empty() {
-        let window = ProgressWindow::new(window_title);
-        println!("Downloading {} files...", to_download.len());
-        let opts = DownloadOptions::default();
-        // The NSIS installer log only shows our stdout, and the separate
-        // progress window can end up behind the installer — so also print
-        // throttled progress lines here. A silent 7GB download looks
-        // exactly like a frozen installer otherwise.
-        let print_every = (to_download.len() / 50).max(1);
-        let next_print =
-            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(print_every));
-        let (bytes, fetched) = download_files(&client, &to_download, game_dir, &opts, move |p: Progress| {
-            let frac = if p.files_total > 0 {
-                p.files_done as f64 / p.files_total as f64
-            } else {
-                1.0
-            };
-            let label = match p.bytes_total {
-                Some(bt) if bt > 0 => format!(
-                    "Downloading game files... {}/{} files ({:.1}/{:.1} MB)\n{}",
-                    p.files_done,
-                    p.files_total,
-                    p.bytes_done as f64 / 1048576.0,
-                    bt as f64 / 1048576.0,
-                    p.current_file
-                ),
-                _ => format!(
-                    "Downloading game files... {}/{} files\n{}",
-                    p.files_done, p.files_total, p.current_file
-                ),
-            };
-            window.set(frac, &label);
-            let threshold = next_print.load(std::sync::atomic::Ordering::SeqCst);
-            if p.files_done >= threshold || p.files_done == p.files_total {
-                next_print.store(
-                    p.files_done + print_every,
-                    std::sync::atomic::Ordering::SeqCst,
-                );
-                println!(
-                    "Downloaded {}/{} files ({:.0}%)...",
-                    p.files_done,
-                    p.files_total,
-                    frac * 100.0
-                );
+        // A single rate-limited file must not kill a multi-GB install.
+        // Retry the whole set in up to 3 passes: finished files exist on
+        // disk (skipped by the retain) and interrupted ones resume from
+        // their .part files, so each pass only fetches what's still missing.
+        let mut last_err = String::new();
+        for pass in 1..=3u32 {
+            to_download.retain(|f| !game_dir.join(&f.path).exists());
+            if to_download.is_empty() {
+                last_err.clear();
+                break;
             }
-        })
-        .await?;
-        outcome.downloaded = fetched;
-        let _ = bytes;
-        // Progress window closes on drop here.
+            if pass > 1 {
+                log_line(
+                    state_dir,
+                    &format!(
+                        "download pass {pass}/3: {} files still missing, waiting 60s before retry",
+                        to_download.len()
+                    ),
+                );
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+            let window = ProgressWindow::new(window_title);
+            println!("Downloading {} files... (pass {pass}/3)", to_download.len());
+            let opts = DownloadOptions::default();
+            // The NSIS installer log only shows our stdout, and the separate
+            // progress window can end up behind the installer — so also print
+            // throttled progress lines here. A silent 7GB download looks
+            // exactly like a frozen installer otherwise.
+            let print_every = (to_download.len() / 50).max(1);
+            let next_print =
+                std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(print_every));
+            match download_files(&client, &to_download, game_dir, &opts, move |p: Progress| {
+                let frac = if p.files_total > 0 {
+                    p.files_done as f64 / p.files_total as f64
+                } else {
+                    1.0
+                };
+                let label = match p.bytes_total {
+                    Some(bt) if bt > 0 => format!(
+                        "Downloading game files... {}/{} files ({:.1}/{:.1} MB)\n{}",
+                        p.files_done,
+                        p.files_total,
+                        p.bytes_done as f64 / 1048576.0,
+                        bt as f64 / 1048576.0,
+                        p.current_file
+                    ),
+                    _ => format!(
+                        "Downloading game files... {}/{} files\n{}",
+                        p.files_done, p.files_total, p.current_file
+                    ),
+                };
+                window.set(frac, &label);
+                let threshold = next_print.load(std::sync::atomic::Ordering::SeqCst);
+                if p.files_done >= threshold || p.files_done == p.files_total {
+                    next_print.store(
+                        p.files_done + print_every,
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
+                    println!(
+                        "Downloaded {}/{} files ({:.0}%)...",
+                        p.files_done,
+                        p.files_total,
+                        frac * 100.0
+                    );
+                }
+            })
+            .await
+            {
+                Ok((bytes, fetched)) => {
+                    outcome.downloaded += fetched;
+                    let _ = bytes;
+                    last_err.clear();
+                    break;
+                }
+                Err(e) => {
+                    log_line(state_dir, &format!("download pass {pass}/3 failed: {e}"));
+                    last_err = e;
+                }
+            }
+            // Progress window closes on drop here.
+        }
+        to_download.retain(|f| !game_dir.join(&f.path).exists());
+        if !to_download.is_empty() {
+            return Err(last_err);
+        }
     }
 
     // Delete files the new manifest dropped, then prune empty dirs.
