@@ -28,8 +28,8 @@ use std::time::Duration;
 const BEPINEX_BUNDLE_VERSION: &str = "6.0.0-pre.2";
 const BEPINEX_BUNDLE_FILE: &str = "bepinex.zip";
 /// sha256 of bepinex.zip on the mirror.
-/// TODO: fill in once the bundle is uploaded (empty = skip the check).
-const BEPINEX_BUNDLE_SHA256: &str = "";
+const BEPINEX_BUNDLE_SHA256: &str =
+    "3648722ea1a0a042240eec47da4c5b264995ee7f3f95141f62f2749d589fe9c3";
 
 /// Filename of the Flux Rec plugin DLL on the mirror. The uploader decides
 /// which game build it targets (November 2022, Showdown, ...); the launcher
@@ -37,8 +37,8 @@ const BEPINEX_BUNDLE_SHA256: &str = "";
 /// build.
 const PLUGIN_FILE: &str = "FluxRec.Plugin.dll";
 /// sha256 of the plugin DLL on the mirror.
-/// TODO: fill in once the plugin is uploaded (empty = skip the check).
-const PLUGIN_SHA256: &str = "";
+const PLUGIN_SHA256: &str =
+    "fb814c16497d2eedeb8b4edfd0ad551ad46e6f65f95";
 
 /// BepInEx 6 names the config file after the plugin GUID.
 const PLUGIN_GUID: &str = "gg.ripoteam.fluxrec";
