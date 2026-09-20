@@ -234,6 +234,17 @@ async fn async_main() {
     let dir = data_dir();
     let _ = std::fs::create_dir_all(&dir);
 
+    // v0.3.16+: visible startup marker on Desktop (debug). Proves the
+    // bootstrap EXE actually ran and which version it is.
+    {
+        if let Ok(desktop) = std::env::var("USERPROFILE").map(|p| PathBuf::from(p).join("Desktop")) {
+            let _ = std::fs::write(desktop.join("FLUXREC_RUNNING.txt"),
+                format!("Flux Rec {} ran at {}\nIf you see this, the launcher works.\n",
+                    env!("CARGO_PKG_VERSION"),
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)));
+        }
+    }
+
     // Already running? Bow out quietly — the running copy owns the game.
     if translator_alive().await {
         return;
