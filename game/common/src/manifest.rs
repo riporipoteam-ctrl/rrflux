@@ -18,6 +18,10 @@ pub struct FileEntry {
 
 #[derive(Debug, Deserialize)]
 pub struct Manifest {
+    /// Build tag from the mirror (e.g. "0.4.5-tls-patch", "0.5.0-showdown").
+    /// Absent in older manifests; `#[serde(default)]` keeps them parseable.
+    #[serde(default)]
+    pub version: Option<String>,
     pub files: Vec<FileEntry>,
 }
 
@@ -108,6 +112,7 @@ mod tests {
     #[test]
     fn diff_finds_changed_new_and_removed() {
         let old = Manifest {
+            version: None,
             files: vec![
                 entry("a.txt", "aaa"),
                 entry("b.txt", "bbb"),
@@ -115,6 +120,7 @@ mod tests {
             ],
         };
         let new = Manifest {
+            version: None,
             files: vec![
                 entry("a.txt", "aaa"),   // unchanged
                 entry("b.txt", "b2"),    // changed
@@ -130,6 +136,7 @@ mod tests {
     #[test]
     fn diff_from_nothing_downloads_all() {
         let new = Manifest {
+            version: None,
             files: vec![entry("a.txt", "aaa")],
         };
         let d = diff(None, &new);
@@ -140,6 +147,7 @@ mod tests {
     #[test]
     fn diff_identical_is_empty() {
         let m = Manifest {
+            version: None,
             files: vec![entry("a.txt", "aaa")],
         };
         let d = diff(Some(&m), &m);

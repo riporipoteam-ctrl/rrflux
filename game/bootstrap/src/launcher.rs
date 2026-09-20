@@ -303,6 +303,50 @@ pub async fn run() {
         Err(e) => util::crash_log(&format!("bootstrap update check skipped: {e}")),
     }
 
+    // 0a. Build switch: the game mirror can swap whole builds (e.g.
+    //     November 2022 -> Showdown Aug 2022). Files from the old build must
+    //     not linger, so on a manifest version change wipe the game dir for
+    //     a clean install. Fail-soft: if the version can't be fetched, keep
+    //     going without wiping.
+    {
+        const VERSION_MARKER: &str = ".fluxrec-manifest-version";
+        let marker_path = game_dir.join(VERSION_MARKER);
+        let local_version = std::fs::read_to_string(&marker_path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        match fluxrec_common::update::remote_manifest_version(fluxrec_common::MANIFEST_URL).await {
+            Ok(remote_version) => {
+                if let Some(local) = local_version {
+                    if local != remote_version {
+                        util::crash_log(&format!(
+                            "build switch {local} -> {remote_version}: wiping game dir for a clean install"
+                        ));
+                        // Delete ALL contents of game_dir (files and subdirs;
+                        // the BepInEx marker lives inside game_dir so BepInEx
+                        // reinstalls cleanly afterward).
+                        if let Ok(entries) = std::fs::read_dir(&game_dir) {
+                            for e in entries.flatten() {
+                                let p = e.path();
+                                if p.is_dir() {
+                                    let _ = std::fs::remove_dir_all(&p);
+                                } else {
+                                    let _ = std::fs::remove_file(&p);
+                                }
+                            }
+                        }
+                    }
+                }
+                // First run (no marker) also lands here: no wipe, just record.
+                let _ = std::fs::create_dir_all(&game_dir);
+                let _ = std::fs::write(&marker_path, &remote_version);
+            }
+            Err(e) => util::crash_log(&format!(
+                "manifest version check failed ({e}): skipping build-switch wipe"
+            )),
+        }
+    }
+
     // 0b. Game files: fetch only what changed since last time (parallel,
     //     resumable, keeps the PC awake). Shows a progress window while busy.
     match fluxrec_common::update::update_game_files(
@@ -356,34 +400,41 @@ pub async fn run() {
         const TLS_BYPASS_OFFSET: u64 = 0x4a02688;
         const TLS_BYPASS_ORIG: [u8; 2] = [0x74, 0x29];
         const TLS_BYPASS_PATCH: [u8; 2] = [0x90, 0x90];
+        // The Showdown (Aug 2022) build does not need the November hex patch:
+        // the BepInEx plugin disables TLS validation at runtime instead.
+        const SHOWDOWN_GAMEASSEMBLY_SIZE: u64 = 151843840;
         let dll_path = game_dir.join("GameAssembly.dll");
-        match std::fs::OpenOptions::new().read(true).write(true).open(&dll_path) {
-            Ok(mut f) => {
-                use std::io::{Read, Seek, SeekFrom, Write};
-                let mut buf = [0u8; 2];
-                let res = (|| -> Result<String, String> {
-                    f.seek(SeekFrom::Start(TLS_BYPASS_OFFSET)).map_err(|e| e.to_string())?;
-                    f.read_exact(&mut buf).map_err(|e| e.to_string())?;
-                    if buf == TLS_BYPASS_PATCH {
-                        return Ok("TLS bypass already applied".to_string());
+        if std::fs::metadata(&dll_path).map(|m| m.len()).ok() == Some(SHOWDOWN_GAMEASSEMBLY_SIZE) {
+            util::crash_log("Showdown build detected: skipping November TLS hex patch (BepInEx plugin handles TLS at runtime)");
+        } else {
+            match std::fs::OpenOptions::new().read(true).write(true).open(&dll_path) {
+                Ok(mut f) => {
+                    use std::io::{Read, Seek, SeekFrom, Write};
+                    let mut buf = [0u8; 2];
+                    let res = (|| -> Result<String, String> {
+                        f.seek(SeekFrom::Start(TLS_BYPASS_OFFSET)).map_err(|e| e.to_string())?;
+                        f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+                        if buf == TLS_BYPASS_PATCH {
+                            return Ok("TLS bypass already applied".to_string());
+                        }
+                        if buf != TLS_BYPASS_ORIG {
+                            return Err(format!(
+                                "unexpected bytes at 0x{:x}: {:02x} {:02x} (expected 74 29); game binary may have changed",
+                                TLS_BYPASS_OFFSET, buf[0], buf[1]
+                            ));
+                        }
+                        f.seek(SeekFrom::Start(TLS_BYPASS_OFFSET)).map_err(|e| e.to_string())?;
+                        f.write_all(&TLS_BYPASS_PATCH).map_err(|e| e.to_string())?;
+                        f.flush().map_err(|e| e.to_string())?;
+                        Ok(format!("applied TLS cert bypass at 0x{:x}", TLS_BYPASS_OFFSET))
+                    })();
+                    match res {
+                        Ok(msg) => util::crash_log(&msg),
+                        Err(e) => util::crash_log(&format!("TLS bypass WARNING: {e}")),
                     }
-                    if buf != TLS_BYPASS_ORIG {
-                        return Err(format!(
-                            "unexpected bytes at 0x{:x}: {:02x} {:02x} (expected 74 29); game binary may have changed",
-                            TLS_BYPASS_OFFSET, buf[0], buf[1]
-                        ));
-                    }
-                    f.seek(SeekFrom::Start(TLS_BYPASS_OFFSET)).map_err(|e| e.to_string())?;
-                    f.write_all(&TLS_BYPASS_PATCH).map_err(|e| e.to_string())?;
-                    f.flush().map_err(|e| e.to_string())?;
-                    Ok(format!("applied TLS cert bypass at 0x{:x}", TLS_BYPASS_OFFSET))
-                })();
-                match res {
-                    Ok(msg) => util::crash_log(&msg),
-                    Err(e) => util::crash_log(&format!("TLS bypass WARNING: {e}")),
                 }
+                Err(e) => util::crash_log(&format!("TLS bypass WARNING: cannot open GameAssembly.dll: {e}")),
             }
-            Err(e) => util::crash_log(&format!("TLS bypass WARNING: cannot open GameAssembly.dll: {e}")),
         }
     }
 
