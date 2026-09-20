@@ -231,11 +231,6 @@ async fn login_with_token(
     State(session): State<SharedSession>,
     Query(q): Query<LoginQuery>,
 ) -> (StatusCode, Json<Value>) {
-    // HANDCRAFTED / UNVERIFIED SCHEMA: the exact November 2022
-    // Account/LoginWithToken response shape is unknown (no reference
-    // capture exists). This returns a plausible typed object
-    // (playerId/username/authToken/expiresIn); verify against a real
-    // client capture and correct it if the game misbehaves here.
     let guard = session.lock().await;
     let Some(s) = guard.as_ref() else {
         return j(StatusCode::UNAUTHORIZED, json!({"error": "not signed in"}));
