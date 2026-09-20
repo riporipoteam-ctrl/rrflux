@@ -159,10 +159,12 @@ async fn telemetry() -> (StatusCode, Json<Value>) {
 }
 
 async fn game_fallback() -> (StatusCode, Json<Value>) {
-    // Return 200 with empty object instead of 404. The 2022 client may
-    // crash on unexpected 404s; empty 200 is safer for unimplemented
-    // endpoints (friends, rooms, store, etc.).
-    j(StatusCode::OK, json!({}))
+    // Graceful 404 for the rest of the game surface (friends, rooms, store,
+    // …). Implemented as the client proves it needs them.
+    j(
+        StatusCode::NOT_FOUND,
+        json!({"error": "not implemented in Flux Rec"}),
+    )
 }
 
 /// Bind 127.0.0.1:443 (HTTPS) and 127.0.0.1:80 (HTTP) and serve forever.
@@ -174,11 +176,6 @@ pub async fn serve(
     data_dir: PathBuf,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
 ) {
-    // Rustls 0.23 needs an explicit crypto provider. Install ring as the
-    // process default before any TLS usage (axum-server's RustlsConfig
-    // panics without this).
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
     // NOTE: axum 0.7 wildcard syntax is `/*rest` (`{*rest}` is 0.8+ and
     // panics here at startup, which used to kill the local server before
     // it could signal ready).
@@ -275,13 +272,7 @@ fn ensure_certs(cert_dir: &Path) -> Result<(Vec<u8>, Vec<u8>), String> {
     let srv_key_path = cert_dir.join("server-key.pem");
     let installed_marker = cert_dir.join("ca-installed");
 
-    // If certs exist, ensure the CA is trusted (marker may be missing if
-    // a previous run generated certs but failed to install trust).
     if ca_pem_path.exists() && srv_pem_path.exists() && srv_key_path.exists() {
-        if !installed_marker.exists() {
-            install_ca_trust(&ca_pem_path)?;
-            let _ = std::fs::write(&installed_marker, b"1");
-        }
         let cert_pem = std::fs::read(&srv_pem_path).map_err(|e| format!("read server.pem: {e}"))?;
         let key_pem = std::fs::read(&srv_key_path).map_err(|e| format!("read server-key.pem: {e}"))?;
         return Ok((cert_pem, key_pem));

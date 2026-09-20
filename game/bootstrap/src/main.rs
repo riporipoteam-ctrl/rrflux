@@ -79,47 +79,10 @@ fn crash_log(msg: &str) {
 }
 
 /// Show an error popup, log it, and quit. The one visible failure path.
-/// Also uploads the log to ix.io so Tim can read it remotely.
 fn fatal(msg: String) -> ! {
     crash_log(&msg);
-    // Upload logs for remote diagnosis (fail-soft: if upload fails, just show local path).
-    let log_url = upload_logs();
-    let full_msg = match log_url {
-        Some(url) => format!("{msg}\n\nLog uploaded for support: {url}"),
-        None => format!("{msg}\n\nLog saved to %LOCALAPPDATA%\\FluxRec\\crash.log"),
-    };
-    msgbox(&full_msg);
+    msgbox(&msg);
     std::process::exit(1);
-}
-
-/// Upload crash.log + translator.log to ix.io for remote diagnosis.
-/// Returns the URL on success, None on failure (fail-soft).
-fn upload_logs() -> Option<String> {
-    let dir = data_dir();
-    let mut combined = String::new();
-    for name in ["crash.log", "translator.log", "panic.log"] {
-        if let Ok(content) = std::fs::read_to_string(dir.join(name)) {
-            combined.push_str(&format!("=== {name} ===\n{content}\n\n"));
-        }
-    }
-    if combined.is_empty() {
-        return None;
-    }
-    // ix.io: POST with form field 'f:1' containing the text.
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .ok()?;
-    let resp = client
-        .post("https://ix.io")
-        .form(&[("f:1", combined)])
-        .send()
-        .ok()?;
-    if resp.status().is_success() {
-        resp.text().ok().map(|t| t.trim().to_string()).filter(|s| !s.is_empty())
-    } else {
-        None
-    }
 }
 
 /// Is another Flux Rec already running its translator? Ask it over HTTPS,
@@ -198,19 +161,6 @@ fn describe_bind_error(e: &str) -> String {
 }
 
 fn main() {
-    // Log panics to %LOCALAPPDATA%\FluxRec\panic.log so a crashing
-    // background task (like the translator) leaves a trace we can show.
-    let pd = data_dir();
-    std::panic::set_hook(Box::new(move |info| {
-        use std::io::Write as _;
-        let _ = std::fs::create_dir_all(&pd);
-        let msg = format!("PANIC: {}\n", info);
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(pd.join("panic.log"))
-            .and_then(|mut f| f.write_all(msg.as_bytes()));
-    }));
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -266,22 +216,6 @@ async fn async_main() {
 
     // 0b. Game files: fetch only what changed since last time (parallel,
     //     resumable, keeps the PC awake). Shows a progress window while busy.
-    // Pre-updater: purge any Flux Rec Steam stub (from 3.9-3.11). The stub
-    // was 92KB; the real DLL is much larger. If we find the stub, delete it
-    // (and any backup) so the updater re-downloads the real DLL from HF.
-    {
-        let steam_dll = game_dir.join("RecRoom_Data/Plugins/x86_64/steam_api64.dll");
-        let backup_dll = game_dir.join("RecRoom_Data/Plugins/x86_64/steam_api64.dll.fluxrec-backup");
-        // Remove backup (3.12 restore logic is superseded by re-download).
-        let _ = std::fs::remove_file(&backup_dll);
-        if let Ok(md) = std::fs::metadata(&steam_dll) {
-            // Stub was 92KB; real DLL is >500KB. If suspiciously small, nuke it.
-            if md.len() < 200_000 {
-                crash_log(&format!("removing stub steam_api64.dll ({} bytes), will re-download real one", md.len()));
-                let _ = std::fs::remove_file(&steam_dll);
-            }
-        }
-    }
     match fluxrec_common::update::update_game_files(
         fluxrec_common::MANIFEST_URL,
         &game_dir,
@@ -350,19 +284,7 @@ async fn async_main() {
                 }
                 fatal(describe_bind_error(&e));
             }
-            Err(_) => {
-                // The serve task died without sending — almost always a
-                // panic. The panic hook logs to panic.log; surface it.
-                let panic_info = std::fs::read_to_string(dir.join("panic.log"))
-                    .ok()
-                    .and_then(|c| c.lines().last().map(|l| l.to_string()))
-                    .unwrap_or_else(|| "no details captured".into());
-                fatal(format!(
-                    "The local game server died during startup.\n\n\
-                     Details: {panic_info}\n\n\
-                     A log was saved to %LOCALAPPDATA%\\FluxRec\\panic.log"
-                ));
-            }
+            Err(_) => fatal("The local game server died during startup.".into()),
         }
     }
     if !started {
@@ -387,27 +309,5 @@ async fn async_main() {
         Err(e) => fatal(format!("Couldn't check on the game:\n{e}")),
     }
     // Wait until the player quits; the translator rides along and dies with us.
-    match child.wait().await {
-        Ok(status) if status.success() => {
-            // Normal exit (user quit the game).
-        }
-        Ok(status) => {
-            // Game crashed or exited with error. Upload logs for diagnosis.
-            let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "unknown".into());
-            crash_log(&format!("game exited with status: {status}"));
-            let log_url = upload_logs();
-            let msg = match log_url {
-                Some(url) => format!(
-                    "The game closed unexpectedly (exit code {code}).\n\nLog uploaded for support: {url}"
-                ),
-                None => format!(
-                    "The game closed unexpectedly (exit code {code}).\n\nSee %LOCALAPPDATA%\\FluxRec\\crash.log for details."
-                ),
-            };
-            msgbox(&msg);
-        }
-        Err(e) => {
-            crash_log(&format!("failed waiting for game: {e}"));
-        }
-    }
+    let _ = child.wait().await;
 }
