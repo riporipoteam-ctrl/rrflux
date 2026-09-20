@@ -75,6 +75,10 @@ pub struct BackendState {
     pub http_bound: AtomicBool,
     pub https_bound: AtomicBool,
     pub ca_trusted: AtomicBool,
+    /// DER-encoded CRL for the local CA, served at GET /crl.pem.
+    pub crl_der: StdMutex<Option<Vec<u8>>>,
+    /// Concise `certutil -verify` verdict (Windows) for /health.
+    pub tls_chain_diag: StdMutex<Option<String>>,
     pub request_count: AtomicU64,
     pub first_request: StdMutex<Option<ReqStamp>>,
     pub last_request: StdMutex<Option<ReqStamp>>,
@@ -89,6 +93,8 @@ impl BackendState {
             http_bound: AtomicBool::new(false),
             https_bound: AtomicBool::new(false),
             ca_trusted: AtomicBool::new(false),
+            crl_der: StdMutex::new(None),
+            tls_chain_diag: StdMutex::new(None),
             request_count: AtomicU64::new(0),
             first_request: StdMutex::new(None),
             last_request: StdMutex::new(None),
@@ -207,6 +213,14 @@ async fn health(State(backend): State<Arc<BackendState>>) -> (StatusCode, Json<V
                 // Local CA installed into the current user's Trusted Root
                 // store, so https://localhost validates.
                 "local_ca_trusted": backend.ca_trusted.load(Ordering::Relaxed),
+                // Concise `certutil -verify` verdict on the leaf cert
+                // (Windows), e.g. "chain_ok" / "untrusted_root" /
+                // "revocation_unknown". Set shortly after startup.
+                "chain_diag": backend
+                    .tls_chain_diag
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone()),
             },
             "requests": {
                 "count": backend.request_count.load(Ordering::Relaxed),
@@ -215,6 +229,22 @@ async fn health(State(backend): State<Arc<BackendState>>) -> (StatusCode, Json<V
             },
         }),
     )
+}
+
+/// GET /crl.pem — the (empty) CRL for the local CA, DER-encoded. Served on
+/// both :80 and :443; the server cert's CRL Distribution Point extension
+/// points at http://localhost/crl.pem so Windows chain validation can check
+/// revocation instead of failing with RevocationStatusUnknown.
+async fn crl_pem(State(backend): State<Arc<BackendState>>) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        "application/pkix-crl".parse().unwrap(),
+    );
+    match backend.crl_der.lock().ok().and_then(|g| g.clone()) {
+        Some(der) => (StatusCode::OK, headers, der),
+        None => (StatusCode::NOT_FOUND, headers, Vec::new()),
+    }
 }
 
 /// POST /shutdown — loopback-only. Lets the launcher retire an outdated
@@ -411,6 +441,10 @@ pub async fn serve(
     let app = Router::new()
         .route("/health", get(health))
         .route("/shutdown", post(shutdown))
+        // CRL for the local CA (DER). The server cert's CRL Distribution
+        // Point extension points here so Windows revocation checking
+        // succeeds instead of failing with RevocationStatusUnknown.
+        .route("/crl.pem", get(crl_pem))
         .route("/Account/LoginWithToken", get(login_with_token))
         .route("/api/versioncheck/*rest", get(versioncheck))
         .route("/api/config/*rest", get(config))
@@ -433,14 +467,18 @@ pub async fn serve(
 
     // TLS certs first — without them there is no https://localhost.
     let cert_dir = data_dir.join("certs");
-    let (cert_pem, key_pem) = match ensure_certs(&cert_dir) {
-        Ok(p) => p,
+    let bundle = match ensure_certs(&cert_dir) {
+        Ok(b) => b,
         Err(e) => {
             let _ = ready.send(Err(e));
             return;
         }
     };
-    state.ca_trusted.store(true, Ordering::Relaxed);
+    // Record the *verified* trust state, not an assumption.
+    state.ca_trusted.store(bundle.ca_trusted, Ordering::Relaxed);
+    if let Ok(mut g) = state.crl_der.lock() {
+        *g = Some(bundle.crl_der);
+    }
 
     // Plain HTTP on :80 for stray calls. Fail-soft: the game only needs
     // HTTPS, so a squatted port 80 just means http_80=false in /health.
@@ -461,7 +499,12 @@ pub async fn serve(
     // resolves to ::1 first on most systems, so listen on both IPv4 and
     // IPv6 loopback. Bind the std listeners first so a squatted port
     // surfaces as an error here.
-    let tls = match axum_server::tls_rustls::RustlsConfig::from_pem(cert_pem, key_pem).await {
+    let tls = match axum_server::tls_rustls::RustlsConfig::from_pem(
+        bundle.server_cert_pem,
+        bundle.server_key_pem,
+    )
+    .await
+    {
         Ok(c) => c,
         Err(e) => {
             let _ = ready.send(Err(format!("invalid TLS cert ({e})")));
@@ -498,49 +541,129 @@ pub async fn serve(
     }
     state.https_bound.store(true, Ordering::Relaxed);
     let _ = ready.send(Ok(()));
+    // Windows chain self-diagnostic: `certutil -urlfetch -verify` performs
+    // the same chain build (root trust + CRL revocation fetch) the game's
+    // TLS stack performs, and its verdict lands in the log and /health.
+    // Detached so a slow certutil can never stall serving.
+    {
+        let diag_state = state.clone();
+        let srv_der = cert_dir.join("server.der");
+        tokio::spawn(async move {
+            run_tls_chain_diag(&srv_der, &diag_state).await;
+        });
+    }
     for t in tls_tasks {
         let _ = t.await;
     }
 }
 
-/// Ensure `<cert_dir>/ca.pem` (local CA) + `server.pem`/`server-key.pem`
-/// exist, installing the CA into the current user's Trusted Root store on
-/// first creation. Returns (server_cert_pem, server_key_pem).
-fn ensure_certs(cert_dir: &Path) -> Result<(Vec<u8>, Vec<u8>), String> {
-    let ca_pem_path = cert_dir.join("ca.pem");
-    let srv_pem_path = cert_dir.join("server.pem");
-    let srv_key_path = cert_dir.join("server-key.pem");
-    let installed_marker = cert_dir.join("ca-installed");
-
-    // If certs exist, ensure the CA is trusted (marker may be missing if
-    // a previous run generated certs but failed to install trust).
-    if ca_pem_path.exists() && srv_pem_path.exists() && srv_key_path.exists() {
-        if !installed_marker.exists() {
-            install_ca_trust(&ca_pem_path)?;
-            let _ = std::fs::write(&installed_marker, b"1");
-        }
-        let cert_pem = std::fs::read(&srv_pem_path).map_err(|e| format!("read server.pem: {e}"))?;
-        let key_pem = std::fs::read(&srv_key_path).map_err(|e| format!("read server-key.pem: {e}"))?;
-        return Ok((cert_pem, key_pem));
-    }
-    std::fs::create_dir_all(cert_dir).map_err(|e| format!("create cert dir: {e}"))?;
-
-    let (ca_pem, srv_pem, srv_key_pem) = generate_certs().map_err(|e| format!("generate certs: {e}"))?;
-    std::fs::write(&ca_pem_path, &ca_pem).map_err(|e| format!("write ca.pem: {e}"))?;
-    std::fs::write(&srv_pem_path, &srv_pem).map_err(|e| format!("write server.pem: {e}"))?;
-    std::fs::write(&srv_key_path, &srv_key_pem).map_err(|e| format!("write server-key.pem: {e}"))?;
-
-    if !installed_marker.exists() {
-        install_ca_trust(&ca_pem_path)?;
-        let _ = std::fs::write(&installed_marker, b"1");
-    }
-    Ok((srv_pem.into_bytes(), srv_key_pem.into_bytes()))
+/// What `ensure_certs` produced for this backend run.
+struct CertBundle {
+    server_cert_pem: Vec<u8>,
+    server_key_pem: Vec<u8>,
+    crl_der: Vec<u8>,
+    /// Actually verified against the Windows trust store (not assumed).
+    ca_trusted: bool,
 }
 
-/// Generate a local CA and a localhost server cert signed by it.
-/// Returns (ca_pem, server_pem, server_key_pem).
-fn generate_certs() -> Result<(String, String, String), String> {
-    use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, SanType};
+/// Bump when the on-disk cert layout changes; older layouts are
+/// regenerated (a new CA key means re-installing trust).
+const CERT_FORMAT: &str = "2";
+
+/// Ensure `<cert_dir>/ca.pem` (local CA) + `server.pem`/`server.der`/
+/// `server-key.pem` + `crl.der` exist, installing the CA into the current
+/// user's Trusted Root store when needed. Returns the bundle plus whether
+/// the CA was actually found in the trust store afterwards.
+fn ensure_certs(cert_dir: &Path) -> Result<CertBundle, String> {
+    let ca_pem_path = cert_dir.join("ca.pem");
+    let srv_pem_path = cert_dir.join("server.pem");
+    let srv_der_path = cert_dir.join("server.der");
+    let srv_key_path = cert_dir.join("server-key.pem");
+    let crl_der_path = cert_dir.join("crl.der");
+    let format_marker = cert_dir.join("cert-format");
+    let installed_marker = cert_dir.join("ca-installed");
+
+    let format_ok = std::fs::read_to_string(&format_marker)
+        .map(|s| s.trim() == CERT_FORMAT)
+        .unwrap_or(false);
+    let all_present = ca_pem_path.exists()
+        && srv_pem_path.exists()
+        && srv_der_path.exists()
+        && srv_key_path.exists()
+        && crl_der_path.exists();
+
+    // Reuse existing certs when the layout is current — but VERIFY the CA
+    // is really in the trust store instead of trusting the marker. The
+    // v0.3.14-era marker could lie after a store wipe or a certutil that
+    // silently failed, which is exactly how the game ended up rejecting
+    // our cert.
+    if format_ok && all_present {
+        let ca_trusted = if verify_ca_trust(&ca_pem_path) {
+            log_req("TLS", "local CA already trusted in Windows store");
+            true
+        } else {
+            log_req("TLS", "local CA missing from Windows store; installing");
+            if let Err(e) = install_ca_trust(&ca_pem_path) {
+                log_req("TLS", &format!("CA trust install failed: {e}"));
+                return Err(e);
+            }
+            let _ = std::fs::write(&installed_marker, b"1");
+            let ok = verify_ca_trust(&ca_pem_path);
+            log_req("TLS", &format!("CA trust installed; verified in store: {ok}"));
+            ok
+        };
+        let server_cert_pem =
+            std::fs::read(&srv_pem_path).map_err(|e| format!("read server.pem: {e}"))?;
+        let server_key_pem =
+            std::fs::read(&srv_key_path).map_err(|e| format!("read server-key.pem: {e}"))?;
+        let crl_der = std::fs::read(&crl_der_path).map_err(|e| format!("read crl.der: {e}"))?;
+        return Ok(CertBundle {
+            server_cert_pem,
+            server_key_pem,
+            crl_der,
+            ca_trusted,
+        });
+    }
+
+    // (Re)generate everything. The CA key is not persisted, so a new leaf
+    // always comes with a new CA, and trust is re-installed. The leaf
+    // carries a CRL Distribution Point (http://localhost/crl.pem) so the
+    // Windows revocation check succeeds instead of failing unknown.
+    std::fs::create_dir_all(cert_dir).map_err(|e| format!("create cert dir: {e}"))?;
+
+    let (ca_pem, srv_pem, srv_der, srv_key_pem, crl_der) =
+        generate_certs().map_err(|e| format!("generate certs: {e}"))?;
+    std::fs::write(&ca_pem_path, &ca_pem).map_err(|e| format!("write ca.pem: {e}"))?;
+    std::fs::write(&srv_pem_path, &srv_pem).map_err(|e| format!("write server.pem: {e}"))?;
+    std::fs::write(&srv_der_path, &srv_der).map_err(|e| format!("write server.der: {e}"))?;
+    std::fs::write(&srv_key_path, &srv_key_pem).map_err(|e| format!("write server-key.pem: {e}"))?;
+    std::fs::write(&crl_der_path, &crl_der).map_err(|e| format!("write crl.der: {e}"))?;
+    let _ = std::fs::write(&format_marker, CERT_FORMAT);
+
+    log_req(
+        "TLS",
+        "generated new local CA + server cert (with CRL distribution point); installing trust",
+    );
+    if let Err(e) = install_ca_trust(&ca_pem_path) {
+        log_req("TLS", &format!("CA trust install failed: {e}"));
+        return Err(e);
+    }
+    let _ = std::fs::write(&installed_marker, b"1");
+    let ca_trusted = verify_ca_trust(&ca_pem_path);
+    log_req("TLS", &format!("new CA installed; verified in store: {ca_trusted}"));
+    Ok(CertBundle {
+        server_cert_pem: srv_pem.into_bytes(),
+        server_key_pem: srv_key_pem.into_bytes(),
+        crl_der,
+        ca_trusted,
+    })
+}
+
+/// Generate a local CA, a localhost server cert signed by it (with a CRL
+/// Distribution Point extension), and an empty CRL signed by the CA.
+/// Returns (ca_pem, server_pem, server_der, server_key_pem, crl_der).
+fn generate_certs() -> Result<(String, String, Vec<u8>, String, Vec<u8>), String> {
+    use rcgen::{BasicConstraints, CertificateParams, CrlDistributionPoint, DnType, IsCa, KeyPair, SanType};
     use std::net::IpAddr;
 
     let ca_key = KeyPair::generate().map_err(|e| format!("ca key: {e}"))?;
@@ -564,13 +687,180 @@ fn generate_certs() -> Result<(String, String, String), String> {
     srv_params
         .subject_alt_names
         .push(SanType::IpAddress(IpAddr::from([127, 0, 0, 1])));
+    // Revocation: Windows chain validation fails a cert whose issuer
+    // publishes no CRL/OCSP as RevocationStatusUnknown. Point it at the
+    // empty CRL this backend serves on :80.
+    srv_params.crl_distribution_points = vec![CrlDistributionPoint {
+        uris: vec!["http://localhost/crl.pem".to_string()],
+    }];
     srv_params.not_before = rcgen::date_time_ymd(2026, 1, 1);
     srv_params.not_after = rcgen::date_time_ymd(2046, 1, 1);
     let srv = srv_params
         .signed_by(&srv_key, &ca, &ca_key)
         .map_err(|e| format!("server: {e}"))?;
 
-    Ok((ca.pem(), srv.pem(), srv_key.serialize_pem()))
+    let crl_der = generate_crl(&ca, &ca_key)?;
+
+    Ok((
+        ca.pem(),
+        srv.pem(),
+        srv.der().to_vec(),
+        srv_key.serialize_pem(),
+        crl_der,
+    ))
+}
+
+/// Build an empty CRL signed by our CA (DER). Nothing is ever revoked;
+/// its only job is to exist so revocation checks can succeed.
+fn generate_crl(ca: &rcgen::Certificate, ca_key: &rcgen::KeyPair) -> Result<Vec<u8>, String> {
+    let params = rcgen::CertificateRevocationListParams {
+        this_update: rcgen::date_time_ymd(2026, 1, 1),
+        next_update: rcgen::date_time_ymd(2046, 1, 1),
+        crl_number: rcgen::SerialNumber::from_slice(&[1]),
+        issuing_distribution_point: None,
+        revoked_certs: Vec::new(),
+        key_identifier_method: rcgen::KeyIdMethod::Sha256,
+    };
+    let crl = params
+        .signed_by(ca, ca_key)
+        .map_err(|e| format!("crl: {e}"))?;
+    Ok(crl.der().to_vec())
+}
+
+/// Check the CA cert is really in the current user's Trusted Root store by
+/// matching its SHA-1 thumbprint via certutil. Non-Windows builds skip
+/// this — the test harness installs the CA into the Wine prefix manually.
+#[cfg(windows)]
+fn verify_ca_trust(ca_pem: &Path) -> bool {
+    let hash = match ca_sha1_thumbprint(ca_pem) {
+        Some(h) => h,
+        None => return false,
+    };
+    match std::process::Command::new("certutil")
+        .args(["-user", "-store", "Root", &hash])
+        .output()
+    {
+        Ok(o) => {
+            o.status.success()
+                && String::from_utf8_lossy(&o.stdout)
+                    .to_uppercase()
+                    .replace([' ', ':'], "")
+                    .contains(&hash)
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(windows))]
+fn verify_ca_trust(_ca_pem: &Path) -> bool {
+    true
+}
+
+/// SHA-1 thumbprint of a PEM cert, via `certutil -dump` (no extra crates).
+#[cfg(windows)]
+fn ca_sha1_thumbprint(ca_pem: &Path) -> Option<String> {
+    let out = std::process::Command::new("certutil")
+        .args(["-dump", &ca_pem.to_string_lossy()])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        if line.contains("Cert Hash(sha1)") {
+            let hex: String = line
+                .split(':')
+                .nth(1)?
+                .chars()
+                .filter(|c| c.is_ascii_hexdigit())
+                .collect();
+            if !hex.is_empty() {
+                return Some(hex.to_uppercase());
+            }
+        }
+    }
+    None
+}
+
+/// Windows self-diagnostic: run `certutil -urlfetch -verify` on the leaf
+/// cert — the same chain build (root trust + CRL revocation fetch over
+/// :80) the game's TLS stack performs — and record a concise verdict in
+/// the backend log and /health. Runs detached; never blocks serving.
+#[cfg(windows)]
+async fn run_tls_chain_diag(server_der: &Path, state: &Arc<BackendState>) {
+    let path = server_der.to_path_buf();
+    let summary = tokio::time::timeout(std::time::Duration::from_secs(45), async move {
+        tokio::task::spawn_blocking(move || {
+            std::process::Command::new("certutil")
+                .args(["-urlfetch", "-verify", &path.to_string_lossy()])
+                .output()
+        })
+        .await
+    })
+    .await;
+    let verdict = match summary {
+        Err(_) => "diag_timed_out".to_string(),
+        Ok(Err(e)) => format!("diag_spawn_failed: {e}"),
+        Ok(Ok(Err(e))) => format!("diag_exec_failed: {e}"),
+        Ok(Ok(Ok(out))) => {
+            let body = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            // Full output for forensics (bounded), then the one-line verdict.
+            let clipped: String = body.chars().take(4000).collect();
+            log_req("TLS", &format!("certutil -verify output:\n{clipped}"));
+            summarize_chain_output(&body, out.status.success())
+        }
+    };
+    log_req("TLS", &format!("Windows chain verdict: {verdict}"));
+    if let Ok(mut g) = state.tls_chain_diag.lock() {
+        *g = Some(verdict);
+    }
+}
+
+#[cfg(not(windows))]
+async fn run_tls_chain_diag(_server_der: &Path, state: &Arc<BackendState>) {
+    if let Ok(mut g) = state.tls_chain_diag.lock() {
+        *g = Some("skipped_non_windows".to_string());
+    }
+}
+
+/// Reduce `certutil -verify` output to the verdict that matters:
+/// untrusted_root vs revocation failure vs chain_ok.
+fn summarize_chain_output(body: &str, success: bool) -> String {
+    let upper = body.to_uppercase();
+    let verdict = if upper.contains("CERT_TRUST_IS_UNTRUSTED_ROOT") {
+        "untrusted_root"
+    } else if upper.contains("CERT_TRUST_IS_REVOKED") || upper.contains("WAS REVOKED") {
+        "revoked"
+    } else if upper.contains("CERT_TRUST_REVOCATION_STATUS_UNKNOWN") {
+        "revocation_unknown"
+    } else if upper.contains("UNABLE TO CHECK REVOCATION") || upper.contains("REVOCATION FUNCTION")
+    {
+        "revocation_check_failed"
+    } else if upper.contains("A CERTIFICATE CHAIN COULD NOT BE BUILT") {
+        "chain_build_failed"
+    } else if upper.contains("CERT_TRUST_IS_NOT_TIME_VALID") || upper.contains("EXPIRED") {
+        "not_time_valid"
+    } else if upper.contains("CERT_TRUST_IS_OFFLINE_REVOCATION") {
+        "revocation_offline"
+    } else if success && upper.contains("VERIFIED") {
+        "chain_ok"
+    } else if success {
+        "verify_ok_no_detail"
+    } else {
+        // Unknown failure: keep the first meaningful line for forensics.
+        let first = body
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty() && !l.starts_with("====="))
+            .unwrap_or("unknown")
+            .chars()
+            .take(160)
+            .collect::<String>();
+        return format!("unknown_failure: {first}");
+    };
+    verdict.to_string()
 }
 
 /// Install the CA into the current user's Trusted Root store (no admin
