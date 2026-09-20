@@ -73,15 +73,32 @@ Section "Flux Rec"
   CreateShortcut "$SMPROGRAMS\Flux Rec\Flux Rec.lnk" "$INSTDIR\Flux Rec.exe" "" "$INSTDIR\fluxrec.ico"
   CreateShortcut "$DESKTOP\Flux Rec.lnk" "$INSTDIR\Flux Rec.exe" "" "$INSTDIR\fluxrec.ico"
 
+  ; Persistent backend (v0.4.0+): the bootstrapper in --backend mode, kept
+  ; alive by the "FluxRecBackend" scheduled task (logon trigger). The
+  ; launcher also ensures this on every start; the installer sets it up
+  ; once here so the task exists right away. Best-effort: a non-zero exit
+  ; does not fail setup.
+  DetailPrint "Setting up the Flux Rec backend..."
+  nsExec::ExecToLog '"$INSTDIR\Flux Rec.exe" --setup-backend'
+  Pop $0
+
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 SectionEnd
 
 Section "Uninstall"
+  ; Stop and remove the persistent backend (v0.4.0+).
+  nsExec::ExecToLog 'taskkill /F /IM "FluxRec-backend.exe"'
+  Pop $0
+  nsExec::ExecToLog 'schtasks /Delete /TN "FluxRecBackend" /F'
+  Pop $0
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "FluxRecBackend"
+
   Delete "$SMPROGRAMS\Flux Rec\Flux Rec.lnk"
   Delete "$DESKTOP\Flux Rec.lnk"
   RMDir /r "$INSTDIR\game"
   Delete "$INSTDIR\Flux Rec.exe"
   Delete "$INSTDIR\Flux Rec.new.exe"
+  Delete "$INSTDIR\FluxRec-backend.exe"
   Delete "$INSTDIR\fluxrec-download.exe"
   Delete "$INSTDIR\fluxrec-selfupdate.exe"
   Delete "$INSTDIR\fluxrec.ico"

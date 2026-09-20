@@ -349,13 +349,14 @@ checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
 
 [[package]]
 name = "fluxrec"
-version = "0.3.6"
+version = "0.4.0"
 dependencies = [
  "axum",
  "axum-server",
  "fluxrec-common",
  "rcgen",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
@@ -363,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec-common"
-version = "0.3.6"
+version = "0.4.0"
 dependencies = [
  "futures-util",
  "hex",
@@ -376,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec-download"
-version = "0.3.6"
+version = "0.4.0"
 dependencies = [
  "fluxrec-common",
  "tokio",
@@ -384,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec-selfupdate"
-version = "0.3.6"
+version = "0.4.0"
 
 [[package]]
 name = "fnv"
@@ -439,6 +440,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -1201,6 +1203,7 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
@@ -1279,6 +1282,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",

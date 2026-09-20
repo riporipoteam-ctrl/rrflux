@@ -1,0 +1,13 @@
+[package]
+name = "fluxrec_steam_emu"
+version = "0.4.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+name = "steam_api64"
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

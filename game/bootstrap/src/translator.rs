@@ -19,7 +19,7 @@
 // if the game passes the token the bootstrap gave it, it must match.
 
 use axum::{
-    extract::{Query, State},
+    extract::{FromRef, Query, State},
     http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{Json, Response},
@@ -28,7 +28,15 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{net::SocketAddr, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex as StdMutex,
+    },
+    time::Instant,
+};
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug, Default)]
@@ -42,19 +50,104 @@ pub struct Session {
 /// The signed-in player, if any. Set by the bootstrap's silent auth.
 pub type SharedSession = Arc<Mutex<Option<Session>>>;
 
+/// One observed game request, kept for diagnostics. The path is stored
+/// WITHOUT the query string — tokens must never be logged or persisted.
+#[derive(Clone, Debug)]
+pub struct ReqStamp {
+    pub method: String,
+    pub path: String,
+    pub at_epoch: u64,
+}
+
+fn epoch_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Live state of the persistent backend, served on /health so the
+/// launcher can verify version, ports, TLS trust, and request activity.
+pub struct BackendState {
+    pub version: &'static str,
+    pub exe_path: PathBuf,
+    pub started: Instant,
+    pub http_bound: AtomicBool,
+    pub https_bound: AtomicBool,
+    pub ca_trusted: AtomicBool,
+    pub request_count: AtomicU64,
+    pub first_request: StdMutex<Option<ReqStamp>>,
+    pub last_request: StdMutex<Option<ReqStamp>>,
+}
+
+impl BackendState {
+    pub fn new(exe_path: PathBuf) -> Self {
+        BackendState {
+            version: env!("CARGO_PKG_VERSION"),
+            exe_path,
+            started: Instant::now(),
+            http_bound: AtomicBool::new(false),
+            https_bound: AtomicBool::new(false),
+            ca_trusted: AtomicBool::new(false),
+            request_count: AtomicU64::new(0),
+            first_request: StdMutex::new(None),
+            last_request: StdMutex::new(None),
+        }
+    }
+
+    fn record_request(&self, method: &str, path: &str) {
+        let stamp = ReqStamp {
+            method: method.to_string(),
+            path: path.to_string(),
+            at_epoch: epoch_now(),
+        };
+        self.request_count.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut first) = self.first_request.lock() {
+            if first.is_none() {
+                *first = Some(stamp.clone());
+            }
+        }
+        if let Ok(mut last) = self.last_request.lock() {
+            *last = Some(stamp);
+        }
+    }
+}
+
+/// Router state: the auth session plus the backend diagnostics state.
+#[derive(Clone)]
+struct AppState {
+    session: SharedSession,
+    backend: Arc<BackendState>,
+}
+
+impl FromRef<AppState> for SharedSession {
+    fn from_ref(s: &AppState) -> Self {
+        s.session.clone()
+    }
+}
+
+impl FromRef<AppState> for Arc<BackendState> {
+    fn from_ref(s: &AppState) -> Self {
+        s.backend.clone()
+    }
+}
+
 // Where request logs go (%LOCALAPPDATA%\FluxRec\translator.log), set by the
 // bootstrap. Lets us see exactly which endpoints the game client calls,
 // which is how new game-surface endpoints get implemented.
+//
+// Privacy: only "METHOD /path" is logged — never the query string, so
+// login tokens and other credentials can't end up in the log.
 static LOG_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 pub fn set_log_dir(dir: PathBuf) {
     let _ = LOG_DIR.set(dir);
 }
 
-fn log_req(method: &str, path_and_query: &str) {
+fn log_req(method: &str, path: &str) {
     if let Some(dir) = LOG_DIR.get() {
         use std::io::Write as _;
-        let line = format!("{method} {path_and_query}\n");
+        let line = format!("{method} {path}\n");
         let _ = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -64,15 +157,15 @@ fn log_req(method: &str, path_and_query: &str) {
 }
 
 async fn log_middleware(
+    State(backend): State<Arc<BackendState>>,
     req: axum::http::Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    let pq = req
-        .uri()
-        .path_and_query()
-        .map(|pq| pq.as_str().to_string())
-        .unwrap_or_default();
-    log_req(req.method().as_str(), &pq);
+    // Sanitized: path only, never path_and_query (tokens live in queries).
+    let method = req.method().as_str().to_string();
+    let path = req.uri().path().to_string();
+    backend.record_request(&method, &path);
+    log_req(&method, &path);
     next.run(req).await
 }
 
@@ -89,8 +182,49 @@ fn j<T: serde::Serialize>(status: StatusCode, v: T) -> (StatusCode, Json<Value>)
     (status, Json(json!(v)))
 }
 
-async fn health() -> (StatusCode, Json<Value>) {
-    j(StatusCode::OK, json!({"ok": true, "app": "fluxrec"}))
+async fn health(State(backend): State<Arc<BackendState>>) -> (StatusCode, Json<Value>) {
+    let stamp = |o: &StdMutex<Option<ReqStamp>>| {
+        o.lock().ok().and_then(|g| {
+            g.as_ref().map(|s| {
+                json!({"method": s.method, "path": s.path, "at_epoch": s.at_epoch})
+            })
+        })
+    };
+    j(
+        StatusCode::OK,
+        json!({
+            "ok": true,
+            "app": "fluxrec",
+            "version": backend.version,
+            "pid": std::process::id(),
+            "exe": backend.exe_path.to_string_lossy(),
+            "uptime_secs": backend.started.elapsed().as_secs(),
+            "ports": {
+                "http_80": backend.http_bound.load(Ordering::Relaxed),
+                "https_443": backend.https_bound.load(Ordering::Relaxed),
+            },
+            "tls": {
+                // Local CA installed into the current user's Trusted Root
+                // store, so https://localhost validates.
+                "local_ca_trusted": backend.ca_trusted.load(Ordering::Relaxed),
+            },
+            "requests": {
+                "count": backend.request_count.load(Ordering::Relaxed),
+                "first": stamp(&backend.first_request),
+                "last": stamp(&backend.last_request),
+            },
+        }),
+    )
+}
+
+/// POST /shutdown — loopback-only. Lets the launcher retire an outdated
+/// backend before starting a new one. Responds first, exits shortly after.
+async fn shutdown() -> (StatusCode, Json<Value>) {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        std::process::exit(0);
+    });
+    j(StatusCode::OK, json!({"ok": true, "shutting_down": true}))
 }
 
 async fn login_with_token(
@@ -250,9 +384,11 @@ async fn game_fallback() -> (StatusCode, Json<Value>) {
 /// Sends Ok(()) on `ready` once both sockets are bound, or Err with the
 /// bind/cert failure. `data_dir` is %LOCALAPPDATA%\FluxRec — certs live in
 /// `<data_dir>/certs` so the CA stays stable across runs.
+/// Bound ports and CA trust are recorded into `state` for /health.
 pub async fn serve(
     session: SharedSession,
     data_dir: PathBuf,
+    state: Arc<BackendState>,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
 ) {
     // Rustls 0.23 needs an explicit crypto provider. Install ring as the
@@ -260,11 +396,16 @@ pub async fn serve(
     // panics without this).
     let _ = rustls::crypto::ring::default_provider().install_default();
 
+    let app_state = AppState {
+        session,
+        backend: state.clone(),
+    };
     // NOTE: axum 0.7 wildcard syntax is `/*rest` (`{*rest}` is 0.8+ and
     // panics here at startup, which used to kill the local server before
     // it could signal ready).
     let app = Router::new()
         .route("/health", get(health))
+        .route("/shutdown", post(shutdown))
         .route("/Account/LoginWithToken", get(login_with_token))
         .route("/api/versioncheck/*rest", get(versioncheck))
         .route("/api/config/*rest", get(config))
@@ -279,8 +420,11 @@ pub async fn serve(
         .route("/identify", get(telemetry).post(telemetry))
         .route("/api/*rest", get(game_fallback).post(game_fallback))
         .fallback(get(game_fallback))
-        .layer(axum::middleware::from_fn(log_middleware))
-        .with_state(session);
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.backend.clone(),
+            log_middleware,
+        ))
+        .with_state(app_state);
 
     // TLS certs first — without them there is no https://localhost.
     let cert_dir = data_dir.join("certs");
@@ -291,19 +435,22 @@ pub async fn serve(
             return;
         }
     };
+    state.ca_trusted.store(true, Ordering::Relaxed);
 
-    // Plain HTTP on :80 for stray calls (kept from the old design).
+    // Plain HTTP on :80 for stray calls. Fail-soft: the game only needs
+    // HTTPS, so a squatted port 80 just means http_80=false in /health.
     let http_app = app.clone();
-    let http_listener = match tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 80))).await {
-        Ok(l) => l,
-        Err(e) => {
-            let _ = ready.send(Err(format!("cannot bind 127.0.0.1:80 ({e})")));
-            return;
+    match tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 80))).await {
+        Ok(l) => {
+            state.http_bound.store(true, Ordering::Relaxed);
+            tokio::spawn(async move {
+                let _ = axum::serve(l, http_app).await;
+            });
         }
-    };
-    tokio::spawn(async move {
-        let _ = axum::serve(http_listener, http_app).await;
-    });
+        Err(e) => {
+            log_req("WARN", &format!("cannot bind 127.0.0.1:80 ({e})"));
+        }
+    }
 
     // HTTPS on :443 — this is what the game actually uses. `localhost`
     // resolves to ::1 first on most systems, so listen on both IPv4 and
@@ -344,6 +491,7 @@ pub async fn serve(
         let _ = ready.send(Err("cannot bind 127.0.0.1:443 (in use?)".into()));
         return;
     }
+    state.https_bound.store(true, Ordering::Relaxed);
     let _ = ready.send(Ok(()));
     for t in tls_tasks {
         let _ = t.await;
