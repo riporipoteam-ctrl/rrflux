@@ -387,6 +387,10 @@ pub async fn run() {
         }
     }
 
+    // 0e. BepInEx + FluxRec plugin. Automatic, idempotent, fail-soft:
+    // if the mirror files aren't uploaded yet the game still launches.
+    crate::bepinex::ensure_bepinex(&game_dir).await;
+
     if !game_exe.exists() {
         util::fatal("Game files not found.\n\nPlease reinstall Flux Rec.".into());
     }

@@ -16,6 +16,7 @@
 
 mod auth;
 mod backend;
+mod bepinex;
 mod diag;
 mod launcher;
 mod translator;
