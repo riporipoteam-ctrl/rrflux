@@ -159,12 +159,10 @@ async fn telemetry() -> (StatusCode, Json<Value>) {
 }
 
 async fn game_fallback() -> (StatusCode, Json<Value>) {
-    // Graceful 404 for the rest of the game surface (friends, rooms, store,
-    // …). Implemented as the client proves it needs them.
-    j(
-        StatusCode::NOT_FOUND,
-        json!({"error": "not implemented in Flux Rec"}),
-    )
+    // Return 200 with empty object instead of 404. The 2022 client may
+    // crash on unexpected 404s; empty 200 is safer for unimplemented
+    // endpoints (friends, rooms, store, etc.).
+    j(StatusCode::OK, json!({}))
 }
 
 /// Bind 127.0.0.1:443 (HTTPS) and 127.0.0.1:80 (HTTP) and serve forever.
