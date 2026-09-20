@@ -347,6 +347,46 @@ pub async fn run() {
         }
     }
 
+    // 0d. TLS cert bypass (v0.4.3+). The 2022 client's BouncyCastle stack
+    // rejects our self-signed CA with TlsFatalAlert user_canceled(90) in
+    // LegacyTlsAuthentication.NotifyServerCertificate. Patch the `je` that
+    // jumps to the throw block into `nop; nop` so the function always
+    // takes the success path. Safe: the game only talks TLS to our backend.
+    {
+        const TLS_BYPASS_OFFSET: u64 = 0x4a02688;
+        const TLS_BYPASS_ORIG: [u8; 2] = [0x74, 0x29];
+        const TLS_BYPASS_PATCH: [u8; 2] = [0x90, 0x90];
+        let dll_path = game_dir.join("GameAssembly.dll");
+        match std::fs::OpenOptions::new().read(true).write(true).open(&dll_path) {
+            Ok(mut f) => {
+                use std::io::{Read, Seek, SeekFrom, Write};
+                let mut buf = [0u8; 2];
+                let res = (|| -> Result<String, String> {
+                    f.seek(SeekFrom::Start(TLS_BYPASS_OFFSET)).map_err(|e| e.to_string())?;
+                    f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+                    if buf == TLS_BYPASS_PATCH {
+                        return Ok("TLS bypass already applied".to_string());
+                    }
+                    if buf != TLS_BYPASS_ORIG {
+                        return Err(format!(
+                            "unexpected bytes at 0x{:x}: {:02x} {:02x} (expected 74 29); game binary may have changed",
+                            TLS_BYPASS_OFFSET, buf[0], buf[1]
+                        ));
+                    }
+                    f.seek(SeekFrom::Start(TLS_BYPASS_OFFSET)).map_err(|e| e.to_string())?;
+                    f.write_all(&TLS_BYPASS_PATCH).map_err(|e| e.to_string())?;
+                    f.flush().map_err(|e| e.to_string())?;
+                    Ok(format!("applied TLS cert bypass at 0x{:x}", TLS_BYPASS_OFFSET))
+                })();
+                match res {
+                    Ok(msg) => util::crash_log(&msg),
+                    Err(e) => util::crash_log(&format!("TLS bypass WARNING: {e}")),
+                }
+            }
+            Err(e) => util::crash_log(&format!("TLS bypass WARNING: cannot open GameAssembly.dll: {e}")),
+        }
+    }
+
     if !game_exe.exists() {
         util::fatal("Game files not found.\n\nPlease reinstall Flux Rec.".into());
     }
