@@ -52,9 +52,13 @@ fn msgbox(text: &str) {
 
 // Flat-API Steam stub (v0.3.15+): exports the exact 995 names from
 // steam_api64.dll (SDK 1.48). Steamworks.NET 14.0.0 P/Invokes flat
-// functions (no vtables). Key functions return fake-but-valid values
-// (SteamAPI_Init -> true, fake SteamID, fake auth ticket); all others
-// return safe zeros. This lets the game run without Steam installed.
+// functions (no vtables).
+// v0.3.17+: SteamAPI_Init returns FALSE (Steam not available). The game
+// handles this gracefully (shows "Failed to initialize Steam Platform"
+// but continues to "Connecting to server..."). Returning TRUE caused
+// black-screen crashes when the game tried to use fake Steam data.
+// The stub still provides fake SteamID/ticket if queried, but the game
+// takes the no-Steam path.
 const STEAM_STUB: &[u8] = include_bytes!("steam_api64_stub.dll");
 
 fn data_dir() -> PathBuf {
@@ -233,17 +237,6 @@ async fn async_main() {
     let game_exe = game_dir.join("RecRoom.exe");
     let dir = data_dir();
     let _ = std::fs::create_dir_all(&dir);
-
-    // v0.3.16+: visible startup marker on Desktop (debug). Proves the
-    // bootstrap EXE actually ran and which version it is.
-    {
-        if let Ok(desktop) = std::env::var("USERPROFILE").map(|p| PathBuf::from(p).join("Desktop")) {
-            let _ = std::fs::write(desktop.join("FLUXREC_RUNNING.txt"),
-                format!("Flux Rec {} ran at {}\nIf you see this, the launcher works.\n",
-                    env!("CARGO_PKG_VERSION"),
-                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)));
-        }
-    }
 
     // Already running? Bow out quietly — the running copy owns the game.
     if translator_alive().await {
