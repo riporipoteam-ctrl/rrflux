@@ -162,7 +162,19 @@ async fn ensure_backend(exe_dir: &Path) -> BackendInfo {
             "backend: deployed {}",
             backend_exe.to_string_lossy()
         )),
-        Err(e) => util::fatal(format!("Couldn't install the Flux Rec backend:\n{e}")),
+        Err(e) => {
+            // The old backend may still be running (locked exe) if the
+            // shutdown didn't take — keep using it if it's healthy and
+            // retry the replacement next launch.
+            if let Some(info) = backend_health().await {
+                util::crash_log(&format!(
+                    "backend: couldn't replace v{} ({e}); keeping it for now",
+                    info.version
+                ));
+                return info;
+            }
+            util::fatal(format!("Couldn't install the Flux Rec backend:\n{e}"));
+        }
     }
 
     create_backend_task(&backend_exe);
@@ -194,6 +206,19 @@ async fn ensure_backend(exe_dir: &Path) -> BackendInfo {
             }
         }
         if Instant::now() > deadline {
+            // If the backend died on sign-in (no internet?), say so plainly
+            // instead of a generic server error.
+            let log = std::fs::read_to_string(util::data_dir().join("crash.log")).unwrap_or_default();
+            let sign_in_failed = log
+                .lines()
+                .rev()
+                .take(20)
+                .any(|l| l.contains("backend: sign-in failed"));
+            if sign_in_failed {
+                util::fatal(
+                    "Couldn't sign you in:\nCheck your internet connection and try again.".into(),
+                );
+            }
             util::fatal(util::describe_bind_error(
                 "the Flux Rec backend did not become healthy",
             ));
@@ -350,6 +375,11 @@ pub async fn run() {
     );
 
     // 4. Launch the game and babysit it. The backend stays alive after it.
+    // Re-check the single-instance guard: another launcher may have
+    // started the game while we were ensuring the backend.
+    if game_running() {
+        return;
+    }
     let mut child = match tokio::process::Command::new(&game_exe)
         .current_dir(&game_dir)
         .spawn()
