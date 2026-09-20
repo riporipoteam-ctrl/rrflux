@@ -176,6 +176,11 @@ pub async fn serve(
     data_dir: PathBuf,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
 ) {
+    // Rustls 0.23 needs an explicit crypto provider. Install ring as the
+    // process default before any TLS usage (axum-server's RustlsConfig
+    // panics without this).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // NOTE: axum 0.7 wildcard syntax is `/*rest` (`{*rest}` is 0.8+ and
     // panics here at startup, which used to kill the local server before
     // it could signal ready).
