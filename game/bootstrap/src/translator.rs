@@ -19,7 +19,7 @@
 // if the game passes the token the bootstrap gave it, it must match.
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{Json, Response},
@@ -118,9 +118,9 @@ async fn login_with_token(
     )
 }
 
-async fn versioncheck(Path(rest): Path<String>) -> (StatusCode, Json<Value>) {
+async fn versioncheck(uri: axum::http::Uri) -> (StatusCode, Json<Value>) {
     // /api/versioncheck/islandedversions -> []
-    if rest == "islandedversions" {
+    if uri.path().ends_with("islandedversions") {
         return j(StatusCode::OK, json!([]));
     }
     // Rec Room 2022 expects PascalCase fields. VersionStatus: 0 = current.
@@ -132,23 +132,26 @@ async fn versioncheck(Path(rest): Path<String>) -> (StatusCode, Json<Value>) {
     }))
 }
 
-async fn config(Path(rest): Path<String>) -> (StatusCode, Json<Value>) {
+async fn config(uri: axum::http::Uri) -> (StatusCode, Json<Value>) {
     // Route by specific config endpoint. The client crashes on {} for these.
-    let body = match rest.as_str() {
-        "v1/amplitude" => json!({
+    let path = uri.path();
+    let body = if path.ends_with("v1/amplitude") {
+        json!({
             "AmplitudeKey": "",
             "UseRudderStack": false,
             "RudderStackKey": "",
             "UseStatSig": false,
             "StatSigKey": "",
             "StatSigEnvironment": 0
-        }),
-        "v1/azurespeech" => json!({
+        })
+    } else if path.ends_with("v1/azurespeech") {
+        json!({
             "Key": "",
             "Region": "eastus",
             "Enabled": false
-        }),
-        "v1/backtrace" => json!({
+        })
+    } else if path.ends_with("v1/backtrace") {
+        json!({
             "ReportBudget": 125,
             "FilterType": 0,
             "SampleRate": 1,
@@ -158,8 +161,9 @@ async fn config(Path(rest): Path<String>) -> (StatusCode, Json<Value>) {
             "MessageCount": 1000,
             "MessageRegex": "^.*$",
             "VersionRegex": ".*"
-        }),
-        "v2" => json!({
+        })
+    } else if path.ends_with("v2") {
+        json!({
             "LevelProgressionMaps": [{"Level": 0, "RequiredXp": 0, "GiftRarity": -1}],
             "DailyObjectives": [],
             "ServerMaintenance": {"StartsInMinutes": 0},
@@ -184,8 +188,9 @@ async fn config(Path(rest): Path<String>) -> (StatusCode, Json<Value>) {
                 "CrcCheckEnabled": false,
                 "EnableServerTracingAfterDisconnect": false
             }
-        }),
-        _ => json!({}),
+        })
+    } else {
+        json!({})
     };
     j(StatusCode::OK, body)
 }
