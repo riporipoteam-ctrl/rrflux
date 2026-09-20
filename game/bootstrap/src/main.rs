@@ -50,6 +50,13 @@ fn msgbox(text: &str) {
     }
 }
 
+// Flat-API Steam stub (v0.3.15+): exports the exact 995 names from
+// steam_api64.dll (SDK 1.48). Steamworks.NET 14.0.0 P/Invokes flat
+// functions (no vtables). Key functions return fake-but-valid values
+// (SteamAPI_Init -> true, fake SteamID, fake auth ticket); all others
+// return safe zeros. This lets the game run without Steam installed.
+const STEAM_STUB: &[u8] = include_bytes!("steam_api64_stub.dll");
+
 fn data_dir() -> PathBuf {
     data_dir_opt().unwrap_or_else(|| PathBuf::from(".").join("FluxRec"))
 }
@@ -65,8 +72,7 @@ fn data_dir_opt() -> Option<PathBuf> {
 fn crash_log(msg: &str) {
     use std::io::Write as _;
     let dir = data_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let epoch = std::time::SystemTime::now()
+    let _ = std::fs::create_dir_all(&dir);    let epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
@@ -266,22 +272,6 @@ async fn async_main() {
 
     // 0b. Game files: fetch only what changed since last time (parallel,
     //     resumable, keeps the PC awake). Shows a progress window while busy.
-    // Pre-updater: purge any Flux Rec Steam stub (from 3.9-3.11). The stub
-    // was 92KB; the real DLL is much larger. If we find the stub, delete it
-    // (and any backup) so the updater re-downloads the real DLL from HF.
-    {
-        let steam_dll = game_dir.join("RecRoom_Data/Plugins/x86_64/steam_api64.dll");
-        let backup_dll = game_dir.join("RecRoom_Data/Plugins/x86_64/steam_api64.dll.fluxrec-backup");
-        // Remove backup (3.12 restore logic is superseded by re-download).
-        let _ = std::fs::remove_file(&backup_dll);
-        if let Ok(md) = std::fs::metadata(&steam_dll) {
-            // Stub was 92KB; real DLL is >500KB. If suspiciously small, nuke it.
-            if md.len() < 200_000 {
-                crash_log(&format!("removing stub steam_api64.dll ({} bytes), will re-download real one", md.len()));
-                let _ = std::fs::remove_file(&steam_dll);
-            }
-        }
-    }
     match fluxrec_common::update::update_game_files(
         fluxrec_common::MANIFEST_URL,
         &game_dir,
@@ -301,6 +291,25 @@ async fn async_main() {
         Err(e) => fatal(format!(
             "Couldn't update the game files:\n{e}\n\nCheck your internet connection and try again."
         )),
+    }
+
+    // 0c. Deploy the flat-API Steam stub (v0.3.15+). This MUST run after the
+    // updater (which would otherwise restore the real DLL from the mirror).
+    // The stub exports the exact 995 names from steam_api64.dll but returns
+    // fake-but-valid values, letting the game run without Steam installed.
+    // The old vtable-based stub (3.9-3.11, 92KB) is also purged here.
+    {
+        let steam_dll = game_dir.join("RecRoom_Data/Plugins/x86_64/steam_api64.dll");
+        let backup_dll = game_dir.join("RecRoom_Data/Plugins/x86_64/steam_api64.dll.fluxrec-backup");
+        let _ = std::fs::remove_file(&backup_dll);
+        // Always (over)write our stub. It's 231KB; the old broken stub was 92KB.
+        match std::fs::write(&steam_dll, STEAM_STUB) {
+            Ok(_) => crash_log(&format!(
+                "deployed Steam stub ({} bytes)",
+                STEAM_STUB.len()
+            )),
+            Err(e) => crash_log(&format!("failed to deploy Steam stub: {e}")),
+        }
     }
 
     if !game_exe.exists() {
