@@ -19,11 +19,11 @@
 // if the game passes the token the bootstrap gave it, it must match.
 
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{Json, Response},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use serde::Deserialize;
@@ -119,10 +119,86 @@ async fn login_with_token(
 }
 
 async fn versioncheck() -> (StatusCode, Json<Value>) {
-    j(StatusCode::OK, json!({"ok": true, "updateRequired": false}))
+    // Rec Room 2022 expects PascalCase fields. VersionStatus: 0 = current.
+    j(StatusCode::OK, json!({
+        "VersionStatus": 0,
+        "UpdateNotificationStage": 0,
+        "IsVersionIslanded": false,
+        "IsCrossPlayDisabled": false
+    }))
 }
 
-async fn config() -> (StatusCode, Json<Value>) {
+async fn islandedversions() -> (StatusCode, Json<Value>) {
+    j(StatusCode::OK, json!([]))
+}
+
+async fn config(Path(rest): Path<String>) -> (StatusCode, Json<Value>) {
+    // Route by specific config endpoint. The client crashes on {} for these.
+    let body = match rest.as_str() {
+        "v1/amplitude" => json!({
+            "AmplitudeKey": "",
+            "UseRudderStack": false,
+            "RudderStackKey": "",
+            "UseStatSig": false,
+            "StatSigKey": "",
+            "StatSigEnvironment": 0
+        }),
+        "v1/azurespeech" => json!({
+            "Key": "",
+            "Region": "eastus",
+            "Enabled": false
+        }),
+        "v1/backtrace" => json!({
+            "ReportBudget": 125,
+            "FilterType": 0,
+            "SampleRate": 1,
+            "LogLineCount": 50,
+            "CaptureNativeCrashes": 0,
+            "AMRThresholdMS": 0,
+            "MessageCount": 1000,
+            "MessageRegex": "^.*$",
+            "VersionRegex": ".*"
+        }),
+        "v2" => json!({
+            "LevelProgressionMaps": [{"Level": 0, "RequiredXp": 0, "GiftRarity": -1}],
+            "DailyObjectives": [],
+            "ServerMaintenance": {"StartsInMinutes": 0},
+            "AutoMicMutingConfig": {
+                "MicSpamVolumeThreshold": 0.75,
+                "MicVolumeSampleInterval": 0.25,
+                "MicVolumeSampleRollingWindowLength": 10,
+                "MicSpamSamplePercentageForWarning": 0.8,
+                "MicSpamSamplePercentageForWarningToEnd": 0.2,
+                "MicSpamSamplePercentageForForceMute": 0.8,
+                "MicSpamSamplePercentageForForceMuteToEnd": 0.2,
+                "MicSpamWarningStateVolumeMultiplier": 0.25
+            },
+            "ShareBaseUrl": "https://localhost/{0}",
+            "StorefrontConfig": {
+                "MinPlayerLevelForGifting": 5,
+                "LatestStoreBadgeDateTime": "2020-01-01T00:00:00Z"
+            },
+            "ConfigTable": [],
+            "PhotonConfig": {
+                "CloudRegion": "us",
+                "CrcCheckEnabled": false,
+                "EnableServerTracingAfterDisconnect": false
+            }
+        }),
+        _ => json!({}),
+    };
+    j(StatusCode::OK, body)
+}
+
+async fn gameconfigs() -> (StatusCode, Json<Value>) {
+    j(StatusCode::OK, json!({}))
+}
+
+async fn statsig() -> (StatusCode, Json<Value>) {
+    j(StatusCode::OK, json!({"success": true}))
+}
+
+async fn voice_config() -> (StatusCode, Json<Value>) {
     j(StatusCode::OK, json!({}))
 }
 
@@ -185,8 +261,12 @@ pub async fn serve(
     let app = Router::new()
         .route("/health", get(health))
         .route("/Account/LoginWithToken", get(login_with_token))
+        .route("/api/versioncheck/islandedversions", get(islandedversions))
         .route("/api/versioncheck/*rest", get(versioncheck))
         .route("/api/config/*rest", get(config))
+        .route("/api/gameconfigs/v1/all", get(gameconfigs))
+        .route("/statsigUserProperties", post(statsig))
+        .route("/voice/config", get(voice_config))
         .route("/api/players/v2/me", get(player_me))
         .route("/api/sanitize/*rest", get(sanitize))
         // Telemetry sink: the patched client sends Amplitude traffic to
