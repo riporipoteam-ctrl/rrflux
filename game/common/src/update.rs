@@ -49,9 +49,14 @@ fn log_line(state_dir: &Path, msg: &str) {
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
+    // NOTE: no total request timeout on purpose. The old 120s blanket
+    // timeout killed multi-GB game files on slow connections (and the
+    // archive host ignores Range, so every retry restarted from zero).
+    // The file downloader now detects stalled streams itself (60s with no
+    // bytes = dead) and retries; small control-plane requests below set
+    // their own per-request timeouts.
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(120))
         .build()
         .map_err(|e| e.to_string())
 }
@@ -121,9 +126,13 @@ pub async fn check_bootstrap_update(
     if cmp_versions(&info.bootstrap_version, current_version) != std::cmp::Ordering::Greater {
         return Ok(BootstrapUpdate::UpToDate);
     }
-    // Download the new exe next to the current one.
+    // Download the new exe next to the current one. Generous per-request
+    // timeout: the shared client no longer has a total timeout (the game
+    // file downloader handles stalls itself), so small downloads like this
+    // set their own.
     let bytes = client
         .get(&info.bootstrap_url)
+        .timeout(Duration::from_secs(600))
         .send()
         .await
         .map_err(|e| format!("bootstrap download failed: {e}"))?
