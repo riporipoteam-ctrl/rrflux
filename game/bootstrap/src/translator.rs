@@ -612,6 +612,9 @@ fn ensure_certs(cert_dir: &Path) -> Result<CertBundle, String> {
             log_req("TLS", &format!("CA trust installed; verified in store: {ok}"));
             ok
         };
+        // The game builds its chain in a machine context, which can't see
+        // the user store — also install there (UAC prompt, once per CA).
+        ensure_machine_ca_trust(&ca_pem_path, cert_dir);
         let server_cert_pem =
             std::fs::read(&srv_pem_path).map_err(|e| format!("read server.pem: {e}"))?;
         let server_key_pem =
@@ -651,6 +654,8 @@ fn ensure_certs(cert_dir: &Path) -> Result<CertBundle, String> {
     let _ = std::fs::write(&installed_marker, b"1");
     let ca_trusted = verify_ca_trust(&ca_pem_path);
     log_req("TLS", &format!("new CA installed; verified in store: {ca_trusted}"));
+    // Same machine-store install for the fresh CA (see reuse branch above).
+    ensure_machine_ca_trust(&ca_pem_path, cert_dir);
     Ok(CertBundle {
         server_cert_pem: srv_pem.into_bytes(),
         server_key_pem: srv_key_pem.into_bytes(),
@@ -816,6 +821,42 @@ async fn run_tls_chain_diag(server_der: &Path, state: &Arc<BackendState>) {
     if let Ok(mut g) = state.tls_chain_diag.lock() {
         *g = Some(verdict);
     }
+
+    // Companion check: what does a .NET-style consumer see in the USER
+    // context? The game rejected our cert while the machine-context chain
+    // also failed; this separates the two contexts for the next diagnosis.
+    let dotnet_path = server_der.to_path_buf();
+    let dotnet = tokio::time::timeout(std::time::Duration::from_secs(30), async move {
+        tokio::task::spawn_blocking(move || {
+            let der = dotnet_path.to_string_lossy().replace('\'', "''");
+            let script = format!(
+                "$c=New-Object Security.Cryptography.X509Certificates.X509Certificate2('{der}'); \
+                 $ch=New-Object Security.Cryptography.X509Certificates.X509Chain; \
+                 $r=$ch.Build($c); \
+                 'dotnet_chain_build=' + $r; \
+                 $ch.ChainStatus | % {{ '  status=' + $_.Status }}"
+            );
+            std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &script])
+                .output()
+        })
+        .await
+    })
+    .await;
+    match dotnet {
+        Err(_) => log_req("TLS", "dotnet user-context chain: diag_timed_out"),
+        Ok(Err(e)) => log_req("TLS", &format!("dotnet user-context chain: spawn failed: {e}")),
+        Ok(Ok(Err(e))) => log_req("TLS", &format!("dotnet user-context chain: exec failed: {e}")),
+        Ok(Ok(Ok(out))) => {
+            let body = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let clipped: String = body.chars().take(2000).collect();
+            log_req("TLS", &format!("dotnet user-context chain:\n{clipped}"));
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -892,4 +933,126 @@ fn install_ca_trust(ca_pem: &Path) -> Result<(), String> {
 #[cfg(not(windows))]
 fn install_ca_trust(_ca_pem: &Path) -> Result<(), String> {
     Ok(())
+}
+
+/// Non-Windows stub: there is no certutil here, and callers treat `None`
+/// as "can't verify", which is only used for marker keying.
+#[cfg(not(windows))]
+fn ca_sha1_thumbprint(_ca_pem: &Path) -> Option<String> {
+    None
+}
+
+/// Check the CA cert is really in the LOCAL MACHINE Trusted Root store
+/// (no `-user` flag → machine context). The game's TLS chain build runs in
+/// a machine context and cannot see the user store — v0.4.1 proved this on
+/// real hardware: `certutil -urlfetch -verify` reported
+/// CERT_TRUST_IS_PARTIAL_CHAIN / CERT_E_CHAINING with the CA present only
+/// in the user store.
+#[cfg(windows)]
+fn verify_ca_trust_machine(ca_pem: &Path) -> bool {
+    let hash = match ca_sha1_thumbprint(ca_pem) {
+        Some(h) => h,
+        None => return false,
+    };
+    match std::process::Command::new("certutil")
+        .args(["-store", "Root", &hash])
+        .output()
+    {
+        Ok(o) => {
+            o.status.success()
+                && String::from_utf8_lossy(&o.stdout)
+                    .to_uppercase()
+                    .replace([' ', ':'], "")
+                    .contains(&hash)
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(windows))]
+fn verify_ca_trust_machine(_ca_pem: &Path) -> bool {
+    true
+}
+
+/// Install the CA into the LOCAL MACHINE Trusted Root store. Needs admin,
+/// so this elevates via PowerShell `Start-Process -Verb RunAs` (one UAC
+/// prompt). The exit code threaded back is certutil's own; a declined UAC
+/// surfaces as a PowerShell failure. Non-Windows builds skip this.
+#[cfg(windows)]
+fn install_ca_trust_machine(ca_pem: &Path) -> Result<(), String> {
+    // Single-quote-escape for the PowerShell single-quoted path below.
+    let path = ca_pem.to_string_lossy().replace('\'', "''");
+    let script = format!(
+        "$p = Start-Process certutil -ArgumentList '-addstore','-f','Root','\"{path}\"' \
+         -Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .map_err(|e| format!("couldn't run powershell: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "Flux Rec couldn't install its certificate into the machine Trusted Root store.\n\n\
+             powershell said: {}\n\n\
+             Try running Flux Rec once as administrator, then normally.",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn install_ca_trust_machine(_ca_pem: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+/// Ensure the CA is also trusted in the LOCAL MACHINE Root store (see
+/// `verify_ca_trust_machine`). Fail-soft by design: a declined UAC prompt
+/// is logged, not fatal. A per-CA marker file (`ca-machine-installed`,
+/// holding the CA thumbprint) records the attempt so we don't re-prompt on
+/// every boot; a regenerated CA (new thumbprint) retries automatically.
+fn ensure_machine_ca_trust(ca_pem: &Path, cert_dir: &Path) {
+    if verify_ca_trust_machine(ca_pem) {
+        log_req("TLS", "local CA already trusted in machine Root store");
+        return;
+    }
+    let thumb = match ca_sha1_thumbprint(ca_pem) {
+        Some(t) => t,
+        None => {
+            log_req("TLS", "machine CA trust: couldn't read CA thumbprint; skipping");
+            return;
+        }
+    };
+    let marker = cert_dir.join("ca-machine-installed");
+    let attempted = std::fs::read_to_string(&marker)
+        .map(|s| s.trim() == thumb.as_str())
+        .unwrap_or(false);
+    if attempted {
+        log_req(
+            "TLS",
+            "machine CA trust: install already attempted for this CA; skipping re-prompt",
+        );
+        return;
+    }
+    log_req(
+        "TLS",
+        "machine CA trust: installing local CA into machine Root store (admin approval needed)",
+    );
+    let outcome = match install_ca_trust_machine(ca_pem) {
+        Ok(()) => {
+            if verify_ca_trust_machine(ca_pem) {
+                "installed".to_string()
+            } else {
+                "install ran but CA not found in machine store afterwards".to_string()
+            }
+        }
+        Err(e) => format!(
+            "install failed: {}",
+            e.split_whitespace().collect::<Vec<_>>().join(" ")
+        ),
+    };
+    // Record the attempt (success or failure) so a UAC decline doesn't
+    // re-prompt every boot.
+    let _ = std::fs::write(&marker, thumb.as_str());
+    log_req("TLS", &format!("machine CA trust: {outcome}"));
 }
