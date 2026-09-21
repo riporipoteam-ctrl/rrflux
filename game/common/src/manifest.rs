@@ -20,8 +20,17 @@ pub struct FileEntry {
 pub struct Manifest {
     /// Build tag from the mirror (e.g. "0.4.5-tls-patch", "0.5.0-showdown").
     /// Absent in older manifests; `#[serde(default)]` keeps them parseable.
+    /// NOTE: the version string alone NEVER triggers a clean install anymore
+    /// (v0.5.3 taught us that the hard way: bumping it for a one-file patch
+    /// wiped the whole game dir and forced a multi-GB re-download).
     #[serde(default)]
     pub version: Option<String>,
+    /// Explicit opt-in for a full game-dir wipe on build switches (e.g.
+    /// November 2022 -> Showdown Aug 2022, where the file sets differ).
+    /// Defaults to false: a version bump alone only diffs and downloads
+    /// changed files.
+    #[serde(default)]
+    pub wipe_required: bool,
     pub files: Vec<FileEntry>,
 }
 
@@ -113,6 +122,7 @@ mod tests {
     fn diff_finds_changed_new_and_removed() {
         let old = Manifest {
             version: None,
+            wipe_required: false,
             files: vec![
                 entry("a.txt", "aaa"),
                 entry("b.txt", "bbb"),
@@ -121,6 +131,7 @@ mod tests {
         };
         let new = Manifest {
             version: None,
+            wipe_required: false,
             files: vec![
                 entry("a.txt", "aaa"),   // unchanged
                 entry("b.txt", "b2"),    // changed
@@ -137,6 +148,7 @@ mod tests {
     fn diff_from_nothing_downloads_all() {
         let new = Manifest {
             version: None,
+            wipe_required: false,
             files: vec![entry("a.txt", "aaa")],
         };
         let d = diff(None, &new);
@@ -148,6 +160,7 @@ mod tests {
     fn diff_identical_is_empty() {
         let m = Manifest {
             version: None,
+            wipe_required: false,
             files: vec![entry("a.txt", "aaa")],
         };
         let d = diff(Some(&m), &m);

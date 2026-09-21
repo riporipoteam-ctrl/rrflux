@@ -305,9 +305,12 @@ pub async fn run() {
 
     // 0a. Build switch: the game mirror can swap whole builds (e.g.
     //     November 2022 -> Showdown Aug 2022). Files from the old build must
-    //     not linger, so on a manifest version change wipe the game dir for
-    //     a clean install. Fail-soft: if the version can't be fetched, keep
-    //     going without wiping.
+    //     not linger, so when the remote manifest EXPLICITLY asks for it
+    //     (wipe_required: true) and the build tag changed, wipe the game dir
+    //     for a clean install. A version bump alone never wipes — v0.5.3
+    //     proved that wiping for a one-file patch turns a 150MB update into
+    //     a multi-GB re-download. Fail-soft: if the version can't be
+    //     fetched, keep going without wiping.
     {
         const VERSION_MARKER: &str = ".fluxrec-manifest-version";
         let marker_path = game_dir.join(VERSION_MARKER);
@@ -315,25 +318,31 @@ pub async fn run() {
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        match fluxrec_common::update::remote_manifest_version(fluxrec_common::MANIFEST_URL).await {
-            Ok(remote_version) => {
+        match fluxrec_common::update::remote_manifest_info(fluxrec_common::MANIFEST_URL).await {
+            Ok((remote_version, remote_wipe)) => {
                 if let Some(local) = local_version {
                     if local != remote_version {
-                        util::crash_log(&format!(
-                            "build switch {local} -> {remote_version}: wiping game dir for a clean install"
-                        ));
-                        // Delete ALL contents of game_dir (files and subdirs;
-                        // the BepInEx marker lives inside game_dir so BepInEx
-                        // reinstalls cleanly afterward).
-                        if let Ok(entries) = std::fs::read_dir(&game_dir) {
-                            for e in entries.flatten() {
-                                let p = e.path();
-                                if p.is_dir() {
-                                    let _ = std::fs::remove_dir_all(&p);
-                                } else {
-                                    let _ = std::fs::remove_file(&p);
+                        if remote_wipe {
+                            util::crash_log(&format!(
+                                "build switch {local} -> {remote_version} (wipe requested): wiping game dir for a clean install"
+                            ));
+                            // Delete ALL contents of game_dir (files and subdirs;
+                            // the BepInEx marker lives inside game_dir so BepInEx
+                            // reinstalls cleanly afterward).
+                            if let Ok(entries) = std::fs::read_dir(&game_dir) {
+                                for e in entries.flatten() {
+                                    let p = e.path();
+                                    if p.is_dir() {
+                                        let _ = std::fs::remove_dir_all(&p);
+                                    } else {
+                                        let _ = std::fs::remove_file(&p);
+                                    }
                                 }
                             }
+                        } else {
+                            util::crash_log(&format!(
+                                "build tag {local} -> {remote_version}: no wipe requested, diffing files"
+                            ));
                         }
                     }
                 }
