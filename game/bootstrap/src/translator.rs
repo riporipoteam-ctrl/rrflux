@@ -365,32 +365,7 @@ async fn config(uri: axum::http::Uri) -> (StatusCode, Json<Value>) {
 }
 
 async fn gameconfigs() -> (StatusCode, Json<Value>) {
-    // Captured real catalog: 455 Key/Value entries in PascalCase shape
-    // {"Key","Value","StartTime","EndTime"} (source: recflare/server,
-    // apps/api/static/gameconfigs-v1-all.json). The client MUST receive a
-    // non-empty list: VerifyGameVersion derives its play verdict from
-    // these entries, and an empty list sends discovery into a retry loop
-    // (black screen). Falls back to [] if the embedded catalog ever fails
-    // to parse — never crash the endpoint.
-    const CATALOG: &str = include_str!("gameconfigs-v1-all.json");
-    let v: Value = serde_json::from_str(CATALOG).unwrap_or(json!([]));
-    j(StatusCode::OK, v)
-}
-
-/// Provisional platform-login endpoint. The Showdown client POSTs
-/// /api/platformlogin/<runtime suffix> with a form-encoded OAuth-style
-/// body once discovery succeeds; the response DTO field names are
-/// obfuscated, so this logs the real suffix + fields from the next live
-/// test and answers {} until the shape is known.
-async fn platformlogin(uri: axum::http::Uri, body: String) -> (StatusCode, Json<Value>) {
-    eprintln!("platformlogin: {} body={}", uri.path(), body);
     j(StatusCode::OK, json!({}))
-}
-
-async fn announcement() -> (StatusCode, Json<Value>) {
-    // MOTD endpoint returns a list — same {}-vs-list stall signature as
-    // the gameconfigs bug, so answer [] until real announcements exist.
-    j(StatusCode::OK, json!([]))
 }
 
 async fn statsig() -> (StatusCode, Json<Value>) {
@@ -528,10 +503,6 @@ pub async fn serve(
         .route("/api/versioncheck/*rest", get(versioncheck))
         .route("/api/config/*rest", get(config))
         .route("/api/gameconfigs/v1/all", get(gameconfigs))
-        // Post-discovery endpoints the Showdown client needs next. These
-        // must sit before the /api/*rest fallback or they'd answer {}.
-        .route("/api/platformlogin/*rest", post(platformlogin))
-        .route("/api/announcement/v1", get(announcement))
         .route("/statsigUserProperties", post(statsig))
         .route("/voice/config", get(voice_config))
         .route("/api/players/v2/me", get(player_me))
