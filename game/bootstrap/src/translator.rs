@@ -365,7 +365,10 @@ async fn config(uri: axum::http::Uri) -> (StatusCode, Json<Value>) {
 }
 
 async fn gameconfigs() -> (StatusCode, Json<Value>) {
-    j(StatusCode::OK, json!({}))
+    // The client deserializes this response into List<GameConfig> — it
+    // MUST be a JSON array. Returning {} fails the parse, the client
+    // retries the whole connection sequence, then stalls on black.
+    j(StatusCode::OK, json!([]))
 }
 
 async fn statsig() -> (StatusCode, Json<Value>) {
