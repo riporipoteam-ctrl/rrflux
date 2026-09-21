@@ -19,38 +19,6 @@ use std::time::Duration;
 const VERSION_URL: &str =
     "https://raw.githubusercontent.com/riporipoteam-ctrl/rrflux/main/game/version.json";
 
-/// Files the launcher deliberately replaces after every update (currently
-/// the clean-room Steam emulator). The HF manifest carries the pristine
-/// entries, but the launcher-managed copy on disk is the desired final
-/// state — the updater must not flag it, or every launch logs a phantom
-/// "1 to download" that can never resolve.
-const LAUNCHER_MANAGED: &[&str] = &["RecRoom_Data/Plugins/x86_64/steam_api64.dll"];
-
-fn is_launcher_managed(path: &str) -> bool {
-    LAUNCHER_MANAGED.iter().any(|m| *m == path)
-}
-
-/// Keep only entries that still need fetching. Files present with the
-/// manifest's size are done; missing files stay; files present with the
-/// WRONG size are deleted so the downloader fetches them fresh. (The old
-/// exists()-only check silently dropped wrong-sized files here, so a
-/// damaged file was never re-downloaded and the update "failed" forever.)
-fn retain_still_needed(to_download: &mut Vec<FileEntry>, game_dir: &Path) {
-    to_download.retain(|f| {
-        let dest = game_dir.join(&f.path);
-        match std::fs::metadata(&dest) {
-            Err(_) => true,
-            Ok(md) => {
-                let bad = f.size.map(|s| md.len() != s).unwrap_or(false);
-                if bad {
-                    let _ = std::fs::remove_file(&dest);
-                }
-                bad
-            }
-        }
-    });
-}
-
 #[derive(serde::Deserialize)]
 struct VersionInfo {
     bootstrap_version: String,
@@ -116,12 +84,11 @@ pub enum BootstrapUpdate {
     Available { new_exe: PathBuf, url: String },
 }
 
-/// Fetch the remote manifest's `version` string and `wipe_required` flag
-/// (cheap GET of the manifest JSON — no ETag logic, no diff). Used for build
-/// switches: if the mirror moved to a genuinely different build AND sets
-/// wipe_required, the local game dir must be wiped for a clean install
-/// instead of diffing. Errors mean "unknown".
-pub async fn remote_manifest_info(manifest_url: &str) -> Result<(String, bool), String> {
+/// Fetch the remote manifest's `version` string (cheap GET of the manifest
+/// JSON — no ETag logic, no diff). Used for build switches: if the mirror
+/// moved to a new build (e.g. "0.5.0-showdown"), the local game dir must be
+/// wiped for a clean install instead of diffing. Errors mean "unknown".
+pub async fn remote_manifest_version(manifest_url: &str) -> Result<String, String> {
     let client = http_client()?;
     let bytes = client
         .get(manifest_url)
@@ -133,11 +100,9 @@ pub async fn remote_manifest_info(manifest_url: &str) -> Result<(String, bool), 
         .await
         .map_err(|e| format!("manifest version check failed: {e}"))?;
     let m: Manifest = manifest::parse(&bytes)?;
-    let version = m
-        .version
+    m.version
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| "manifest has no version field".to_string())?;
-    Ok((version, m.wipe_required))
+        .ok_or_else(|| "manifest has no version field".to_string())
 }
 
 /// Check whether a newer bootstrapper exists. Fail-soft: any network or
@@ -325,9 +290,6 @@ async fn update_game_files_inner(
         mut to_download,
         to_delete,
     } = manifest::diff(local_manifest.as_ref(), &remote);
-    // The launcher replaces these right after the update; flagging them
-    // here creates a phantom "1 to download" on every launch.
-    to_download.retain(|f| !is_launcher_managed(f.path.as_str()));
     // Visible in the installer log: without this, the log goes silent
     // between "Checking game files..." and the first download progress,
     // which looks exactly like a freeze.
@@ -349,7 +311,7 @@ async fn update_game_files_inner(
         let wanted: HashSet<&str> = to_download.iter().map(|f| f.path.as_str()).collect();
         let mut extra: Vec<FileEntry> = Vec::new();
         for f in &remote.files {
-            if wanted.contains(f.path.as_str()) || is_launcher_managed(f.path.as_str()) {
+            if wanted.contains(f.path.as_str()) {
                 continue;
             }
             let dest = game_dir.join(&f.path);
@@ -397,7 +359,7 @@ async fn update_game_files_inner(
         // their .part files, so each pass only fetches what's still missing.
         let mut last_err = String::new();
         for pass in 1..=3u32 {
-            retain_still_needed(&mut to_download, game_dir);
+            to_download.retain(|f| !game_dir.join(&f.path).exists());
             if to_download.is_empty() {
                 last_err.clear();
                 break;
@@ -472,7 +434,7 @@ async fn update_game_files_inner(
             }
             // Progress window closes on drop here.
         }
-        retain_still_needed(&mut to_download, game_dir);
+        to_download.retain(|f| !game_dir.join(&f.path).exists());
         if !to_download.is_empty() {
             return Err(last_err);
         }
