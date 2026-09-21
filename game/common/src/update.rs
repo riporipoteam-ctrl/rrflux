@@ -84,12 +84,11 @@ pub enum BootstrapUpdate {
     Available { new_exe: PathBuf, url: String },
 }
 
-/// Fetch the remote manifest's `version` string and `wipe_required` flag
-/// (cheap GET of the manifest JSON — no ETag logic, no diff). Used for build
-/// switches: if the mirror moved to a genuinely different build AND sets
-/// wipe_required, the local game dir must be wiped for a clean install
-/// instead of diffing. Errors mean "unknown".
-pub async fn remote_manifest_info(manifest_url: &str) -> Result<(String, bool), String> {
+/// Fetch the remote manifest's `version` string (cheap GET of the manifest
+/// JSON — no ETag logic, no diff). Used for build switches: if the mirror
+/// moved to a new build (e.g. "0.5.0-showdown"), the local game dir must be
+/// wiped for a clean install instead of diffing. Errors mean "unknown".
+pub async fn remote_manifest_version(manifest_url: &str) -> Result<String, String> {
     let client = http_client()?;
     let bytes = client
         .get(manifest_url)
@@ -101,11 +100,9 @@ pub async fn remote_manifest_info(manifest_url: &str) -> Result<(String, bool), 
         .await
         .map_err(|e| format!("manifest version check failed: {e}"))?;
     let m: Manifest = manifest::parse(&bytes)?;
-    let version = m
-        .version
+    m.version
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| "manifest has no version field".to_string())?;
-    Ok((version, m.wipe_required))
+        .ok_or_else(|| "manifest has no version field".to_string())
 }
 
 /// Check whether a newer bootstrapper exists. Fail-soft: any network or
