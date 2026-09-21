@@ -533,6 +533,10 @@ pub async fn serve(
     if let Ok(mut g) = state.crl_der.lock() {
         *g = Some(bundle.crl_der);
     }
+    // The Showdown client's nameserver query resolves ns.rec.net itself
+    // (bypassing the plugin's URL rewrite); without a hosts entry it hangs
+    // at "Connecting to server..." on machines where that hostname is dead.
+    ensure_hosts_entry();
 
     // Plain HTTP on :80 for stray calls. Fail-soft: the game only needs
     // HTTPS, so a squatted port 80 just means http_80=false in /health.
@@ -622,7 +626,7 @@ struct CertBundle {
 
 /// Bump when the on-disk cert layout changes; older layouts are
 /// regenerated (a new CA key means re-installing trust).
-const CERT_FORMAT: &str = "2";
+const CERT_FORMAT: &str = "3";
 
 /// Ensure `<cert_dir>/ca.pem` (local CA) + `server.pem`/`server.der`/
 /// `server-key.pem` + `crl.der` exist, installing the CA into the current
@@ -738,8 +742,13 @@ fn generate_certs() -> Result<(String, String, Vec<u8>, String, Vec<u8>), String
         .map_err(|e| format!("ca: {e}"))?;
 
     let srv_key = KeyPair::generate().map_err(|e| format!("server key: {e}"))?;
-    let mut srv_params = CertificateParams::new(vec!["localhost".to_string()])
-        .map_err(|e| format!("server params: {e}"))?;
+    // DNS SANs: `localhost` for the plugin-rewritten API calls, plus
+    // `ns.rec.net` for the game's nameserver query, which resolves that
+    // hostname itself (via the hosts-file entry) and validates TLS against
+    // it on stacks that honor the Windows trust store.
+    let mut srv_params =
+        CertificateParams::new(vec!["localhost".to_string(), "ns.rec.net".to_string()])
+            .map_err(|e| format!("server params: {e}"))?;
     srv_params
         .distinguished_name
         .push(DnType::CommonName, "localhost");
@@ -1110,3 +1119,134 @@ fn ensure_machine_ca_trust(ca_pem: &Path, cert_dir: &Path) {
     let _ = std::fs::write(&marker, thumb.as_str());
     log_req("TLS", &format!("machine CA trust: {outcome}"));
 }
+
+/// Does this hosts-file text already map `host` to `want_ip`?
+fn hosts_has(hosts: &str, want_ip: &str, host: &str) -> bool {
+    hosts.lines().any(|l| {
+        let body = l.trim_start().split('#').next().unwrap_or("");
+        let mut toks = body.split_whitespace();
+        match toks.next() {
+            Some(ip) if ip == want_ip => toks.any(|t| t.eq_ignore_ascii_case(host)),
+            _ => false,
+        }
+    })
+}
+
+/// Does this hosts-file text mention `host` at all (any IP, not commented)?
+fn hosts_mentions(hosts: &str, host: &str) -> bool {
+    hosts.lines().any(|l| {
+        let t = l.trim_start();
+        if t.starts_with('#') {
+            return false;
+        }
+        // Strip inline comments, then look at the tokens.
+        let body = t.split('#').next().unwrap_or("");
+        body.split_whitespace()
+            .any(|tok| tok.eq_ignore_ascii_case(host))
+    })
+}
+
+/// Ensure `127.0.0.1 ns.rec.net` is in the Windows hosts file.
+///
+/// Why: the Showdown client's nameserver query resolves `ns.rec.net` with
+/// System.Net.Dns directly — bypassing the plugin's BestHTTP URL rewrite —
+/// and on machines where that (long-dead) hostname doesn't resolve, the
+/// game hangs at "Connecting to server..." forever. Pointing it at loopback
+/// routes the query to the local backend. Idempotent: skips when the entry
+/// already exists. Needs admin, so this elevates via PowerShell
+/// `Start-Process -Verb RunAs` (one UAC prompt, first run only), the same
+/// pattern as the machine cert-store install. Fail-soft: a declined UAC is
+/// logged, not fatal. Non-Windows builds skip this.
+#[cfg(windows)]
+fn ensure_hosts_entry() {
+    const HOSTS: &str = r"C:\Windows\System32\drivers\etc\hosts";
+    const WANT_IP: &str = "127.0.0.1";
+    const HOST: &str = "ns.rec.net";
+
+    let current = match std::fs::read_to_string(HOSTS) {
+        Ok(c) => c,
+        Err(e) => {
+            log_req(
+                "TLS",
+                &format!("hosts: couldn't read hosts file ({e}); skipping"),
+            );
+            return;
+        }
+    };
+    if hosts_has(&current, WANT_IP, HOST) {
+        log_req("TLS", "hosts entry 127.0.0.1 ns.rec.net already present");
+        return;
+    }
+    if hosts_mentions(&current, HOST) {
+        log_req(
+            "TLS",
+            "hosts file already maps ns.rec.net somewhere else; leaving it alone",
+        );
+        return;
+    }
+
+    // Write a small PS1 and run it elevated. The script itself is written
+    // by us (no quoting layers to get wrong); only the -File path goes
+    // through the elevated command line.
+    let dir = std::env::temp_dir().join("fluxrec");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log_req(
+            "TLS",
+            &format!("hosts: couldn't create temp dir ({e}); skipping"),
+        );
+        return;
+    }
+    let ps1 = dir.join("add_ns_rec_net_hosts.ps1");
+    let script = "$h = 'C:\\Windows\\System32\\drivers\\etc\\hosts'\r\n\
+         $c = Get-Content -Path $h -Raw\r\n\
+         if ($c -notmatch '(?m)^[^#\\r\\n]*\\bns\\.rec\\.net\\b') {\r\n\
+         Add-Content -Path $h -Value \"`r`n127.0.0.1 ns.rec.net # Flux Rec local server\"\r\n\
+         }\r\n\
+         exit 0\r\n";
+    if let Err(e) = std::fs::write(&ps1, script) {
+        log_req(
+            "TLS",
+            &format!("hosts: couldn't write helper script ({e}); skipping"),
+        );
+        return;
+    }
+    log_req(
+        "TLS",
+        "hosts: adding 127.0.0.1 ns.rec.net (admin approval needed)",
+    );
+    let path = ps1.to_string_lossy().replace('\'', "''");
+    let cmd = format!(
+        "$p = Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{path}' \
+         -Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &cmd])
+        .output();
+    let _ = std::fs::remove_file(&ps1);
+    match out {
+        Ok(o) if o.status.success() => match std::fs::read_to_string(HOSTS) {
+            Ok(c) if hosts_has(&c, WANT_IP, HOST) => {
+                log_req("TLS", "hosts: 127.0.0.1 ns.rec.net added")
+            }
+            Ok(_) => log_req(
+                "TLS",
+                "hosts: elevated script ran but entry not found afterwards",
+            ),
+            Err(e) => log_req("TLS", &format!("hosts: couldn't verify ({e})")),
+        },
+        Ok(o) => log_req(
+            "TLS",
+            &format!(
+                "hosts: elevated script failed ({}); the game may hang at 'Connecting to server'",
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+        ),
+        Err(e) => log_req(
+            "TLS",
+            &format!("hosts: couldn't launch powershell ({e})"),
+        ),
+    }
+}
+
+#[cfg(not(windows))]
+fn ensure_hosts_entry() {}
