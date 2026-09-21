@@ -266,5 +266,3 @@ pub async fn ensure_bepinex(game_dir: &Path) {
     let _ = std::fs::remove_dir_all(&staging);
     util::crash_log("bepinex: install complete");
 }
-
-// CI retrigger: no functional change (v0.5.1 rebuild)
