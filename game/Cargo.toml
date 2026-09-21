@@ -1,3 +1,7 @@
 [workspace]
 members = ["bootstrap", "downloader", "common", "selfupdate"]
+# The RecFlare-pipeline Rust installer is scaffolded but NOT a workspace member
+# yet (CI still builds the NSIS installer). To wire it in: move "installer" into
+# members above and add a CI step building --release for x86_64-pc-windows-gnu.
+exclude = ["installer"]
 resolver = "2"
