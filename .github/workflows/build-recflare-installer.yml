@@ -1,0 +1,53 @@
+# Builds the zero-touch RecFlare-pipeline Flux Rec installer (game/installer)
+# on Windows and publishes it as a prerelease asset. The ns host and Photon
+# App IDs are baked in at compile time from repository secrets, so they never
+# appear in the repo.
+
+name: Build RecFlare installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "game/installer/**"
+      - ".github/workflows/build-recflare-installer.yml"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build installer
+        working-directory: game/installer
+        env:
+          FLUXREC_NS_HOST: ${{ secrets.FLUXREC_NS_HOST }}
+          FLUXREC_PHOTON_RT: ${{ secrets.FLUXREC_PHOTON_RT }}
+          FLUXREC_PHOTON_VOICE: ${{ secrets.FLUXREC_PHOTON_VOICE }}
+          FLUXREC_PHOTON_CHAT: ${{ secrets.FLUXREC_PHOTON_CHAT }}
+        run: cargo build --release
+
+      - name: Publish prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $tag = "recflare-installer-v0.1.0"
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --prerelease --title "Flux Rec setup (RecFlare pipeline) v0.1.0" --notes "Zero-touch installer: downloads the 2023 Rec Room client, BepInEx and the RecNet redirect plugin, writes config, no Steam needed."
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+          }
+          gh release upload $tag "game\installer\target\release\FluxRec-Setup.exe" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+
+      - name: Upload setup.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: FluxRec-Setup-RecFlare
+          path: game/installer/target/release/FluxRec-Setup.exe
