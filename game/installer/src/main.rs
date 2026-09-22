@@ -3,6 +3,10 @@
 // Flow:
 //   1. Download the 2023 Rec Room client zip from the public mirror, verify MD5,
 //      extract into the install dir. (We host no game binaries ourselves.)
+//   1b. Download the Flux Rec logo bundle (gzipped patched Addressables UI
+//      bundle, hosted on our Hugging Face dataset), verify MD5, gunzip, and
+//      overwrite the stock bundle so the loading screen shows Flux Rec
+//      branding. The stock bundle is backed up as *.bundle.stock once.
 //   2. Download BepInEx 6.0.0-pre.2 (Unity IL2CPP win-x64), extract into the dir.
 //   3. Download RecNetPlugin.dll (20230414.2) into BepInEx/plugins/.
 //   4. Write BepInEx/config/net.rec.plugin.cfg — ns host and Photon App IDs
@@ -27,6 +31,16 @@ const BEPINEX_SIZE: u64 = 34_146_254;
 const PLUGIN_URL: &str =
     "https://github.com/recflare/patch/releases/download/20230414.2/RecNetPlugin.dll";
 const PLUGIN_SIZE: u64 = 45_056;
+/// Flux Rec logo bundle: gzipped patched Addressables UI bundle (loading
+/// screen logos replaced). Hosted on our Hugging Face dataset; verified by
+/// MD5 before use, then gunzipped over the stock bundle.
+const LOGO_BUNDLE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-bundle/logo-bundle.gz";
+const LOGO_BUNDLE_MD5: &str = "537b8583e64f27469874deb7ee00a32f";
+const LOGO_BUNDLE_SIZE: u64 = 39_155_393;
+const LOGO_BUNDLE_NAME: &str = "682ba40059cd6c037bace975e7aea07f.bundle";
+const LOGO_BUNDLE_UNZIPPED_SIZE: u64 = 86_361_811;
+/// MD5 of the gunzipped patched bundle (Flux Rec logo replacement).
+const LOGO_BUNDLE_UNZIPPED_MD5: &str = "47f1cd2a2c6004d196a539d208a7358d";
 
 const NS_PLACEHOLDER: &str = "%%FLUXREC_NS%%";
 /// Compile-time wiring (GitHub Secrets -> CI env -> baked in at build).
@@ -345,6 +359,93 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Install the logo bundle from a local .gz file: gunzip into a temp file,
+/// verify the uncompressed bytes, back up the stock bundle once (never
+/// overwriting an existing backup), then atomically replace the target.
+/// The stock/current bundle is preserved on every failure path.
+fn install_logo_bundle(
+    gz_path: &Path,
+    target: &Path,
+    expected_md5: &str,
+    expected_size: u64,
+) -> Result<(), String> {
+    // Gunzip into a temp file next to the target, then verify before touching it.
+    let tmp_path = target.with_extension("bundle.logo-new");
+    {
+        let gz_file = std::fs::File::open(gz_path).map_err(|e| e.to_string())?;
+        let mut decoder = flate2::read::GzDecoder::new(gz_file);
+        let mut tmp = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
+        std::io::copy(&mut decoder, &mut tmp).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
+            e.to_string()
+        })?;
+    }
+
+    if !file_ok(&tmp_path, Some(expected_md5), Some(expected_size)) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err("logo bundle failed verification after gunzip".to_string());
+    }
+
+    // Back up the stock bundle once — never overwrite an existing backup.
+    let backup_path = target.with_extension("bundle.stock");
+    if !backup_path.exists() {
+        std::fs::copy(target, &backup_path).map_err(|e| e.to_string())?;
+        println!("[logo] backed up stock bundle.");
+    }
+
+    // Atomic replace: rename the verified temp file over the target.
+    std::fs::rename(&tmp_path, target).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        e.to_string()
+    })?;
+    println!("[logo] Flux Rec logo bundle applied.");
+    Ok(())
+}
+
+async fn apply_logo_bundle(client: &reqwest::Client, dir: &Path) -> Result<(), String> {
+    // The stock UI bundle inside the extracted client layout.
+    let target = dir
+        .join("RecRoom_Data")
+        .join("StreamingAssets")
+        .join("aa")
+        .join("StandaloneWindows64")
+        .join(LOGO_BUNDLE_NAME);
+
+    if !target.exists() {
+        println!("[logo] target bundle not found (fresh layout?), skipping.");
+        return Ok(());
+    }
+
+    // Idempotency: if the installed bundle already has our patched hash, done.
+    if let Ok(h) = md5_of_file(&target) {
+        if h.eq_ignore_ascii_case(LOGO_BUNDLE_UNZIPPED_MD5) {
+            println!("[logo] Flux Rec logo bundle already applied, skipping.");
+            return Ok(());
+        }
+    }
+
+    // Download the gzipped patched bundle (verified by MD5 + size).
+    let gz_path = dir.join("logo-bundle.gz");
+    download(
+        client,
+        LOGO_BUNDLE_URL,
+        &gz_path,
+        Some(LOGO_BUNDLE_MD5),
+        Some(LOGO_BUNDLE_SIZE),
+        "logo-bundle",
+    )
+    .await?;
+
+    let res = install_logo_bundle(
+        &gz_path,
+        &target,
+        LOGO_BUNDLE_UNZIPPED_MD5,
+        LOGO_BUNDLE_UNZIPPED_SIZE,
+    );
+    let _ = std::fs::remove_file(&gz_path); // free ~39MB either way
+    res
+}
+
 async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, photon_chat: &str) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder()
@@ -358,6 +459,10 @@ async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, pho
     download(&client, CLIENT_ZIP_URL, &client_zip, Some(CLIENT_ZIP_MD5), None, "client").await?;
     extract_zip(&client_zip, dir, "client")?;
     let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
+
+    // 1b. Flux Rec logo bundle: patched loading-screen bundle over the stock one.
+    // Never triggers a full client re-download: applies in place, stock backed up once.
+    apply_logo_bundle(&client, dir).await?;
 
     // 2. BepInEx.
     let bepinex_zip = dir.join("bepinex.zip");
@@ -441,4 +546,92 @@ fn main() {
         std::process::exit(1);
     }
     println!("DONE — launch Flux Rec from the Start Menu or desktop shortcut.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn tmp_dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("fluxrec-logo-test-{name}"));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn make_gz(dir: &Path, payload: &[u8], name: &str) -> PathBuf {
+        let p = dir.join(name);
+        let f = std::fs::File::create(&p).unwrap();
+        let mut enc = flate2::write::GzEncoder::new(f, flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        enc.finish().unwrap();
+        p
+    }
+
+    fn md5_of(bytes: &[u8]) -> String {
+        format!("{:x}", md5::compute(bytes))
+    }
+
+    #[test]
+    fn logo_install_happy_path_backs_up_once_and_replaces() {
+        let d = tmp_dir("happy");
+        let target = d.join("ui.bundle");
+        std::fs::write(&target, b"stock-bytes").unwrap();
+        let payload = b"patched-logo-bytes";
+        let gz = make_gz(&d, payload, "logo.gz");
+
+        install_logo_bundle(&gz, &target, &md5_of(payload), payload.len() as u64).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), payload);
+        let backup = target.with_extension("bundle.stock");
+        assert_eq!(std::fs::read(&backup).unwrap(), b"stock-bytes");
+        // No temp leftovers.
+        assert!(!target.with_extension("bundle.logo-new").exists());
+
+        // Second run with a *different* payload must not overwrite the backup.
+        let payload2 = b"patched-logo-bytes-v2";
+        let gz2 = make_gz(&d, payload2, "logo2.gz");
+        // Pretend the first payload is the "stock" again by resetting target.
+        std::fs::write(&target, b"stock-bytes").unwrap();
+        install_logo_bundle(&gz2, &target, &md5_of(payload2), payload2.len() as u64).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), payload2);
+        assert_eq!(std::fs::read(&backup).unwrap(), b"stock-bytes");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn logo_install_corrupt_gzip_keeps_target() {
+        let d = tmp_dir("corrupt");
+        let target = d.join("ui.bundle");
+        std::fs::write(&target, b"stock-bytes").unwrap();
+        let gz = d.join("bad.gz");
+        std::fs::write(&gz, b"this is not gzip data at all").unwrap();
+
+        let err = install_logo_bundle(&gz, &target, "deadbeef", 10).unwrap_err();
+        assert!(!err.is_empty());
+        assert_eq!(std::fs::read(&target).unwrap(), b"stock-bytes");
+        assert!(!target.with_extension("bundle.stock").exists());
+        assert!(!target.with_extension("bundle.logo-new").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn logo_install_hash_mismatch_keeps_target() {
+        let d = tmp_dir("mismatch");
+        let target = d.join("ui.bundle");
+        std::fs::write(&target, b"stock-bytes").unwrap();
+        let payload = b"patched-logo-bytes";
+        let gz = make_gz(&d, payload, "logo.gz");
+
+        // Wrong expected hash: verification must fail and the target stays stock.
+        let err =
+            install_logo_bundle(&gz, &target, &md5_of(b"something-else"), payload.len() as u64)
+                .unwrap_err();
+        assert!(err.contains("verification"));
+        assert_eq!(std::fs::read(&target).unwrap(), b"stock-bytes");
+        assert!(!target.with_extension("bundle.stock").exists());
+        assert!(!target.with_extension("bundle.logo-new").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
