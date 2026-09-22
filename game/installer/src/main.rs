@@ -471,6 +471,15 @@ async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, pho
     extract_zip(&client_zip, dir, "client")?;
     let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
 
+    // 1a. Steam bypass FIRST: the game cannot boot without this, and no
+    // later step may ever prevent it from being in place. Fail-soft so a
+    // filesystem hiccup here warns instead of killing the whole install.
+    if let Err(e) = std::fs::write(dir.join("steam_appid.txt"), "480") {
+        eprintln!("[steam] WARNING: could not write steam_appid.txt ({}).", e);
+    } else {
+        println!("[steam] wrote steam_appid.txt = 480.");
+    }
+
     // 1b. Flux Rec logo bundle: patched loading-screen bundle over the stock one.
     // Never triggers a full client re-download: applies in place, stock backed up once.
     // FAIL-SOFT: the logo is cosmetic. If it fails for any reason, warn and
@@ -485,28 +494,63 @@ async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, pho
     extract_zip(&bepinex_zip, dir, "bepinex")?;
     let _ = std::fs::remove_file(&bepinex_zip);
 
-    // 3. Redirect plugin.
+    // 3. Redirect plugin. Fail-soft: warn and continue so a transient
+    // download hiccup can never leave the game without its Steam bypass.
     let plugins_dir = dir.join("BepInEx").join("plugins");
-    std::fs::create_dir_all(&plugins_dir).map_err(|e| e.to_string())?;
-    download(
-        &client,
-        PLUGIN_URL,
-        &plugins_dir.join("RecNetPlugin.dll"),
-        None,
-        Some(PLUGIN_SIZE),
-        "plugin",
-    )
-    .await?;
+    let plugin_res: Result<(), String> = async {
+        std::fs::create_dir_all(&plugins_dir).map_err(|e| e.to_string())?;
+        download(
+            &client,
+            PLUGIN_URL,
+            &plugins_dir.join("RecNetPlugin.dll"),
+            None,
+            Some(PLUGIN_SIZE),
+            "plugin",
+        )
+        .await
+    }
+    .await;
+    if let Err(e) = plugin_res {
+        eprintln!("[plugin] WARNING: plugin step failed ({}); continuing.", e);
+    }
 
     // 4. Plugin config (ns host + Photon IDs baked at packaging time).
-    write_plugin_config(dir, ns_host, photon_rt, photon_voice, photon_chat)?;
+    // Fail-soft for the same reason as above.
+    if let Err(e) = write_plugin_config(dir, ns_host, photon_rt, photon_voice, photon_chat) {
+        eprintln!("[config] WARNING: plugin config step failed ({}); continuing.", e);
+    }
 
-    // 5. Steam bypass.
-    std::fs::write(dir.join("steam_appid.txt"), "480").map_err(|e| e.to_string())?;
-    println!("[steam] wrote steam_appid.txt = 480.");
+    // 5. Steam bypass (again, idempotent): ensure it exists even if step 1a
+    // was skipped on a re-run layout.
+    if let Err(e) = std::fs::write(dir.join("steam_appid.txt"), "480") {
+        eprintln!("[steam] WARNING: could not write steam_appid.txt ({}).", e);
+    }
 
-    // 6. Shortcuts.
-    create_shortcuts(dir)?;
+    // 6. Shortcuts. Fail-soft: missing shortcuts never break the game.
+    if let Err(e) = create_shortcuts(dir) {
+        eprintln!("[shortcut] WARNING: shortcut step failed ({}); continuing.", e);
+    }
+
+    // 7. Final verification: report exactly what is (and isn't) in place,
+    // so a broken install is never silent.
+    let mut missing = Vec::new();
+    if find_game_exe(dir).is_none() {
+        missing.push("RecRoom.exe");
+    }
+    if !dir.join("steam_appid.txt").exists() {
+        missing.push("steam_appid.txt (Steam bypass)");
+    }
+    if !dir.join("BepInEx").exists() {
+        missing.push("BepInEx");
+    }
+    if !plugins_dir.join("RecNetPlugin.dll").exists() {
+        missing.push("RecNetPlugin.dll");
+    }
+    if missing.is_empty() {
+        println!("[verify] all critical files present: game is ready.");
+    } else {
+        eprintln!("[verify] WARNING: missing: {}.", missing.join(", "));
+    }
 
     Ok(())
 }
