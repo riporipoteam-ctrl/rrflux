@@ -1,0 +1,154 @@
+name: game-screenshot-test
+# Manual-only: boots the real 2023 Rec Room client on a windows-2022 runner
+# (WARP software rendering), captures screenshots as proof the game runs.
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      FLUXREC_NS_HOST: ${{ secrets.FLUXREC_NS_HOST }}
+      FLUXREC_PHOTON_RT: ${{ secrets.FLUXREC_PHOTON_RT }}
+      FLUXREC_PHOTON_VOICE: ${{ secrets.FLUXREC_PHOTON_VOICE }}
+      FLUXREC_PHOTON_CHAT: ${{ secrets.FLUXREC_PHOTON_CHAT }}
+    steps:
+      - name: Set up game dir
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory D:\FluxRec -Force | Out-Null
+          New-Item -ItemType Directory D:\shots -Force | Out-Null
+          # hosts entry so ns.rec.net resolves locally (fail-soft)
+          try { Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 ns.rec.net" } catch { Write-Host "hosts edit skipped: $_" }
+
+      - name: Download client
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://s3.g.megas4.com/2koayuyiwxv4groxzwdbbxg43cwustavrkvfb/recflare/client.zip" -OutFile D:\client.zip
+          Expand-Archive D:\client.zip -DestinationPath D:\FluxRec
+          Get-ChildItem D:\FluxRec | Select-Object Name | Format-Table -HideTableHeaders | Out-String | Write-Host
+
+      - name: Install BepInEx
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/BepInEx/BepInEx/releases/download/v6.0.0-pre.2/BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip" -OutFile D:\bepinex.zip
+          Expand-Archive D:\bepinex.zip -DestinationPath D:\FluxRec
+
+      - name: Install RecNetPlugin + configs
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/recflare/patch/releases/download/20230414.2/RecNetPlugin.dll" -OutFile "D:\FluxRec\BepInEx\plugins\RecNetPlugin.dll"
+          $cfgDir = "D:\FluxRec\BepInEx\config"
+          New-Item -ItemType Directory $cfgDir -Force | Out-Null
+          $cfg = @"
+          ## Flux Rec - RecNet plugin config (plugin GUID net.rec.plugin, v1.0.0)
+
+          [Server]
+          RecNet NameServer Host = $env:FLUXREC_NS_HOST
+
+          [Photon]
+          App Id Realtime = $env:FLUXREC_PHOTON_RT
+          App Id Voice = $env:FLUXREC_PHOTON_VOICE
+          App Id Chat = $env:FLUXREC_PHOTON_CHAT
+
+          [Advanced]
+          Enabled Advanced Settings = false
+          Suppress DUID Mismatch = true
+          Debug = false
+
+          [Signing]
+          Disable Signature Verification = true
+
+          [Analytics]
+          Disable Telemetry = true
+          "@
+          Set-Content -Path "$cfgDir\net.rec.plugin.cfg" -Value $cfg
+          # Hide BepInEx console window (v0.1.3 behavior)
+          $bepCfgDir = "D:\FluxRec\BepInEx\config"
+          $bepCfg = @"
+          [Logging.Console]
+          Enabled = false
+          "@
+          Add-Content -Path "$bepCfgDir\BepInEx.cfg" -Value $bepCfg
+
+      - name: Apply Goldberg Steam fix
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Detanup01/gbe_fork/releases/download/release-2026_09_16_2/emu-win-release-vs22.7z" -OutFile D:\gbe.7z
+          # 7z is preinstalled on GH runners
+          & 7z x D:\gbe.7z -oD:\gbe | Out-Null
+          $plugDir = "D:\FluxRec\RecRoom_Data\Plugins\x86_64"
+          Copy-Item "$plugDir\steam_api64.dll" "$plugDir\steam_api64.dll.orig"
+          Copy-Item "D:\gbe\release\regular\x64\steam_api64.dll" "$plugDir\steam_api64.dll" -Force
+          New-Item -ItemType Directory "$plugDir\steam_settings" -Force | Out-Null
+          Set-Content -Path "$plugDir\steam_settings\steam_appid.txt" -Value "471710" -NoNewline
+          # generate_interfaces needs the ORIGINAL dll
+          Copy-Item "$plugDir\steam_api64.dll.orig" "D:\gbe\steam_api64.dll"
+          Push-Location D:\gbe\release\tools\generate_interfaces
+          & .\generate_interfaces_x64.exe "D:\gbe\steam_api64.dll" "D:\iface.txt"
+          Pop-Location
+          Copy-Item "D:\iface.txt" "$plugDir\steam_settings\steam_interfaces.txt"
+          # remove dead steam_appid.txt beside exe (never read; avoids confusion)
+          Remove-Item "D:\FluxRec\steam_appid.txt" -ErrorAction SilentlyContinue
+          Get-ChildItem "$plugDir\steam_settings" | Select-Object Name, Length | Format-Table | Out-String | Write-Host
+
+      - name: Launch game (windowed, WARP renders automatically)
+        shell: pwsh
+        run: |
+          cd D:\FluxRec
+          Start-Process .\RecRoom.exe -ArgumentList "-screen-width 1280 -screen-height 720 -screen-fullscreen 0","-logFile D:\player.log"
+          Write-Host "launched, waiting for boot..."
+
+      - name: Wait for boot (poll log, generous timeout)
+        shell: pwsh
+        run: |
+          $deadline = (Get-Date).AddMinutes(25)
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 30
+            if (Test-Path D:\player.log) {
+              $tail = Get-Content D:\player.log -Tail 5 -ErrorAction SilentlyContinue
+              Write-Host "--- log tail ---"; $tail | Write-Host
+              if ($tail -match "Failed to initialize Steam") { Write-Host "STEAM INIT FAILED"; break }
+            }
+            if (-not (Get-Process RecRoom -ErrorAction SilentlyContinue)) { Write-Host "game process exited"; break }
+          }
+
+      - name: Screenshot
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          function Capture($path, $x, $y, $w, $h) {
+            $bmp = New-Object System.Drawing.Bitmap($w, $h)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen([System.Drawing.Point]::new($x,$y), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new($w,$h))
+            $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+            Write-Host "saved $path"
+          }
+          Capture "D:\shots\shot_full.png" 0 0 1280 720
+          # game window rect if available
+          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($p -and $p.MainWindowHandle -ne 0) {
+            Add-Type @"
+              using System; using System.Runtime.InteropServices;
+              public class Win32 { [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+                [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L,T,R,B; } }
+          "@
+            $r = New-Object Win32+RECT
+            if ([Win32]::GetWindowRect($p.MainWindowHandle, [ref]$r)) {
+              Capture "D:\shots\shot_window.png" $r.L $r.T ($r.R-$r.L) ($r.B-$r.T)
+            }
+          }
+          Start-Sleep -Seconds 60
+          Capture "D:\shots\shot_full_2.png" 0 0 1280 720
+          Copy-Item D:\player.log D:\shots\player.log -ErrorAction SilentlyContinue
+          Copy-Item "D:\FluxRec\BepInEx\LogOutput.log" D:\shots\bepinex.log -ErrorAction SilentlyContinue
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-screenshots
+          path: D:\shots\
+          retention-days: 7
