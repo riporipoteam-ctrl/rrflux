@@ -14,6 +14,8 @@ jobs:
       FLUXREC_PHOTON_VOICE: ${{ secrets.FLUXREC_PHOTON_VOICE }}
       FLUXREC_PHOTON_CHAT: ${{ secrets.FLUXREC_PHOTON_CHAT }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Set up game dir
         shell: pwsh
         run: |
@@ -83,12 +85,8 @@ jobs:
           Copy-Item "D:\gbe\release\regular\x64\steam_api64.dll" "$plugDir\steam_api64.dll" -Force
           New-Item -ItemType Directory "$plugDir\steam_settings" -Force | Out-Null
           Set-Content -Path "$plugDir\steam_settings\steam_appid.txt" -Value "471710" -NoNewline
-          # generate_interfaces needs the ORIGINAL dll
-          Copy-Item "$plugDir\steam_api64.dll.orig" "D:\gbe\steam_api64.dll"
-          Push-Location D:\gbe\release\tools\generate_interfaces
-          & .\generate_interfaces_x64.exe "D:\gbe\steam_api64.dll" "D:\iface.txt"
-          Pop-Location
-          Copy-Item "D:\iface.txt" "$plugDir\steam_settings\steam_interfaces.txt"
+          # pre-generated steam_interfaces.txt (from the pinned client DLL)
+          Copy-Item "$env:GITHUB_WORKSPACE\game\installer\assets\steam_interfaces.txt" "$plugDir\steam_settings\steam_interfaces.txt"
           # remove dead steam_appid.txt beside exe (never read; avoids confusion)
           Remove-Item "D:\FluxRec\steam_appid.txt" -ErrorAction SilentlyContinue
           Get-ChildItem "$plugDir\steam_settings" | Select-Object Name, Length | Format-Table | Out-String | Write-Host
