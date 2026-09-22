@@ -258,6 +258,20 @@ fn write_plugin_config(dir: &Path, ns_host: &str, rt: &str, voice: &str, chat: &
     Ok(())
 }
 
+/// BepInEx core config: disable the console window so the game launches clean with
+/// no extra terminal hanging around. BepInEx merges this with its own defaults.
+fn write_bepinex_config(dir: &Path) -> Result<(), String> {
+    let cfg_dir = dir.join("BepInEx").join("config");
+    std::fs::create_dir_all(&cfg_dir).map_err(|e| e.to_string())?;
+    let cfg = "## Flux Rec — BepInEx core config: console hidden for a clean launch.\n\
+         \n\
+         [Logging.Console]\n\
+         Enabled = false\n";
+    std::fs::write(cfg_dir.join("BepInEx.cfg"), cfg).map_err(|e| e.to_string())?;
+    println!("[config] wrote BepInEx/config/BepInEx.cfg (console hidden).");
+    Ok(())
+}
+
 #[cfg(windows)]
 fn ps_escape(s: &str) -> String {
     s.replace('\'', "''")
@@ -335,8 +349,8 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         let desktop_dir = String::from_utf8_lossy(&desktop.stdout).trim().to_string();
         let desktop_lnk = PathBuf::from(format!("{desktop_dir}\\Flux Rec.lnk"));
-        create_shortcut(&start_menu, &exe, "+forcemode:screen", dir)?;
-        create_shortcut(&desktop_lnk, &exe, "+forcemode:screen", dir)?;
+        create_shortcut(&start_menu, &exe, "+forcemode:screen -screen-fullscreen 1", dir)?;
+        create_shortcut(&desktop_lnk, &exe, "+forcemode:screen -screen-fullscreen 1", dir)?;
     }
     #[cfg(not(windows))]
     {
@@ -380,6 +394,9 @@ async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, pho
 
     // 4. Plugin config (ns host + Photon IDs baked at packaging time).
     write_plugin_config(dir, ns_host, photon_rt, photon_voice, photon_chat)?;
+
+    // 4b. BepInEx core config: hide the console window so the game launches clean.
+    write_bepinex_config(dir)?;
 
     // 5. Steam bypass.
     std::fs::write(dir.join("steam_appid.txt"), "480").map_err(|e| e.to_string())?;
