@@ -394,10 +394,21 @@ fn install_logo_bundle(
     }
 
     // Atomic replace: rename the verified temp file over the target.
-    std::fs::rename(&tmp_path, target).map_err(|e| {
+    // NOTE: on Windows, rename() fails if the target already exists, so
+    // remove it first. The .stock backup above guarantees we can restore
+    // the original bundle if anything goes wrong here.
+    #[cfg(windows)]
+    if target.exists() {
+        std::fs::remove_file(target).map_err(|e| e.to_string())?;
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, target) {
         let _ = std::fs::remove_file(&tmp_path);
-        e.to_string()
-    })?;
+        // Never leave the game without this bundle: restore the stock backup.
+        if backup_path.exists() {
+            let _ = std::fs::copy(&backup_path, target);
+        }
+        return Err(e.to_string());
+    }
     println!("[logo] Flux Rec logo bundle applied.");
     Ok(())
 }
@@ -462,7 +473,11 @@ async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, pho
 
     // 1b. Flux Rec logo bundle: patched loading-screen bundle over the stock one.
     // Never triggers a full client re-download: applies in place, stock backed up once.
-    apply_logo_bundle(&client, dir).await?;
+    // FAIL-SOFT: the logo is cosmetic. If it fails for any reason, warn and
+    // continue — the game must always end up fully installed and playable.
+    if let Err(e) = apply_logo_bundle(&client, dir).await {
+        eprintln!("[logo] WARNING: logo bundle step failed ({}); continuing without it.", e);
+    }
 
     // 2. BepInEx.
     let bepinex_zip = dir.join("bepinex.zip");
