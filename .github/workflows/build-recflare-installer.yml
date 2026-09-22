@@ -37,11 +37,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = 'Continue'
-          $ver = (Select-String -Path game\installer\Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches.Groups[1].Value
-          $tag = "recflare-installer-v$ver"
+          $tag = "recflare-installer-v0.1.0"
           gh release view $tag 2>$null | Out-Null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --prerelease --title "Flux Rec setup (RecFlare pipeline) v$ver" --notes "Zero-touch installer: downloads the 2023 Rec Room client, BepInEx and the RecNet redirect plugin, writes config, no Steam needed."
+            gh release create $tag --prerelease --title "Flux Rec setup (RecFlare pipeline) v0.1.0" --notes "Zero-touch installer: downloads the 2023 Rec Room client, BepInEx and the RecNet redirect plugin, writes config, no Steam needed."
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
           }
           gh release upload $tag "game\installer\target\release\FluxRec-Setup.exe" --clobber
