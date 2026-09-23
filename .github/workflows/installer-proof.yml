@@ -13,10 +13,6 @@ on:
         description: 'recflare-installer release tag to test'
         required: true
         default: 'recflare-installer-v0.1.7'
-      upgrade_from:
-        description: 'Install this older tag first (simulates upgrading a broken install); empty = fresh install'
-        required: false
-        default: ''
 
 jobs:
   proof:
@@ -35,25 +31,6 @@ jobs:
           $tag = "${{ inputs.tag }}"
           Invoke-WebRequest -Uri "https://github.com/riporipoteam-ctrl/rrflux/releases/download/$tag/FluxRec-Setup.exe" -OutFile D:\FluxRec-Setup.exe
           Write-Host "downloaded:" (Get-Item D:\FluxRec-Setup.exe).Length "bytes"
-
-      - name: Install older version first (upgrade simulation)
-        if: inputs.upgrade_from != ''
-        shell: pwsh
-        run: |
-          $old = "${{ inputs.upgrade_from }}"
-          Invoke-WebRequest -Uri "https://github.com/riporipoteam-ctrl/rrflux/releases/download/$old/FluxRec-Setup.exe" -OutFile D:\FluxRec-Setup-old.exe
-          Write-Host "downloaded old setup:" (Get-Item D:\FluxRec-Setup-old.exe).Length "bytes"
-          $p = Start-Process D:\FluxRec-Setup-old.exe -ArgumentList "--dir","D:\FluxRec" -PassThru
-          $deadline = (Get-Date).AddMinutes(55)
-          while ((Get-Date) -lt $deadline) {
-            Start-Sleep -Seconds 30
-            if ($p.HasExited) { break }
-            Write-Host "old installer still running..."
-          }
-          if (-not $p.HasExited) { $p.Kill(); throw "old install timed out" }
-          Write-Host "old installer exit code:" $p.ExitCode
-          $legacy = Get-Content "D:\FluxRec\steam_appid.txt" -Raw -ErrorAction SilentlyContinue
-          Write-Host "legacy steam_appid.txt after old install: [$legacy]"
 
       - name: Run installer (hidden console + GUI progress window)
         shell: pwsh
