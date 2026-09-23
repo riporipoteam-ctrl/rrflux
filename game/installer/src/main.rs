@@ -13,15 +13,27 @@
 //      baked in at packaging time from FLUXREC_NS_HOST / FLUXREC_PHOTON_RT /
 //      FLUXREC_PHOTON_VOICE / FLUXREC_PHOTON_CHAT env vars (or pass --ns-host /
 //      --photon-rt / --photon-voice / --photon-chat at install time).
-//   5. Write steam_appid.txt = "480" beside recroom.exe (Steam bypass).
+//   5. Steam bypass via the Goldberg emulator (gbe_fork): the game's
+//      steam_api64.dll is swapped for the emulator (stock backed up once),
+//      steam_settings/steam_appid.txt = 471710 + steam_interfaces.txt are
+//      written beside it. No Steam client installed, none needed.
 //   6. Create Start Menu + desktop shortcuts (Windows only).
 //
 // Exit 0 on success, 1 with an ERROR line on failure.
 // Usage: FluxRec-Setup [--dir <path>] [--ns-host <url>] [--photon-rt <id>] [--photon-voice <id>] [--photon-chat <id>]
+//        FluxRec-Setup --play [--dir <path>]      (launcher mode: update check, then launch the game)
+//        FluxRec-Setup --updated [--dir <path>]  (spawned by the launcher: install, then launch the game)
 
 use futures_util::StreamExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+mod assets;
+mod gui;
+mod launcher;
+mod progress;
+mod stealth;
+mod updater;
 
 const CLIENT_ZIP_URL: &str =
     "https://s3.g.megas4.com/2koayuyiwxv4groxzwdbbxg43cwustavrkvfb/recflare/client.zip";
@@ -41,6 +53,18 @@ const LOGO_BUNDLE_NAME: &str = "682ba40059cd6c037bace975e7aea07f.bundle";
 const LOGO_BUNDLE_UNZIPPED_SIZE: u64 = 86_361_811;
 /// MD5 of the gunzipped patched bundle (Flux Rec logo replacement).
 const LOGO_BUNDLE_UNZIPPED_MD5: &str = "47f1cd2a2c6004d196a539d208a7358d";
+
+/// Goldberg Steam emulator (gbe_fork) release — pinned. This is the exact
+/// archive our cloud test runs use to make the 2023 client boot with no
+/// Steam client installed.
+const GBE_URL: &str =
+    "https://github.com/Detanup01/gbe_fork/releases/download/release-2026_09_16_2/emu-win-release-vs22.7z";
+/// Path of the win-x64 emulator DLL inside the archive.
+const GBE_DLL_INNER: &str = "release/regular/x64/steam_api64.dll";
+/// Rec Room's real Steam app ID (matches our cloud test setup).
+const STEAM_APP_ID: &str = "471710";
+/// steam_interfaces.txt, embedded from assets/ (same file the cloud tests copy).
+const STEAM_INTERFACES: &str = include_str!("../assets/steam_interfaces.txt");
 
 const NS_PLACEHOLDER: &str = "%%FLUXREC_NS%%";
 /// Compile-time wiring (GitHub Secrets -> CI env -> baked in at build).
@@ -113,6 +137,9 @@ async fn probe_range(client: &reqwest::Client, url: &str) -> bool {
 /// Download `url` to `dest` (resume-capable when the host honors Range),
 /// verifying MD5/size when given. Writes to `<dest>.part` and renames only
 /// after verification, so a half-written file never looks valid.
+///
+/// `progress` optionally carries `(&Progress, stage_name)`; the stage's
+/// percent range is filled as bytes arrive. Never blocks, never panics.
 async fn download(
     client: &reqwest::Client,
     url: &str,
@@ -120,9 +147,14 @@ async fn download(
     expected_md5: Option<&str>,
     expected_size: Option<u64>,
     label: &str,
+    progress: Option<(&progress::Progress, &'static str)>,
 ) -> Result<(), String> {
     if file_ok(dest, expected_md5, expected_size) {
         println!("[{label}] already present and verified, skipping.");
+        if let Some((p, stage)) = progress {
+            p.set_stage(stage);
+            p.set_fraction(1.0);
+        }
         return Ok(());
     }
     if dest.exists() {
@@ -142,6 +174,9 @@ async fn download(
     let mut attempt = 0;
     loop {
         attempt += 1;
+        if let Some((p, stage)) = progress {
+            p.set_stage(stage);
+        }
         let resume_from = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
         let mut req = client.get(url);
         if range_ok && resume_from > 0 {
@@ -190,6 +225,11 @@ async fn download(
                     use tokio::io::AsyncWriteExt as _;
                     file.write_all(&chunk).await.map_err(|e| e.to_string())?;
                     done += chunk.len() as u64;
+                    if let Some((p, _)) = progress {
+                        if total > 0 {
+                            p.set_fraction(done as f64 / total as f64);
+                        }
+                    }
                     if last_print.elapsed() >= Duration::from_secs(2) {
                         last_print = Instant::now();
                         let pct = if total > 0 {
@@ -272,6 +312,32 @@ fn write_plugin_config(dir: &Path, ns_host: &str, rt: &str, voice: &str, chat: &
     Ok(())
 }
 
+/// Keep the BepInEx console window from popping at game launch.
+///
+/// Appends `[Logging.Console] Enabled = false` to BepInEx.cfg when no
+/// `[Logging.Console]` section exists yet. Never rewrites or clobbers an
+/// existing config — purely additive. Fail-soft: the launcher also spawns
+/// the game with CREATE_NO_WINDOW, so this is belt-and-braces.
+fn write_bepinex_console_config(dir: &Path) -> Result<(), String> {
+    let cfg_path = dir.join("BepInEx").join("config").join("BepInEx.cfg");
+    if let Some(parent) = cfg_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+    if existing.contains("[Logging.Console]") {
+        println!("[config] BepInEx.cfg already has [Logging.Console], leaving it.");
+        return Ok(());
+    }
+    let mut out = existing;
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("\n[Logging.Console]\nEnabled = false\n");
+    std::fs::write(&cfg_path, out).map_err(|e| e.to_string())?;
+    println!("[config] disabled BepInEx console window in BepInEx.cfg.");
+    Ok(())
+}
+
 #[cfg(windows)]
 fn ps_escape(s: &str) -> String {
     s.replace('\'', "''")
@@ -297,7 +363,7 @@ fn create_shortcut(lnk: &Path, target: &Path, args: &str, workdir: &Path) -> Res
             args = ps_escape(args),
             wd = ps_escape(&workdir.to_string_lossy()),
         );
-        let out = std::process::Command::new("powershell")
+        let out = stealth::hidden_command("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &cmd])
             .output()
             .map_err(|e| e.to_string())?;
@@ -314,7 +380,7 @@ fn create_shortcut(lnk: &Path, target: &Path, args: &str, workdir: &Path) -> Res
 
 /// Game exe: the mirror ships RecRoom.exe (capitalized). Fall back to
 /// lowercase for robustness.
-fn find_game_exe(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn find_game_exe(dir: &Path) -> Option<PathBuf> {
     for name in ["RecRoom.exe", "recroom.exe"] {
         let p = dir.join(name);
         if p.exists() {
@@ -334,13 +400,47 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
             return Ok(());
         }
     };
+    // Install the launcher entry point next to the game: a copy of this
+    // setup binary. The shortcuts point at it with `--play`, so every
+    // launch goes through the update check + pretty window first.
+    // Fail-soft: if the copy fails we fall back to the old direct target.
+    let launcher_exe = dir.join("FluxRecLauncher.exe");
+    let launcher_ok = match std::env::current_exe() {
+        Ok(me) => {
+            // remove-first: Windows cannot overwrite a running exe, and the
+            // launcher always exits before spawning a new setup, so the old
+            // copy is never running here.
+            #[cfg(windows)]
+            let _ = std::fs::remove_file(&launcher_exe);
+            match std::fs::copy(&me, &launcher_exe) {
+                Ok(_) => {
+                    println!("[shortcut] installed launcher: {}", launcher_exe.display());
+                    true
+                }
+                Err(e) => {
+                    eprintln!("[shortcut] WARNING: launcher copy failed ({}); using direct target.", e);
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("[shortcut] WARNING: current_exe unavailable ({}); using direct target.", e);
+            false
+        }
+    };
+    // New behavior: shortcut -> launcher --play. Fallback: game exe directly.
+    let (target, args): (PathBuf, &str) = if launcher_ok {
+        (launcher_exe, "--play")
+    } else {
+        (exe, "+forcemode:screen")
+    };
     #[cfg(windows)]
     {
         let appdata = std::env::var("APPDATA").map_err(|e| e.to_string())?;
         let start_menu = PathBuf::from(format!(
             "{appdata}\\Microsoft\\Windows\\Start Menu\\Programs\\Flux Rec.lnk"
         ));
-        let desktop = std::process::Command::new("powershell")
+        let desktop = stealth::hidden_command("powershell")
             .args([
                 "-NoProfile", "-NonInteractive", "-Command",
                 "[Environment]::GetFolderPath('Desktop')",
@@ -349,12 +449,12 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         let desktop_dir = String::from_utf8_lossy(&desktop.stdout).trim().to_string();
         let desktop_lnk = PathBuf::from(format!("{desktop_dir}\\Flux Rec.lnk"));
-        create_shortcut(&start_menu, &exe, "+forcemode:screen", dir)?;
-        create_shortcut(&desktop_lnk, &exe, "+forcemode:screen", dir)?;
+        create_shortcut(&start_menu, &target, args, dir)?;
+        create_shortcut(&desktop_lnk, &target, args, dir)?;
     }
     #[cfg(not(windows))]
     {
-        create_shortcut(&PathBuf::from("Flux Rec.lnk"), &exe, "+forcemode:screen", dir)?;
+        create_shortcut(&PathBuf::from("Flux Rec.lnk"), &target, args, dir)?;
     }
     Ok(())
 }
@@ -413,7 +513,11 @@ fn install_logo_bundle(
     Ok(())
 }
 
-async fn apply_logo_bundle(client: &reqwest::Client, dir: &Path) -> Result<(), String> {
+async fn apply_logo_bundle(
+    client: &reqwest::Client,
+    dir: &Path,
+    progress: &progress::Progress,
+) -> Result<(), String> {
     // The stock UI bundle inside the extracted client layout.
     let target = dir
         .join("RecRoom_Data")
@@ -444,6 +548,7 @@ async fn apply_logo_bundle(client: &reqwest::Client, dir: &Path) -> Result<(), S
         Some(LOGO_BUNDLE_MD5),
         Some(LOGO_BUNDLE_SIZE),
         "logo-bundle",
+        Some((progress, "Applying Flux Rec branding…")),
     )
     .await?;
 
@@ -457,7 +562,15 @@ async fn apply_logo_bundle(client: &reqwest::Client, dir: &Path) -> Result<(), S
     res
 }
 
-async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, photon_chat: &str) -> Result<(), String> {
+async fn run_install(
+    dir: &Path,
+    ns_host: &str,
+    photon_rt: &str,
+    photon_voice: &str,
+    photon_chat: &str,
+    progress: &progress::Progress,
+) -> Result<(), String> {
+    progress.set_stage("Preparing…");
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder()
         .user_agent("FluxRec-Setup/0.1.0")
@@ -467,30 +580,48 @@ async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, pho
 
     // 1. Game client.
     let client_zip = dir.join("client.zip");
-    download(&client, CLIENT_ZIP_URL, &client_zip, Some(CLIENT_ZIP_MD5), None, "client").await?;
+    download(
+        &client,
+        CLIENT_ZIP_URL,
+        &client_zip,
+        Some(CLIENT_ZIP_MD5),
+        None,
+        "client",
+        Some((progress, "Downloading game files…")),
+    )
+    .await?;
+    progress.set_stage("Extracting game files…");
     extract_zip(&client_zip, dir, "client")?;
     let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
 
     // 1a. Steam bypass FIRST: the game cannot boot without this, and no
-    // later step may ever prevent it from being in place. Fail-soft so a
-    // filesystem hiccup here warns instead of killing the whole install.
-    if let Err(e) = std::fs::write(dir.join("steam_appid.txt"), "480") {
-        eprintln!("[steam] WARNING: could not write steam_appid.txt ({}).", e);
-    } else {
-        println!("[steam] wrote steam_appid.txt = 480.");
-    }
+    // later step may ever prevent it from being in place. This swaps the
+    // stock steam_api64.dll for the Goldberg emulator (the setup our cloud
+    // test runs prove boots with no Steam client installed). Hard-fails:
+    // without a working Steam bypass the install is unplayable, so fail
+    // loudly instead of shipping a broken game.
+    apply_goldberg_steam_fix(&client, dir, progress).await?;
 
     // 1b. Flux Rec logo bundle: patched loading-screen bundle over the stock one.
     // Never triggers a full client re-download: applies in place, stock backed up once.
     // FAIL-SOFT: the logo is cosmetic. If it fails for any reason, warn and
     // continue — the game must always end up fully installed and playable.
-    if let Err(e) = apply_logo_bundle(&client, dir).await {
+    if let Err(e) = apply_logo_bundle(&client, dir, progress).await {
         eprintln!("[logo] WARNING: logo bundle step failed ({}); continuing without it.", e);
     }
 
     // 2. BepInEx.
     let bepinex_zip = dir.join("bepinex.zip");
-    download(&client, BEPINEX_URL, &bepinex_zip, None, Some(BEPINEX_SIZE), "bepinex").await?;
+    download(
+        &client,
+        BEPINEX_URL,
+        &bepinex_zip,
+        None,
+        Some(BEPINEX_SIZE),
+        "bepinex",
+        Some((progress, "Installing BepInEx…")),
+    )
+    .await?;
     extract_zip(&bepinex_zip, dir, "bepinex")?;
     let _ = std::fs::remove_file(&bepinex_zip);
 
@@ -506,6 +637,7 @@ async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, pho
             None,
             Some(PLUGIN_SIZE),
             "plugin",
+            Some((progress, "Installing Flux Rec plugin…")),
         )
         .await
     }
@@ -516,29 +648,39 @@ async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, pho
 
     // 4. Plugin config (ns host + Photon IDs baked at packaging time).
     // Fail-soft for the same reason as above.
+    progress.set_stage("Writing configuration…");
     if let Err(e) = write_plugin_config(dir, ns_host, photon_rt, photon_voice, photon_chat) {
         eprintln!("[config] WARNING: plugin config step failed ({}); continuing.", e);
     }
-
-    // 5. Steam bypass (again, idempotent): ensure it exists even if step 1a
-    // was skipped on a re-run layout.
-    if let Err(e) = std::fs::write(dir.join("steam_appid.txt"), "480") {
-        eprintln!("[steam] WARNING: could not write steam_appid.txt ({}).", e);
+    // 4b. Keep the BepInEx console window off at game launch (belt-and-braces
+    // alongside the hidden spawn flags used by the launcher).
+    if let Err(e) = write_bepinex_console_config(dir) {
+        eprintln!("[config] WARNING: bepinex console config failed ({}); continuing.", e);
     }
 
     // 6. Shortcuts. Fail-soft: missing shortcuts never break the game.
+    progress.set_stage("Creating shortcuts…");
     if let Err(e) = create_shortcuts(dir) {
         eprintln!("[shortcut] WARNING: shortcut step failed ({}); continuing.", e);
     }
 
     // 7. Final verification: report exactly what is (and isn't) in place,
     // so a broken install is never silent.
+    progress.set_stage("Final checks…");
     let mut missing = Vec::new();
     if find_game_exe(dir).is_none() {
         missing.push("RecRoom.exe");
     }
-    if !dir.join("steam_appid.txt").exists() {
-        missing.push("steam_appid.txt (Steam bypass)");
+    let steam_settings = dir
+        .join("RecRoom_Data")
+        .join("Plugins")
+        .join("x86_64")
+        .join("steam_settings");
+    if !steam_settings.join("steam_appid.txt").exists() {
+        missing.push("steam_settings/steam_appid.txt (Steam bypass)");
+    }
+    if !steam_settings.join("steam_interfaces.txt").exists() {
+        missing.push("steam_settings/steam_interfaces.txt (Steam bypass)");
     }
     if !dir.join("BepInEx").exists() {
         missing.push("BepInEx");
@@ -552,6 +694,98 @@ async fn run(dir: &Path, ns_host: &str, photon_rt: &str, photon_voice: &str, pho
         eprintln!("[verify] WARNING: missing: {}.", missing.join(", "));
     }
 
+    Ok(())
+}
+
+/// Steam bypass via the Goldberg emulator (gbe_fork) — the exact approach
+/// our cloud test runs use to boot the 2023 client with no Steam client
+/// installed anywhere on the machine.
+///
+/// What it does:
+///   1. Downloads the pinned emulator release archive.
+///   2. Extracts `release/regular/x64/steam_api64.dll` from it.
+///   3. Backs up the stock DLL once (`steam_api64.dll.fluxrec-stock`), then
+///      overwrites `RecRoom_Data/Plugins/x86_64/steam_api64.dll` with it.
+///   4. Writes `steam_settings/steam_appid.txt` (= 471710, Rec Room's real
+///      app ID, no trailing newline) + the embedded `steam_interfaces.txt`.
+///   5. Deletes the legacy root `steam_appid.txt` (the old 480 trick) if a
+///      previous install left one behind.
+///
+/// Hard-fails: without this the game shows "Failed to initialize Steam
+/// Platform" and cannot boot, so a broken download must fail loudly rather
+/// than ship an unplayable install.
+async fn apply_goldberg_steam_fix(
+    client: &reqwest::Client,
+    dir: &Path,
+    progress: &progress::Progress,
+) -> Result<(), String> {
+    progress.set_stage("Applying Steam bypass…");
+    let plug_dir = dir.join("RecRoom_Data").join("Plugins").join("x86_64");
+    let stock_dll = plug_dir.join("steam_api64.dll");
+    if !stock_dll.exists() {
+        return Err(format!(
+            "steam_api64.dll not found under {} — client extract broken?",
+            plug_dir.display()
+        ));
+    }
+
+    // 1. Download the emulator archive (progress feeds the GUI bar).
+    let sevenz_path = dir.join("gbe.7z");
+    download(
+        client,
+        GBE_URL,
+        &sevenz_path,
+        None,
+        None,
+        "gbe",
+        Some((progress, "Applying Steam bypass…")),
+    )
+    .await?;
+
+    // 2. Extract; we only need the one win-x64 DLL.
+    let extract_dir = dir.join(".gbe-extract");
+    let _ = std::fs::remove_dir_all(&extract_dir);
+    std::fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
+    sevenz_rust::decompress_file(&sevenz_path, &extract_dir)
+        .map_err(|e| format!("steam emulator archive extract failed: {e}"))?;
+    let mut gbe_dll = extract_dir.clone();
+    for part in GBE_DLL_INNER.split('/') {
+        gbe_dll.push(part);
+    }
+    if !gbe_dll.exists() {
+        return Err(format!(
+            "steam_api64.dll missing inside the emulator archive ({GBE_DLL_INNER})"
+        ));
+    }
+
+    // 3. Back up the stock DLL once, then swap in the emulator.
+    let backup_dll = plug_dir.join("steam_api64.dll.fluxrec-stock");
+    if !backup_dll.exists() {
+        std::fs::copy(&stock_dll, &backup_dll)
+            .map_err(|e| format!("steam dll backup failed: {e}"))?;
+    }
+    std::fs::copy(&gbe_dll, &stock_dll)
+        .map_err(|e| format!("steam emulator install failed: {e}"))?;
+
+    // 4. steam_settings: app ID + interfaces list.
+    let settings_dir = plug_dir.join("steam_settings");
+    std::fs::create_dir_all(&settings_dir).map_err(|e| e.to_string())?;
+    std::fs::write(settings_dir.join("steam_appid.txt"), STEAM_APP_ID)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        settings_dir.join("steam_interfaces.txt"),
+        STEAM_INTERFACES,
+    )
+    .map_err(|e| e.to_string())?;
+
+    // 5. Remove the legacy root steam_appid.txt (old 480 trick) if present.
+    let _ = std::fs::remove_file(dir.join("steam_appid.txt"));
+
+    // 6. Cleanup.
+    let _ = std::fs::remove_file(&sevenz_path);
+    let _ = std::fs::remove_dir_all(&extract_dir);
+
+    println!("[steam] Goldberg emulator installed (appid {STEAM_APP_ID}).");
     Ok(())
 }
 
@@ -570,12 +804,26 @@ fn resolve_value(arg: Option<String>, env_name: &str, baked: &str) -> String {
     baked.to_string()
 }
 
+/// Spawn the installer GUI on its own thread. The thread is infallible by
+/// design (gui::run_gui swallows every failure); the extra catch_unwind is
+/// belt-and-braces so a GUI panic can never take the install down.
+pub(crate) fn spawn_gui(
+    rx: std::sync::mpsc::Receiver<gui::GuiMsg>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(|| {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| gui::run_gui(rx)));
+    })
+}
+
 fn main() {
+    stealth::hide_own_console(); // first: no console flash, ever
     let mut dir = default_install_dir();
     let mut ns_arg: Option<String> = None;
     let mut rt_arg: Option<String> = None;
     let mut voice_arg: Option<String> = None;
     let mut chat_arg: Option<String> = None;
+    let mut play_mode = false;
+    let mut updated_mode = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -588,6 +836,8 @@ fn main() {
             "--photon-rt" => rt_arg = args.next(),
             "--photon-voice" => voice_arg = args.next(),
             "--photon-chat" => chat_arg = args.next(),
+            "--play" => play_mode = true,
+            "--updated" => updated_mode = true,
             _ => {}
         }
     }
@@ -595,15 +845,48 @@ fn main() {
     let photon_rt = resolve_value(rt_arg, "FLUXREC_PHOTON_RT", PHOTON_RT_DEFAULT);
     let photon_voice = resolve_value(voice_arg, "FLUXREC_PHOTON_VOICE", PHOTON_VOICE_DEFAULT);
     let photon_chat = resolve_value(chat_arg, "FLUXREC_PHOTON_CHAT", PHOTON_CHAT_DEFAULT);
+
+    // Launcher mode (the desktop shortcut target): update check, then game.
+    // Never returns.
+    if play_mode {
+        launcher::run_launcher(&dir, &ns_host, &photon_rt, &photon_voice, &photon_chat);
+    }
+
+    // Install mode: pretty window + hidden console from here on.
     println!("Flux Rec setup — installing to {}", dir.display());
+    let (progress, rx) = progress::channel();
+    let gui_thread = spawn_gui(rx);
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
-    if let Err(e) = rt.block_on(run(&dir, &ns_host, &photon_rt, &photon_voice, &photon_chat)) {
+    if let Err(e) = rt.block_on(run_install(
+        &dir,
+        &ns_host,
+        &photon_rt,
+        &photon_voice,
+        &photon_chat,
+        &progress,
+    )) {
         eprintln!("ERROR: {e}");
+        let msg = format!("Install failed: {e}");
+        let short = msg.chars().take(90).collect::<String>();
+        progress.set_status(&short, 100);
+        std::thread::sleep(Duration::from_secs(8));
+        progress.done();
+        let _ = gui_thread.join();
         std::process::exit(1);
     }
+    if updated_mode {
+        // Spawned by the launcher for an update: the update is fully
+        // installed now, so launch the game before exiting.
+        launcher::launch_game(&dir, &progress);
+    } else {
+        progress.set_status("Install complete!", 100);
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    progress.done();
+    let _ = gui_thread.join();
     println!("DONE — launch Flux Rec from the Start Menu or desktop shortcut.");
 }
 
