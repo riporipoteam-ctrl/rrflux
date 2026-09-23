@@ -1,0 +1,241 @@
+name: game-flow-explore
+# Manual-only exploratory runs: boots the real 2023 Rec Room client on a
+# windows-2022 runner (WARP software rendering), optionally applies the Flux
+# Rec logo bundle, screenshots the account menu, optionally clicks at a
+# client-relative coordinate (e.g. SWITCH ACCOUNT) and screenshots the result.
+on:
+  workflow_dispatch:
+    inputs:
+      apply_logo:
+        description: 'Apply Flux Rec logo bundle over stock UI bundle'
+        type: boolean
+        default: true
+      click_x:
+        description: 'Client-relative X to click after boot (0 = no click)'
+        required: false
+        default: '717'
+      click_y:
+        description: 'Client-relative Y to click after boot (0 = no click)'
+        required: false
+        default: '522'
+      post_click_wait:
+        description: 'Seconds to wait after click before final screenshot'
+        required: false
+        default: '60'
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      FLUXREC_NS_HOST: ${{ secrets.FLUXREC_NS_HOST }}
+      FLUXREC_PHOTON_RT: ${{ secrets.FLUXREC_PHOTON_RT }}
+      FLUXREC_PHOTON_VOICE: ${{ secrets.FLUXREC_PHOTON_VOICE }}
+      FLUXREC_PHOTON_CHAT: ${{ secrets.FLUXREC_PHOTON_CHAT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up game dir
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory D:\FluxRec -Force | Out-Null
+          New-Item -ItemType Directory D:\shots -Force | Out-Null
+          try { Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 ns.rec.net" } catch { Write-Host "hosts edit skipped: $_" }
+
+      - name: Download client
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://s3.g.megas4.com/2koayuyiwxv4groxzwdbbxg43cwustavrkvfb/recflare/client.zip" -OutFile D:\client.zip
+          Expand-Archive D:\client.zip -DestinationPath D:\FluxRec
+
+      - name: Install BepInEx
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/BepInEx/BepInEx/releases/download/v6.0.0-pre.2/BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip" -OutFile D:\bepinex.zip
+          Expand-Archive D:\bepinex.zip -DestinationPath D:\FluxRec
+
+      - name: Install RecNetPlugin + configs
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/recflare/patch/releases/download/20230414.2/RecNetPlugin.dll" -OutFile "D:\FluxRec\BepInEx\plugins\RecNetPlugin.dll"
+          $cfgDir = "D:\FluxRec\BepInEx\config"
+          New-Item -ItemType Directory $cfgDir -Force | Out-Null
+          $cfg = @"
+          ## Flux Rec - RecNet plugin config (plugin GUID net.rec.plugin, v1.0.0)
+
+          [Server]
+          RecNet NameServer Host = $env:FLUXREC_NS_HOST
+
+          [Photon]
+          App Id Realtime = $env:FLUXREC_PHOTON_RT
+          App Id Voice = $env:FLUXREC_PHOTON_VOICE
+          App Id Chat = $env:FLUXREC_PHOTON_CHAT
+
+          [Advanced]
+          Enabled Advanced Settings = false
+          Suppress DUID Mismatch = true
+          Debug = false
+
+          [Signing]
+          Disable Signature Verification = true
+
+          [Analytics]
+          Disable Telemetry = true
+          "@
+          Set-Content -Path "$cfgDir\net.rec.plugin.cfg" -Value $cfg
+          $bepCfg = @"
+          [Logging.Console]
+          Enabled = false
+          "@
+          Add-Content -Path "$cfgDir\BepInEx.cfg" -Value $bepCfg
+
+      - name: Apply Goldberg Steam fix
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Detanup01/gbe_fork/releases/download/release-2026_09_16_2/emu-win-release-vs22.7z" -OutFile D:\gbe.7z
+          & 7z x D:\gbe.7z -oD:\gbe | Out-Null
+          $plugDir = "D:\FluxRec\RecRoom_Data\Plugins\x86_64"
+          Copy-Item "$plugDir\steam_api64.dll" "$plugDir\steam_api64.dll.orig"
+          Copy-Item "D:\gbe\release\regular\x64\steam_api64.dll" "$plugDir\steam_api64.dll" -Force
+          New-Item -ItemType Directory "$plugDir\steam_settings" -Force | Out-Null
+          Set-Content -Path "$plugDir\steam_settings\steam_appid.txt" -Value "471710" -NoNewline
+          Copy-Item "$env:GITHUB_WORKSPACE\game\installer\assets\steam_interfaces.txt" "$plugDir\steam_settings\steam_interfaces.txt"
+          Remove-Item "D:\FluxRec\steam_appid.txt" -ErrorAction SilentlyContinue
+
+      - name: Apply Flux Rec logo bundle
+        if: ${{ inputs.apply_logo }}
+        shell: pwsh
+        run: |
+          $ok = $true
+          try {
+            $gz = "D:\logo-bundle.gz"
+            Invoke-WebRequest -Uri "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-bundle/logo-bundle.gz" -OutFile $gz
+            $gzSize = (Get-Item $gz).Length
+            Write-Host "logo gz size: $gzSize (expect 39155393)"
+            if ($gzSize -ne 39155393) { throw "gz size mismatch" }
+            # gunzip via .NET
+            $target = "D:\FluxRec\RecRoom_Data\StreamingAssets\aa\StandaloneWindows64\682ba40059cd6c037bace975e7aea07f.bundle"
+            if (-not (Test-Path $target)) { throw "target bundle not found" }
+            $tmp = "$target.logo-new"
+            $inFs = [System.IO.File]::OpenRead($gz)
+            $gzStream = New-Object System.IO.Compression.GzipStream($inFs, [System.IO.Compression.CompressionMode]::Decompress)
+            $outFs = [System.IO.File]::Create($tmp)
+            $gzStream.CopyTo($outFs)
+            $outFs.Close(); $gzStream.Close(); $inFs.Close()
+            $md5 = (Get-FileHash -Path $tmp -Algorithm MD5).Hash.ToLower()
+            $sz = (Get-Item $tmp).Length
+            Write-Host "unzipped md5: $md5 (expect 47f1cd2a2c6004d196a539d208a7358d), size: $sz (expect 86361811)"
+            if ($md5 -ne "47f1cd2a2c6004d196a539d208a7358d" -or $sz -ne 86361811) { throw "unzipped bundle verification failed" }
+            $backup = "$target.stock"
+            if (-not (Test-Path $backup)) { Copy-Item $target $backup; Write-Host "stock bundle backed up" }
+            Remove-Item $target -Force
+            Rename-Item $tmp ([System.IO.Path]::GetFileName($target))
+            Write-Host "LOGO BUNDLE APPLIED"
+          } catch {
+            Write-Host "LOGO STEP FAILED (fail-soft, continuing): $_"
+          }
+          Remove-Item D:\logo-bundle.gz -ErrorAction SilentlyContinue
+
+      - name: Launch game (windowed, WARP renders automatically)
+        shell: pwsh
+        run: |
+          cd D:\FluxRec
+          Start-Process .\RecRoom.exe -ArgumentList "-screen-width 1280 -screen-height 720 -screen-fullscreen 0","-logFile D:\player.log"
+          Write-Host "launched, waiting for boot..."
+
+      - name: Wait for boot (poll log, generous timeout)
+        shell: pwsh
+        run: |
+          $deadline = (Get-Date).AddMinutes(25)
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 30
+            if (Test-Path D:\player.log) {
+              $tail = Get-Content D:\player.log -Tail 3 -ErrorAction SilentlyContinue
+              if ($tail -match "Failed to initialize Steam") { Write-Host "STEAM INIT FAILED"; break }
+            }
+            if (-not (Get-Process RecRoom -ErrorAction SilentlyContinue)) { Write-Host "game process exited"; break }
+          }
+          Write-Host "boot wait done"
+
+      - name: Screenshot before + window geometry
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          Add-Type @"
+            using System; using System.Runtime.InteropServices;
+            public class W32 {
+              [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+              [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+              [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
+              [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L,T,R,B; }
+              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+            }
+          "@
+          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+          $bmp.Save("D:\shots\shot_before.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $g.Dispose(); $bmp.Dispose()
+          Write-Host "saved shot_before.png"
+          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($p -and $p.MainWindowHandle -ne 0) {
+            $wr = New-Object W32+RECT; [W32]::GetWindowRect($p.MainWindowHandle, [ref]$wr) | Out-Null
+            $cr = New-Object W32+RECT; [W32]::GetClientRect($p.MainWindowHandle, [ref]$cr) | Out-Null
+            Write-Host "window rect: L=$($wr.L) T=$($wr.T) R=$($wr.R) B=$($wr.B)"
+            Write-Host "client rect: L=$($cr.L) T=$($cr.T) R=$($cr.R) B=$($cr.B)"
+            $pt = New-Object W32+POINT; $pt.X = [int]"${{ inputs.click_x }}"; $pt.Y = [int]"${{ inputs.click_y }}"
+            [W32]::ClientToScreen($p.MainWindowHandle, [ref]$pt) | Out-Null
+            Write-Host "click client ($($pt.X),$($pt.Y)) -> screen ($($pt.X),$($pt.Y))"
+          } else { Write-Host "game window not found" }
+
+      - name: Click at client-relative coordinate
+        if: ${{ inputs.click_x != '0' }}
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type @"
+            using System; using System.Runtime.InteropServices;
+            public class W32c {
+              [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
+              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+              [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
+              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+            }
+          "@
+          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($p -and $p.MainWindowHandle -ne 0) {
+            [W32c]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+            Start-Sleep -Seconds 2
+            $pt = New-Object W32c+POINT
+            $pt.X = [int]"${{ inputs.click_x }}"; $pt.Y = [int]"${{ inputs.click_y }}"
+            [W32c]::ClientToScreen($p.MainWindowHandle, [ref]$pt) | Out-Null
+            Write-Host "clicking screen ($($pt.X),$($pt.Y))"
+            [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($pt.X, $pt.Y)
+            Start-Sleep -Milliseconds 500
+            [W32c]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 150
+            [W32c]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Write-Host "click done"
+          } else { Write-Host "game window not found, no click" }
+
+      - name: Wait then screenshot after
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds ([int]"${{ inputs.post_click_wait }}")
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+          $bmp.Save("D:\shots\shot_after.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $g.Dispose(); $bmp.Dispose()
+          Write-Host "saved shot_after.png"
+          Copy-Item D:\player.log D:\shots\player.log -ErrorAction SilentlyContinue
+          Copy-Item "D:\FluxRec\BepInEx\LogOutput.log" D:\shots\bepinex.log -ErrorAction SilentlyContinue
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-flow-shots
+          path: D:\shots\
+          retention-days: 7
