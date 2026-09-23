@@ -1,8 +1,9 @@
 name: game-flow-explore
 # Manual-only exploratory runs: boots the real 2023 Rec Room client on a
 # windows-2022 runner (WARP software rendering), optionally applies the Flux
-# Rec logo bundle, screenshots the account menu, optionally clicks at a
-# client-relative coordinate (e.g. SWITCH ACCOUNT) and screenshots the result.
+# Rec logo bundle, screenshots the account menu, optionally clicks at up to
+# three client-relative coordinates in sequence (with a screenshot after the
+# third) and screenshots the result.
 on:
   workflow_dispatch:
     inputs:
@@ -28,6 +29,18 @@ on:
         default: '0'
       mid_click_wait:
         description: 'Seconds to wait between first and second click'
+        required: false
+        default: '20'
+      click3_x:
+        description: 'Third client-relative X to click (0 = no third click)'
+        required: false
+        default: '0'
+      click3_y:
+        description: 'Third client-relative Y to click (0 = no third click)'
+        required: false
+        default: '0'
+      click3_wait:
+        description: 'Seconds to wait between second and third click'
         required: false
         default: '20'
       post_click_wait:
@@ -260,6 +273,44 @@ jobs:
             [W32c2]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             Write-Host "second click done"
           } else { Write-Host "game window not found, no second click" }
+
+      - name: Third click at client-relative coordinate
+        if: ${{ inputs.click3_x != '0' }}
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds ([int]"${{ inputs.click3_wait }}")
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type @"
+            using System; using System.Runtime.InteropServices;
+            public class W32c3 {
+              [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
+              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+              [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
+              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+            }
+          "@
+          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($p -and $p.MainWindowHandle -ne 0) {
+            [W32c3]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+            Start-Sleep -Seconds 2
+            $pt = New-Object W32c3+POINT
+            $pt.X = [int]"${{ inputs.click3_x }}"; $pt.Y = [int]"${{ inputs.click3_y }}"
+            [W32c3]::ClientToScreen($p.MainWindowHandle, [ref]$pt) | Out-Null
+            Write-Host "third click at screen ($($pt.X),$($pt.Y))"
+            [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($pt.X, $pt.Y)
+            Start-Sleep -Milliseconds 500
+            [W32c3]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 150
+            [W32c3]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Write-Host "third click done"
+          } else { Write-Host "game window not found, no third click" }
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+          $bmp.Save("D:\shots\shot_mid3.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $g.Dispose(); $bmp.Dispose()
+          Write-Host "saved shot_mid3.png"
 
       - name: Wait then screenshot after
         shell: pwsh
