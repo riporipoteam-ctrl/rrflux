@@ -1,0 +1,106 @@
+name: Installer proof (real FluxRec-Setup end-to-end)
+
+# Proves the actual shipped FluxRec-Setup.exe (recflare-installer line):
+# silent install with the hidden console + GUI progress window, then launch
+# through FluxRecLauncher.exe --play, then screenshot the game. Success =
+# the game boots PAST "Failed to initialize Steam Platform" to the account
+# picker (the Goldberg Steam bypass working with no Steam client installed).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'recflare-installer release tag to test'
+        required: true
+        default: 'recflare-installer-v0.1.7'
+
+jobs:
+  proof:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - name: Prep dirs + hosts entry
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory D:\shots -Force | Out-Null
+          try { Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 ns.rec.net" } catch { Write-Host "hosts edit skipped: $_" }
+
+      - name: Download FluxRec-Setup
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          Invoke-WebRequest -Uri "https://github.com/riporipoteam-ctrl/rrflux/releases/download/$tag/FluxRec-Setup.exe" -OutFile D:\FluxRec-Setup.exe
+          Write-Host "downloaded:" (Get-Item D:\FluxRec-Setup.exe).Length "bytes"
+
+      - name: Run installer (hidden console + GUI progress window)
+        shell: pwsh
+        run: |
+          $p = Start-Process D:\FluxRec-Setup.exe -ArgumentList "--dir","D:\FluxRec" -PassThru
+          $deadline = (Get-Date).AddMinutes(55)
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 30
+            if ($p.HasExited) { break }
+            Write-Host "installing... (installer still running)"
+          }
+          if (-not $p.HasExited) { Write-Host "INSTALL TIMEOUT — killing"; $p.Kill() }
+          else { Write-Host "installer exit code:" $p.ExitCode }
+
+      - name: Verify install layout
+        shell: pwsh
+        run: |
+          $checks = @(
+            "D:\FluxRec\RecRoom.exe",
+            "D:\FluxRec\FluxRecLauncher.exe",
+            "D:\FluxRec\BepInEx\plugins\RecNetPlugin.dll",
+            "D:\FluxRec\BepInEx\config\net.rec.plugin.cfg",
+            "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_api64.dll",
+            "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_appid.txt",
+            "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_interfaces.txt"
+          )
+          foreach ($c in $checks) {
+            if (Test-Path $c) { Write-Host "OK  $c" } else { Write-Host "MISSING  $c" }
+          }
+          $appid = Get-Content "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_appid.txt" -Raw -ErrorAction SilentlyContinue
+          Write-Host "steam_appid.txt content: [$appid]"
+          if (Test-Path "D:\FluxRec\steam_appid.txt") { Write-Host "WARN: legacy root steam_appid.txt still present" }
+          else { Write-Host "OK  no legacy root steam_appid.txt" }
+
+      - name: Launch via FluxRecLauncher --play
+        shell: pwsh
+        run: |
+          Start-Process D:\FluxRec\FluxRecLauncher.exe -ArgumentList "--play","--dir","D:\FluxRec"
+          Write-Host "launcher started, waiting for RecRoom window..."
+          $deadline = (Get-Date).AddMinutes(12)
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 15
+            $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($p -and $p.MainWindowHandle -ne 0) { Write-Host "game window up"; break }
+            if (-not (Get-Process RecRoom -ErrorAction SilentlyContinue)) { Write-Host "no RecRoom process yet..." }
+          }
+          Write-Host "waiting 90s for boot past Steam init..."
+          Start-Sleep -Seconds 90
+
+      - name: Screenshot boot state
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          function Shot($name) {
+            $bmp = New-Object System.Drawing.Bitmap(1280, 720)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+            $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
+          }
+          Shot boot
+          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($p) { Write-Host "RecRoom still running (id $($p.Id))" } else { Write-Host "RecRoom NOT running" }
+          Start-Sleep -Seconds 45
+          Shot boot2
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-proof-shots
+          path: D:\shots\*.png
