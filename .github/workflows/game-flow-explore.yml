@@ -27,10 +27,6 @@ on:
         description: 'Second client-relative Y to click (0 = no second click)'
         required: false
         default: '0'
-      mid_click_wait:
-        description: 'Seconds to wait between first and second click'
-        required: false
-        default: '20'
       click3_x:
         description: 'Third client-relative X to click (0 = no third click)'
         required: false
@@ -39,10 +35,6 @@ on:
         description: 'Third client-relative Y to click (0 = no third click)'
         required: false
         default: '0'
-      click3_wait:
-        description: 'Seconds to wait between second and third click'
-        required: false
-        default: '20'
       click4_x:
         description: 'Fourth client-relative X to click (0 = no fourth click)'
         required: false
@@ -51,10 +43,6 @@ on:
         description: 'Fourth client-relative Y to click (0 = no fourth click)'
         required: false
         default: '0'
-      click4_wait:
-        description: 'Seconds to wait between third and fourth click'
-        required: false
-        default: '20'
       click5_x:
         description: 'Fifth client-relative X to click (0 = no fifth click)'
         required: false
@@ -63,10 +51,6 @@ on:
         description: 'Fifth client-relative Y to click (0 = no fifth click)'
         required: false
         default: '0'
-      click5_wait:
-        description: 'Seconds to wait between fourth and fifth click'
-        required: false
-        default: '20'
       post_click_wait:
         description: 'Seconds to wait after click before final screenshot'
         required: false
@@ -87,10 +71,6 @@ on:
         description: 'Sixth client-relative Y to click (0 = no sixth click)'
         required: false
         default: '0'
-      click6_wait:
-        description: 'Seconds to wait between fifth and sixth click'
-        required: false
-        default: '20'
       click7_x:
         description: 'Seventh client-relative X to click (0 = no seventh click)'
         required: false
@@ -99,10 +79,6 @@ on:
         description: 'Seventh client-relative Y to click (0 = no seventh click)'
         required: false
         default: '0'
-      click7_wait:
-        description: 'Seconds to wait between sixth and seventh click'
-        required: false
-        default: '20'
       click8_x:
         description: 'Eighth client-relative X to click (0 = no eighth click)'
         required: false
@@ -111,10 +87,6 @@ on:
         description: 'Eighth client-relative Y to click (0 = no eighth click)'
         required: false
         default: '0'
-      click8_wait:
-        description: 'Seconds to wait between seventh and eighth click'
-        required: false
-        default: '20'
       click9_x:
         description: 'Ninth client-relative X to click (0 = no ninth click)'
         required: false
@@ -123,10 +95,6 @@ on:
         description: 'Ninth client-relative Y to click (0 = no ninth click)'
         required: false
         default: '0'
-      click9_wait:
-        description: 'Seconds to wait between eighth and ninth click'
-        required: false
-        default: '20'
 
 jobs:
   test:
@@ -334,7 +302,7 @@ jobs:
         if: ${{ inputs.click2_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"${{ inputs.mid_click_wait }}")
+          Start-Sleep -Seconds ([int]"20")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
@@ -372,7 +340,7 @@ jobs:
         if: ${{ inputs.click3_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"${{ inputs.click3_wait }}")
+          Start-Sleep -Seconds ([int]"45")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
@@ -410,7 +378,7 @@ jobs:
         if: ${{ inputs.click4_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"${{ inputs.click4_wait }}")
+          Start-Sleep -Seconds ([int]"20")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
@@ -475,7 +443,7 @@ jobs:
         if: ${{ inputs.click5_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"${{ inputs.click5_wait }}")
+          Start-Sleep -Seconds ([int]"30")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
@@ -513,7 +481,7 @@ jobs:
         if: ${{ inputs.click6_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"${{ inputs.click6_wait }}")
+          Start-Sleep -Seconds ([int]"10")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
@@ -578,7 +546,7 @@ jobs:
         if: ${{ inputs.click7_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"${{ inputs.click7_wait }}")
+          Start-Sleep -Seconds ([int]"30")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
@@ -616,7 +584,7 @@ jobs:
         if: ${{ inputs.click8_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"${{ inputs.click8_wait }}")
+          Start-Sleep -Seconds ([int]"20")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
@@ -654,7 +622,7 @@ jobs:
         if: ${{ inputs.click9_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"${{ inputs.click9_wait }}")
+          Start-Sleep -Seconds ([int]"20")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
