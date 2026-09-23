@@ -43,6 +43,18 @@ on:
         description: 'Seconds to wait between second and third click'
         required: false
         default: '20'
+      click4_x:
+        description: 'Fourth client-relative X to click (0 = no fourth click)'
+        required: false
+        default: '0'
+      click4_y:
+        description: 'Fourth client-relative Y to click (0 = no fourth click)'
+        required: false
+        default: '0'
+      click4_wait:
+        description: 'Seconds to wait between third and fourth click'
+        required: false
+        default: '20'
       post_click_wait:
         description: 'Seconds to wait after click before final screenshot'
         required: false
@@ -325,6 +337,44 @@ jobs:
           $bmp.Save("D:\shots\shot_mid3.png", [System.Drawing.Imaging.ImageFormat]::Png)
           $g.Dispose(); $bmp.Dispose()
           Write-Host "saved shot_mid3.png"
+
+      - name: Fourth click at client-relative coordinate
+        if: ${{ inputs.click4_x != '0' }}
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds ([int]"${{ inputs.click4_wait }}")
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type @"
+            using System; using System.Runtime.InteropServices;
+            public class W32c4 {
+              [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
+              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+              [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
+              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+            }
+          "@
+          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($p -and $p.MainWindowHandle -ne 0) {
+            [W32c4]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+            Start-Sleep -Seconds 2
+            $pt = New-Object W32c4+POINT
+            $pt.X = [int]"${{ inputs.click4_x }}"; $pt.Y = [int]"${{ inputs.click4_y }}"
+            [W32c4]::ClientToScreen($p.MainWindowHandle, [ref]$pt) | Out-Null
+            Write-Host "fourth click at screen ($($pt.X),$($pt.Y))"
+            [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($pt.X, $pt.Y)
+            Start-Sleep -Milliseconds 500
+            [W32c4]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 150
+            [W32c4]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Write-Host "fourth click done"
+          } else { Write-Host "game window not found, no fourth click" }
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+          $bmp.Save("D:\shots\shot_mid4.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $g.Dispose(); $bmp.Dispose()
+          Write-Host "saved shot_mid4.png"
 
       - name: Wait then screenshot after
         shell: pwsh
