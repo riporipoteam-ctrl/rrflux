@@ -1,0 +1,216 @@
+name: Game meet test (two-client multiplayer proof)
+
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: 'Account username to log in with'
+        required: true
+        default: 'FluxTester42'
+      password:
+        description: 'Account password'
+        required: true
+        default: 'TestPass1234'
+      script:
+        description: 'Semicolon-separated actions: click:X,Y | type:TEXT | key:{KEY} | wait:N | shot:NAME | focus'
+        required: true
+        default: 'wait:150; shot:boot'
+      tag:
+        description: 'Artifact tag'
+        required: false
+        default: 'meet'
+      apply_logo:
+        description: 'Apply Flux Rec logo bundle over stock UI bundle'
+        type: boolean
+        default: true
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      FLUXREC_NS_HOST: ${{ secrets.FLUXREC_NS_HOST }}
+      FLUXREC_PHOTON_RT: ${{ secrets.FLUXREC_PHOTON_RT }}
+      FLUXREC_PHOTON_VOICE: ${{ secrets.FLUXREC_PHOTON_VOICE }}
+      FLUXREC_PHOTON_CHAT: ${{ secrets.FLUXREC_PHOTON_CHAT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up game dir
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory D:\FluxRec -Force | Out-Null
+          New-Item -ItemType Directory D:\shots -Force | Out-Null
+          try { Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 ns.rec.net" } catch { Write-Host "hosts edit skipped: $_" }
+
+      - name: Download client
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://s3.g.megas4.com/2koayuyiwxv4groxzwdbbxg43cwustavrkvfb/recflare/client.zip" -OutFile D:\client.zip
+          Expand-Archive D:\client.zip -DestinationPath D:\FluxRec
+
+      - name: Install BepInEx
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/BepInEx/BepInEx/releases/download/v6.0.0-pre.2/BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip" -OutFile D:\bepinex.zip
+          Expand-Archive D:\bepinex.zip -DestinationPath D:\FluxRec
+
+      - name: Install RecNetPlugin + configs
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/recflare/patch/releases/download/20230414.2/RecNetPlugin.dll" -OutFile "D:\FluxRec\BepInEx\plugins\RecNetPlugin.dll"
+          $cfgDir = "D:\FluxRec\BepInEx\config"
+          New-Item -ItemType Directory $cfgDir -Force | Out-Null
+          $cfg = @"
+          ## Flux Rec - RecNet plugin config (plugin GUID net.rec.plugin, v1.0.0)
+
+          [Server]
+          RecNet NameServer Host = $env:FLUXREC_NS_HOST
+
+          [Photon]
+          App Id Realtime = $env:FLUXREC_PHOTON_RT
+          App Id Voice = $env:FLUXREC_PHOTON_VOICE
+          App Id Chat = $env:FLUXREC_PHOTON_CHAT
+
+          [Advanced]
+          Enabled Advanced Settings = false
+          Suppress DUID Mismatch = true
+          Debug = false
+
+          [Signing]
+          Disable Signature Verification = true
+
+          [Analytics]
+          Disable Telemetry = true
+          "@
+          Set-Content -Path "$cfgDir\net.rec.plugin.cfg" -Value $cfg
+          $bepCfg = @"
+          [Logging.Console]
+          Enabled = false
+          "@
+          Add-Content -Path "$cfgDir\BepInEx.cfg" -Value $bepCfg
+
+      - name: Apply Goldberg Steam fix
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Detanup01/gbe_fork/releases/download/release-2026_09_16_2/emu-win-release-vs22.7z" -OutFile D:\gbe.7z
+          & 7z x D:\gbe.7z -oD:\gbe | Out-Null
+          $plugDir = "D:\FluxRec\RecRoom_Data\Plugins\x86_64"
+          Copy-Item "$plugDir\steam_api64.dll" "$plugDir\steam_api64.dll.orig"
+          Copy-Item "D:\gbe\release\regular\x64\steam_api64.dll" "$plugDir\steam_api64.dll" -Force
+          New-Item -ItemType Directory "$plugDir\steam_settings" -Force | Out-Null
+          Set-Content -Path "$plugDir\steam_settings\steam_appid.txt" -Value "471710" -NoNewline
+          Copy-Item "$env:GITHUB_WORKSPACE\game\installer\assets\steam_interfaces.txt" "$plugDir\steam_settings\steam_interfaces.txt"
+          Remove-Item "D:\FluxRec\steam_appid.txt" -ErrorAction SilentlyContinue
+
+      - name: Apply Flux Rec logo bundle
+        if: ${{ inputs.apply_logo }}
+        shell: pwsh
+        run: |
+          $ok = $true
+          try {
+            $gz = "D:\logo-bundle.gz"
+            Invoke-WebRequest -Uri "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-bundle/logo-bundle.gz" -OutFile $gz
+            $target = "D:\FluxRec\RecRoom_Data\StreamingAssets\aa\StandaloneWindows64\682ba40059cd6c037bace975e7aea07f.bundle"
+            $tmp = "$target.logo-new"
+            $inFs = [System.IO.File]::OpenRead($gz)
+            $gzStream = New-Object System.IO.Compression.GzipStream($inFs, [System.IO.Compression.CompressionMode]::Decompress)
+            $outFs = [System.IO.File]::Create($tmp)
+            $gzStream.CopyTo($outFs)
+            $outFs.Close(); $gzStream.Close(); $inFs.Close()
+            $md5 = (Get-FileHash -Path $tmp -Algorithm MD5).Hash.ToLower()
+            if ($md5 -ne "47f1cd2a2c6004d196a539d208a7358d") { throw "bundle md5 mismatch" }
+            $backup = "$target.stock"
+            if (-not (Test-Path $backup)) { Copy-Item $target $backup }
+            Remove-Item $target -Force
+            Rename-Item $tmp ([System.IO.Path]::GetFileName($target))
+            Write-Host "LOGO BUNDLE APPLIED"
+          } catch { Write-Host "LOGO STEP FAILED (fail-soft): $_" }
+          Remove-Item D:\logo-bundle.gz -ErrorAction SilentlyContinue
+
+      - name: Launch game (windowed)
+        shell: pwsh
+        run: |
+          cd D:\FluxRec
+          Start-Process .\RecRoom.exe -ArgumentList "-screen-width 1280 -screen-height 720 -screen-fullscreen 0","-logFile D:\player.log"
+          Write-Host "launched, waiting for window..."
+          $deadline = (Get-Date).AddMinutes(15)
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 15
+            $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($p -and $p.MainWindowHandle -ne 0) { Write-Host "window up"; break }
+            if (-not (Get-Process RecRoom -ErrorAction SilentlyContinue)) { Write-Host "game process exited"; break }
+          }
+          Start-Sleep -Seconds 60
+          Write-Host "boot wait done"
+
+      - name: Run script
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type @"
+            using System; using System.Runtime.InteropServices;
+            public class WX {
+              [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
+              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+              [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
+              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+            }
+          "@
+          function GameProc { Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          function Focus-Game {
+            $p = GameProc
+            if ($p -and $p.MainWindowHandle -ne 0) { [WX]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Start-Sleep -Seconds 1 }
+          }
+          function Click-At($x, $y) {
+            $p = GameProc
+            if ($p -and $p.MainWindowHandle -ne 0) {
+              [WX]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Start-Sleep -Seconds 2
+              $pt = New-Object WX+POINT; $pt.X = [int]$x; $pt.Y = [int]$y
+              [WX]::ClientToScreen($p.MainWindowHandle, [ref]$pt) | Out-Null
+              Write-Host "clicking screen ($($pt.X),$($pt.Y))"
+              [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($pt.X, $pt.Y)
+              Start-Sleep -Milliseconds 400
+              [WX]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 150
+              [WX]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            } else { Write-Host "game window not found, no click" }
+          }
+          function Shot($name) {
+            $bmp = New-Object System.Drawing.Bitmap(1280, 720)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+            $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
+          }
+          function Type-Text($t) {
+            Focus-Game
+            $e = $t -replace '\+','{+}' -replace '\^','{^}' -replace '%','{%}' -replace '~','{~}' -replace '\(','{(}' -replace '\)','{)}'
+            [System.Windows.Forms.SendKeys]::SendWait($e)
+            Start-Sleep -Seconds 2
+          }
+          $script = "${{ inputs.script }}"
+          Write-Host "script: $script"
+          foreach ($action in $script -split ';') {
+            $action = $action.Trim(); if (-not $action) { continue }
+            $parts = $action -split ':', 2
+            $verb = $parts[0]; $arg = if ($parts.Count -gt 1) { $parts[1] } else { '' }
+            Write-Host ">> $verb : $arg"
+            switch ($verb) {
+              'click' { $xy = $arg -split ','; Click-At $xy[0] $xy[1]; Start-Sleep -Seconds 3 }
+              'type' { Type-Text $arg }
+              'key' { Focus-Game; [System.Windows.Forms.SendKeys]::SendWait($arg); Start-Sleep -Seconds 3 }
+              'wait' { Start-Sleep -Seconds ([int]$arg) }
+              'shot' { Shot $arg }
+              'focus' { Focus-Game }
+              default { Write-Host "unknown verb: $verb" }
+            }
+          }
+          Write-Host "script done"
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meet-shots-${{ inputs.tag }}
+          path: D:\shots\*.png
