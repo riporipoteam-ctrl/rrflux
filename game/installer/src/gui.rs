@@ -1,9 +1,9 @@
-// Flux Rec Setup — branded installer window.
+// Flux Rec Setup — pretty installer window.
 //
 // Replaces the black console window the user used to see while the installer
 // downloads / extracts / brands the game. The console logic is kept but
 // hidden; this module is the small window the user actually watches: logo,
-// brand title, stage line, blue progress bar, big percentage, footer.
+// native progress bar, percentage, stage line, footer.
 //
 // Design rules:
 //   * Raw Win32 only (no GUI framework) so the setup binary stays tiny.
@@ -14,6 +14,21 @@
 //   * All Win32 code is behind `#[cfg(windows)]`. Other platforms get a
 //     stub that drains the channel and returns, so `cargo check` passes
 //     on Linux.
+//
+// Wiring (done by the crate root, not here):
+//   * `mod gui;` in main.rs.
+//   * `mod assets;` in main.rs, where src/assets.rs exposes
+//     `pub static LOGO_BMP_BYTES: &[u8]` — a BMP *file* image
+//     (24- or 32-bit). (Agent 4's module; this file codes against that
+//     exact contract.)
+//   * main.rs spawns `std::thread::spawn(|| gui::run_gui(rx))` at install
+//     start, sends `GuiMsg` updates as stages progress, then drops the
+//     sender (or sends a final `GuiMsg { stage: "done", .. }`).
+//   * Cargo.toml needs (agent 5):
+//     windows = { version = "0.58", features = ["Win32_Foundation",
+//       "Win32_UI_WindowsAndMessaging", "Win32_UI_Controls",
+//       "Win32_Graphics_Gdi", "Win32_System_LibraryLoader",
+//       "Win32_System_SystemServices"] }
 
 use std::sync::mpsc::Receiver;
 
@@ -62,30 +77,17 @@ mod imp {
     /// Silent-failure result: Err(()) just means "no window, carry on".
     type Silent = std::result::Result<(), ()>;
 
-    const WIN_W: i32 = 480;
-    const WIN_H: i32 = 344;
+    const WIN_W: i32 = 440;
+    const WIN_H: i32 = 280;
     const TIMER_ID: usize = 1;
     /// Channel poll interval: progress feels live without busy-looping.
     const TIMER_MS: u32 = 100;
-
-    // Flux Rec brand palette (COLORREF = 0x00BBGGRR).
-    const BG: COLORREF = COLORREF(0x00261A12); // deep navy (#121A26)
-    const BLUE: COLORREF = COLORREF(0x00E87B2D); // Flux blue (#2D7BE8)
-    const TRACK: COLORREF = COLORREF(0x003A2A24); // dark track (#242A3A)
-    const WHITE: COLORREF = COLORREF(0x00FFFFFF);
-    const LIGHT: COLORREF = COLORREF(0x00CFCFCF); // stage text
-    const DIM: COLORREF = COLORREF(0x008A8A8A); // footer
 
     struct GuiState {
         bar: HWND,
         pct_label: HWND,
         stage_label: HWND,
-        title_label: HWND,
         footer: HWND,
-        bg_brush: HBRUSH,
-        font_big: HFONT,
-        font_title: HFONT,
-        font_small: HFONT,
         rx: Receiver<GuiMsg>,
     }
 
@@ -107,27 +109,21 @@ mod imp {
 
         let hinstance = HINSTANCE(GetModuleHandleW(None).map_err(|_| ())?.0);
 
-        // Dark background brush, owned by the window class lifetime.
-        let bg_brush = CreateSolidBrush(BG);
-        if bg_brush.is_invalid() {
-            return Err(());
-        }
-
         let wc = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(wnd_proc),
             hInstance: hinstance,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-            hbrBackground: bg_brush,
+            hbrBackground: HBRUSH(((COLOR_WINDOW.0 + 1) as isize) as *mut c_void),
             lpszClassName: w!("FluxRecSetupGui"),
             ..Default::default()
         };
         if RegisterClassW(&wc) == 0 {
-            let _ = DeleteObject(bg_brush);
             return Err(());
         }
 
-        // Fixed dialog-style window, centered on the primary monitor.
+        // Fixed dialog-style window (title bar + close box only), 440x280
+        // including the frame, centered on the primary monitor.
         let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
         let mut rc = RECT {
             left: 0,
@@ -136,7 +132,6 @@ mod imp {
             bottom: WIN_H,
         };
         if AdjustWindowRect(&mut rc, style, false).is_err() {
-            let _ = DeleteObject(bg_brush);
             return Err(());
         }
         let (ww, hh) = (rc.right - rc.left, rc.bottom - rc.top);
@@ -148,12 +143,7 @@ mod imp {
             bar: HWND::default(),
             pct_label: HWND::default(),
             stage_label: HWND::default(),
-            title_label: HWND::default(),
             footer: HWND::default(),
-            bg_brush,
-            font_big: HFONT::default(),
-            font_title: HFONT::default(),
-            font_small: HFONT::default(),
             rx,
         });
 
@@ -208,27 +198,17 @@ mod imp {
                 LRESULT(0)
             }
             WM_CTLCOLORSTATIC => {
-                // Dark theme: transparent statics, per-control text color,
-                // shared navy brush behind.
                 let ctl = HWND(lparam.0 as *mut c_void);
-                let hdc = HDC(wparam.0 as *mut c_void);
-                let color = state_of(hwnd)
-                    .map(|st| {
-                        if ctl == st.footer {
-                            DIM
-                        } else if ctl == st.stage_label {
-                            LIGHT
-                        } else {
-                            WHITE
-                        }
-                    })
-                    .unwrap_or(WHITE);
-                SetTextColor(hdc, color);
-                SetBkMode(hdc, TRANSPARENT);
-                let brush = state_of(hwnd)
-                    .map(|st| st.bg_brush)
-                    .unwrap_or(HBRUSH::default());
-                LRESULT(brush.0 as isize)
+                let is_footer = state_of(hwnd).map(|st| st.footer == ctl).unwrap_or(false);
+                if is_footer {
+                    // Small gray footer: transparent background, gray text.
+                    let hdc = HDC(wparam.0 as *mut c_void);
+                    SetTextColor(hdc, COLORREF(0x00808080));
+                    SetBkMode(hdc, TRANSPARENT);
+                    LRESULT(0)
+                } else {
+                    DefWindowProcW(hwnd, msg, wparam, lparam)
+                }
             }
             WM_DESTROY => {
                 on_destroy(hwnd);
@@ -267,33 +247,6 @@ mod imp {
         .ok()
     }
 
-    /// Segoe UI at `px` height; `bold` selects 700 vs 400 weight.
-    /// Returns a null HFONT on failure (caller falls back to stock font).
-    unsafe fn make_font(px: i32, bold: bool) -> HFONT {
-        CreateFontW(
-            px,
-            0,
-            0,
-            0,
-            if bold { 700 } else { 400 },
-            0,
-            0,
-            0,
-            1, // DEFAULT_CHARSET
-            0,
-            0,
-            0,
-            0,
-            w!("Segoe UI"),
-        )
-    }
-
-    unsafe fn set_font(ctl: HWND, font: HFONT) {
-        if !font.is_invalid() {
-            SendMessageW(ctl, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
-        }
-    }
-
     unsafe fn on_create(hwnd: HWND, cs: &CREATESTRUCTW) -> bool {
         let state_ptr = cs.lpCreateParams as *mut GuiState;
         if state_ptr.is_null() {
@@ -303,32 +256,19 @@ mod imp {
         let st = &mut *state_ptr;
         let hi = cs.hInstance;
 
-        // Layout (client area 480x344):
-        //   logo (painted)  y=16..104
-        //   title           y=112 h=30
-        //   stage line      y=150 h=20
-        //   progress bar    y=178 h=20
-        //   percent         y=206 h=34
-        //   footer          y=300 h=18
-        let title = create_child(
-            hwnd,
-            w!("STATIC"),
-            w!("FLUX REC"),
-            WINDOW_STYLE(SS_CENTER.0),
-            20,
-            112,
-            440,
-            30,
-            hi,
-        );
+        // Layout (client area 440x280; the logo is painted at the top):
+        //   stage line      y=122
+        //   progress bar    y=150 h=22
+        //   percent label   y=180
+        //   footer          y=244
         let stage = create_child(
             hwnd,
             w!("STATIC"),
             w!("Starting…"),
             WINDOW_STYLE(SS_CENTER.0),
             20,
-            150,
-            440,
+            122,
+            400,
             20,
             hi,
         );
@@ -337,10 +277,10 @@ mod imp {
             PROGRESS_CLASSW,
             w!(""),
             WINDOW_STYLE(PBS_SMOOTH),
-            50,
-            178,
-            380,
-            20,
+            40,
+            150,
+            360,
+            22,
             hi,
         );
         let pct = create_child(
@@ -349,46 +289,40 @@ mod imp {
             w!("0%"),
             WINDOW_STYLE(SS_CENTER.0),
             20,
-            206,
-            440,
-            34,
+            180,
+            400,
+            20,
             hi,
         );
         let footer = create_child(
             hwnd,
             w!("STATIC"),
-            w!("Ripo Team"),
+            w!("Flux Rec"),
             WINDOW_STYLE(SS_CENTER.0),
             20,
-            300,
-            440,
+            244,
+            400,
             18,
             hi,
         );
-        let (title, stage, bar, pct, footer) = match (title, stage, bar, pct, footer) {
-            (Some(a), Some(b), Some(c), Some(d), Some(e)) => (a, b, c, d, e),
+        let (stage, bar, pct, footer) = match (stage, bar, pct, footer) {
+            (Some(a), Some(b), Some(c), Some(d)) => (a, b, c, d),
             _ => return false,
         };
-        st.title_label = title;
         st.stage_label = stage;
         st.bar = bar;
         st.pct_label = pct;
         st.footer = footer;
 
-        // Brand typography (fall back to stock font if creation fails).
-        st.font_title = make_font(26, true);
-        st.font_big = make_font(24, true);
-        st.font_small = make_font(15, false);
-        set_font(title, st.font_title);
-        set_font(stage, st.font_small);
-        set_font(pct, st.font_big);
-        set_font(footer, st.font_small);
-
-        // Native progress range 0..100 + Flux blue fill on dark track.
+        // Native progress range 0..100.
         SendMessageW(bar, PBM_SETRANGE, WPARAM(0), LPARAM(0x0064_0000));
         SendMessageW(bar, PBM_SETPOS, WPARAM(0), LPARAM(0));
-        SendMessageW(bar, PBM_SETBARCOLOR, WPARAM(0), LPARAM(BLUE.0 as isize));
-        SendMessageW(bar, PBM_SETBKCOLOR, WPARAM(0), LPARAM(TRACK.0 as isize));
+
+        // Readable default font on the text controls.
+        let font = GetStockObject(DEFAULT_GUI_FONT);
+        for ctl in [stage, pct, footer] {
+            SendMessageW(ctl, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+        }
 
         // ~100ms channel poll driving the bar + labels.
         if SetTimer(hwnd, TIMER_ID, TIMER_MS, None) == 0 {
@@ -449,15 +383,7 @@ mod imp {
         let _ = KillTimer(hwnd, TIMER_ID);
         let ptr = SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         if ptr != 0 {
-            let st = Box::from_raw(ptr as *mut GuiState);
-            for font in [st.font_big, st.font_title, st.font_small] {
-                if !font.is_invalid() {
-                    let _ = DeleteObject(font);
-                }
-            }
-            if !st.bg_brush.is_invalid() {
-                let _ = DeleteObject(st.bg_brush);
-            }
+            drop(Box::from_raw(ptr as *mut GuiState));
         }
     }
 
@@ -477,7 +403,11 @@ mod imp {
             return None;
         }
         let u32le = |r: std::ops::Range<usize>| -> Option<u32> {
-            bytes.get(r)?.try_into().ok().map(u32::from_le_bytes)
+            bytes
+                .get(r)?
+                .try_into()
+                .ok()
+                .map(u32::from_le_bytes)
         };
         let off = u32le(10..14)? as usize;
         if u32le(14..18)? != 40 {
@@ -485,7 +415,11 @@ mod imp {
         }
         let w = u32le(18..22)? as i32;
         let h = u32le(22..26)? as i32;
-        let bpp = bytes.get(28..30)?.try_into().ok().map(u16::from_le_bytes)?;
+        let bpp = bytes
+            .get(28..30)?
+            .try_into()
+            .ok()
+            .map(u16::from_le_bytes)?;
         if w <= 0 || h == 0 || (bpp != 24 && bpp != 32) {
             return None;
         }
@@ -497,17 +431,18 @@ mod imp {
     }
 
     unsafe fn draw_logo(hdc: HDC) {
+        // Agent 4's contract: src/assets.rs exposes the logo as BMP bytes.
         let (info, bits, w, h) = match parse_bmp(crate::assets::LOGO_BMP_BYTES) {
             Some(v) => v,
             None => return, // no/invalid logo: paint nothing, stay silent
         };
-        // Fit into a 120x88 box, centered horizontally near the top.
-        let scale = (120.0 / w as f64).min(88.0 / h as f64);
+        // Fit into a 128x96 box, centered horizontally near the top.
+        let scale = (128.0 / w as f64).min(96.0 / h as f64);
         let (dw, dh) = ((w as f64 * scale) as i32, (h as f64 * scale) as i32);
         if dw <= 0 || dh <= 0 {
             return;
         }
-        let (dx, dy) = ((WIN_W - dw) / 2, 16);
+        let (dx, dy) = ((WIN_W - dw) / 2, 14);
         StretchDIBits(
             hdc,
             dx,
