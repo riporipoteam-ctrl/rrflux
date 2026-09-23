@@ -242,6 +242,13 @@ jobs:
             [W32c]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             Write-Host "click done"
           } else { Write-Host "game window not found, no click" }
+          Add-Type -AssemblyName System.Drawing
+          $bmp1 = New-Object System.Drawing.Bitmap(1280, 720)
+          $g1 = [System.Drawing.Graphics]::FromImage($bmp1)
+          $g1.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+          $bmp1.Save("D:\shots\shot_mid1.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $g1.Dispose(); $bmp1.Dispose()
+          Write-Host "saved shot_mid1.png"
 
       - name: Second click at client-relative coordinate
         if: ${{ inputs.click2_x != '0' }}
@@ -273,6 +280,13 @@ jobs:
             [W32c2]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             Write-Host "second click done"
           } else { Write-Host "game window not found, no second click" }
+          Add-Type -AssemblyName System.Drawing
+          $bmp2 = New-Object System.Drawing.Bitmap(1280, 720)
+          $g2 = [System.Drawing.Graphics]::FromImage($bmp2)
+          $g2.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+          $bmp2.Save("D:\shots\shot_mid2.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $g2.Dispose(); $bmp2.Dispose()
+          Write-Host "saved shot_mid2.png"
 
       - name: Third click at client-relative coordinate
         if: ${{ inputs.click3_x != '0' }}
