@@ -14,6 +14,7 @@
 // `--setup-backend` (used by the installer) only does step 1 and exits.
 
 use crate::util;
+use fluxrec_common::progress::ProgressWindow;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
@@ -28,6 +29,7 @@ const STEAM_EMULATOR: &[u8] = include_bytes!("steam_api64_stub.dll");
 const BACKEND_TASK: &str = "FluxRecBackend";
 const BACKEND_EXE: &str = "FluxRec-backend.exe";
 const DETACHED_PROCESS: u32 = 0x00000008;
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 struct BackendInfo {
     version: String,
@@ -274,12 +276,16 @@ pub async fn run() {
 
     // 0. Self-update: if a newer bootstrapper is published, download it,
     //    hand it to the self-updater, and exit — the new copy takes over.
-    //    Fail-soft: update checks must never block playing.
+    //    Fail-soft: update checks must never block playing. The status
+    //    window keeps the player informed; it closes on every exit path.
+    let status = ProgressWindow::new("Flux Rec");
+    status.set(0.02, "Checking for updates…");
     let this_exe = std::env::current_exe().unwrap_or_else(|_| exe_dir.join("Flux Rec.exe"));
     let new_exe = exe_dir.join("Flux Rec.new.exe");
     match fluxrec_common::update::check_bootstrap_update(env!("CARGO_PKG_VERSION"), &new_exe).await
     {
         Ok(fluxrec_common::update::BootstrapUpdate::Available { .. }) => {
+            status.set(0.06, "Installing update…");
             let updater = exe_dir.join("fluxrec-selfupdate.exe");
             if updater.exists() {
                 let from_s = new_exe.to_string_lossy().into_owned();
@@ -302,6 +308,8 @@ pub async fn run() {
         Ok(fluxrec_common::update::BootstrapUpdate::UpToDate) => {}
         Err(e) => util::crash_log(&format!("bootstrap update check skipped: {e}")),
     }
+    status.set(0.08, "Preparing game files…");
+    drop(status);
 
     // 0a. Build switch: the game mirror can swap whole builds (e.g.
     //     November 2022 -> Showdown Aug 2022). Files from the old build must
@@ -484,8 +492,18 @@ pub async fn run() {
     if game_running() {
         return;
     }
+    // Brief "Launching game…" so the player knows what's happening, then
+    // start the game with no console window of its own (CREATE_NO_WINDOW)
+    // and detached so it outlives the launcher. The status window is closed
+    // before the game opens so it never covers it.
+    {
+        let launching = ProgressWindow::new("Flux Rec");
+        launching.set(1.0, "Launching game…");
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
     let mut child = match tokio::process::Command::new(&game_exe)
         .current_dir(&game_dir)
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .spawn()
     {
         Ok(c) => c,
