@@ -239,19 +239,12 @@ jobs:
           }
           Start-Sleep -Seconds 45
 
-      - name: Run player 1 script (login to dorm)
-        shell: pwsh
-        run: |
-          $procId1 = [int](Get-Content D:\p1.pid)
-          & D:\runscript.ps1 -ProcId $procId1 -Script "${{ inputs.script1 }}"
-
       - name: Create player 2 Windows user (separate HKCU registry)
         shell: pwsh
         run: |
           # p2 runs as a different Windows user so it gets its own HKCU registry hive.
           # No more shared PlayerPrefs conflicts, no backup/restore races.
           net user p2user TestPass1234 /add | Out-Null
-          net localgroup "Remote Desktop Users" p2user /add | Out-Null
           Write-Host "p2user created"
 
       - name: Launch player 2 (as p2user)
@@ -271,11 +264,30 @@ jobs:
           }
           Start-Sleep -Seconds 45
 
-      - name: Run player 2 script (login to dorm)
+      - name: Run both player scripts in parallel
         shell: pwsh
         run: |
+          $procId1 = [int](Get-Content D:\p1.pid)
           $procId2 = [int](Get-Content D:\p2.pid)
-          & D:\runscript.ps1 -ProcId $procId2 -Script "${{ inputs.script2 }}"
+          $s1 = "${{ inputs.script1 }}"
+          $s2 = "${{ inputs.script2 }}"
+          # p1 runs as a background job (main user). p1 script should include
+          # keep-alive actions to avoid idle kick while p2 works.
+          Start-Job -Name p1job -ScriptBlock {
+            param($pid1, $script)
+            & D:\runscript.ps1 -ProcId $pid1 -Script $script
+          } -ArgumentList $procId1, $s1 | Out-Null
+          Write-Host "p1 job started"
+          # p2's script runs AS p2user so window clicks land in its session.
+          $pass = ConvertTo-SecureString "TestPass1234" -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential("p2user", $pass)
+          $esc = $s2 -replace '"','\"'
+          $j2 = Start-Process powershell.exe -Credential $cred -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File D:\runscript.ps1 -ProcId $procId2 -Script `"$esc`"" -PassThru
+          Write-Host "p2 script started as p2user, waiting..."
+          $j2.WaitForExit(3000000) | Out-Null
+          Write-Host "p2 script done, waiting for p1 job..."
+          Wait-Job -Name p1job -Timeout 600 | Out-Null
+          Receive-Job -Name p1job | Select-Object -Last 15 | Out-String | Write-Host
 
       - name: Final screenshots (both views)
         shell: pwsh
