@@ -4,18 +4,8 @@
 //! them. Falls back to a plain single-stream download when the server does
 //! not honor Range requests. Same verification contract as `download()` in
 //! the crate root (size + MD5), so it is a drop-in accelerator.
-//!
-//! Robustness rules (learned the hard way):
-//! - every segment has a stall timeout: no data for STALL_SECS -> retry;
-//! - segments RESUME across retries (Range from the bytes already on disk),
-//!   so a flaky connection never restarts a 475MB chunk from zero;
-//! - a progress-pump task updates the GUI ~4x/sec from the shared byte
-//!   counter, with live MB/s + ETA text — the bar can never look frozen.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
@@ -25,9 +15,7 @@ pub const SEGMENTS: usize = 8;
 /// Files smaller than this just use a single stream (segments add nothing).
 pub const SEGMENT_MIN_SIZE: u64 = 8 * 1024 * 1024;
 /// Per-segment attempts before the whole download fails.
-const SEGMENT_ATTEMPTS: u32 = 5;
-/// No data for this long -> the segment is stalled, abort and retry.
-const STALL_SECS: u64 = 60;
+const SEGMENT_ATTEMPTS: u32 = 3;
 
 /// Compute inclusive byte ranges for `n` segments covering `total` bytes.
 /// Pure and unit-tested.
@@ -79,110 +67,79 @@ fn file_ok(path: &Path, expected_md5: Option<&str>, expected_size: Option<u64>) 
 }
 
 async fn probe_range(client: &reqwest::Client, url: &str) -> bool {
-    let r = client.get(url).header("Range", "bytes=0-0").send().await;
+    let r = client
+        .get(url)
+        .header("Range", "bytes=0-0")
+        .send()
+        .await;
     matches!(r, Ok(resp) if resp.status() == reqwest::StatusCode::PARTIAL_CONTENT)
 }
 
-/// Download one byte range into `dest`, with retries and resume.
-/// Partial segment files are kept between attempts: a retry resumes via
-/// `Range: bytes={already_have}-` instead of restarting the chunk.
-/// Reports progress as absolute bytes written into the shared atomic counter.
+/// Download one byte range into `dest`, with retries. Reports progress as
+/// absolute bytes written into the shared atomic counter.
 async fn fetch_segment(
     client: &reqwest::Client,
     url: &str,
     start: u64,
     end: u64,
     dest: &Path,
-    done: &AtomicU64,
+    done: &std::sync::atomic::AtomicU64,
     label: &str,
 ) -> Result<(), String> {
-    let want = end - start + 1;
     let mut attempt = 0u32;
     loop {
         attempt += 1;
-        let have = std::fs::metadata(dest)
-            .map(|m| m.len())
-            .unwrap_or(0)
-            .min(want);
-        if have == want {
-            return Ok(()); // already complete from an earlier attempt/run
-        }
-        let resuming = have > 0;
-        let range_hdr = if resuming {
-            format!("bytes={}-{}", start + have, end)
-        } else {
-            format!("bytes={start}-{end}")
-        };
         let resp = client
             .get(url)
-            .header("Range", range_hdr)
+            .header("Range", format!("bytes={start}-{end}"))
             .send()
             .await
             .map_err(|e| e.to_string())?;
         if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
             let msg = format!("segment {start}-{end}: HTTP {}", resp.status());
-            if resuming {
-                // Server ignored our resume offset: restart this chunk clean.
-                let _ = std::fs::remove_file(dest);
-                done.fetch_sub(have, Ordering::Relaxed);
-            }
             if attempt >= SEGMENT_ATTEMPTS {
-                return Err(format!("[{label}] {msg}"));
+                return Err(msg);
             }
             continue;
         }
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(!resuming)
-            .append(resuming)
-            .open(dest)
+        let mut file = tokio::fs::File::create(dest)
             .await
             .map_err(|e| e.to_string())?;
         let mut stream = resp.bytes_stream();
         let mut written = 0u64;
+        let want = end - start + 1;
         let mut failed: Option<String> = None;
-        loop {
-            match tokio::time::timeout(Duration::from_secs(STALL_SECS), stream.next()).await {
-                Err(_) => {
-                    failed = Some(format!(
-                        "segment {start}-{end}: stalled {STALL_SECS}s without data"
-                    ));
-                    break;
-                }
-                Ok(None) => break, // server closed the stream
-                Ok(Some(Err(e))) => {
-                    failed = Some(e.to_string());
-                    break;
-                }
-                Ok(Some(Ok(bytes))) => {
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
                     if let Err(e) = file.write_all(&bytes).await {
                         failed = Some(e.to_string());
                         break;
                     }
                     written += bytes.len() as u64;
-                    done.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                    done.fetch_add(bytes.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(e) => {
+                    failed = Some(e.to_string());
+                    break;
                 }
             }
         }
         let _ = file.flush().await;
         drop(file);
-        // Partial file is KEPT: the next attempt resumes from have + written.
-        // The shared counter already includes those bytes, so no rewind.
-        if failed.is_none() && have + written == want {
+        if failed.is_none() && written == want {
             return Ok(());
         }
         let msg = failed.unwrap_or_else(|| {
-            format!(
-                "segment {start}-{end}: got {}/{} bytes",
-                have + written,
-                want
-            )
+            format!("segment {start}-{end}: got {written}/{want} bytes")
         });
+        // Remove the partial segment file before retrying.
+        let _ = std::fs::remove_file(dest);
+        // Rewind the shared counter by what this attempt added.
+        done.fetch_sub(written, std::sync::atomic::Ordering::Relaxed);
         if attempt >= SEGMENT_ATTEMPTS {
             return Err(format!("[{label}] {msg}"));
         }
-        println!("[{label}] segment {start}-{end} attempt {attempt}: {msg} — resuming.");
     }
 }
 
@@ -226,14 +183,6 @@ async fn fetch_single(
         return Err(format!("[{label}] verification failed after download"));
     }
     Ok(())
-}
-
-fn fmt_eta(secs: u64) -> String {
-    if secs < 90 {
-        format!("~{secs}s left")
-    } else {
-        format!("~{}m {}s left", secs / 60, secs % 60)
-    }
 }
 
 /// Segmented download with the same contract as `crate::download`.
@@ -301,6 +250,7 @@ pub async fn download_segmented(
 
     println!("[{label}] segmented download: {SEGMENTS} parallel ranges ({total} bytes).");
     let ranges = segment_ranges(total, SEGMENTS);
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let seg_paths: Vec<PathBuf> = (0..ranges.len())
         .map(|i| {
             let mut p = dest.as_os_str().to_owned();
@@ -308,52 +258,6 @@ pub async fn download_segmented(
             PathBuf::from(p)
         })
         .collect();
-    // Bytes already on disk from an earlier interrupted run count from the start.
-    let initial: u64 = seg_paths
-        .iter()
-        .map(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
-        .sum();
-    let done = Arc::new(AtomicU64::new(initial));
-
-    // Progress pump: smooth bar updates ~4x/sec plus live MB/s + ETA text,
-    // so the GUI can never look frozen while bytes are arriving.
-    let pump_progress = progress.map(|(p, _)| p.clone());
-    let pump_done = done.clone();
-    let pump = tokio::spawn(async move {
-        let started = Instant::now();
-        let mut last_bytes = initial;
-        let mut last_tick = started;
-        let mut last_text = Instant::now() - Duration::from_secs(10);
-        loop {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            let d = pump_done.load(Ordering::Relaxed);
-            let elapsed = started.elapsed().as_secs_f64().max(0.001);
-            if let Some(ref p) = pump_progress {
-                p.set_fraction((d as f64 / total as f64).min(1.0));
-                if last_text.elapsed() >= Duration::from_secs(2) {
-                    last_text = Instant::now();
-                    let tick_dt = last_tick.elapsed().as_secs_f64().max(0.001);
-                    let mbps = d.saturating_sub(last_bytes) as f64 / tick_dt / 1_048_576.0;
-                    last_bytes = d;
-                    last_tick = Instant::now();
-                    let avg_mbps = d as f64 / elapsed / 1_048_576.0;
-                    let eta = if avg_mbps > 0.05 {
-                        let s = ((total.saturating_sub(d)) as f64
-                            / (avg_mbps * 1_048_576.0))
-                            as u64;
-                        format!(" — {}", fmt_eta(s))
-                    } else {
-                        String::new()
-                    };
-                    let have_mb = d as f64 / 1_048_576.0;
-                    let total_mb = total as f64 / 1_048_576.0;
-                    p.set_text(format!(
-                        "Downloading game files… {have_mb:.0}/{total_mb:.0} MB ({mbps:.1} MB/s{eta})"
-                    ));
-                }
-            }
-        }
-    });
 
     let mut tasks = Vec::with_capacity(ranges.len());
     for (i, (start, end)) in ranges.into_iter().enumerate() {
@@ -366,10 +270,17 @@ pub async fn download_segmented(
             fetch_segment(&c, &u, start, end, &d, &done_c, &label_s).await
         }));
     }
+    // Drive progress as segments complete (byte-accurate via the shared
+    // counter; no spawned task, so the borrowed Progress stays valid).
     let mut failed: Option<String> = None;
     for t in tasks {
         match t.await {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => {
+                if let Some((p, _)) = progress {
+                    let d = done.load(std::sync::atomic::Ordering::Relaxed);
+                    p.set_fraction((d as f64 / total as f64).min(1.0));
+                }
+            }
             Ok(Err(e)) => {
                 failed = Some(e);
                 break;
@@ -379,11 +290,6 @@ pub async fn download_segmented(
                 break;
             }
         }
-    }
-    pump.abort();
-    // Restore the plain stage text for whatever comes next.
-    if let Some((p, stage)) = progress {
-        p.set_stage(stage);
     }
     if let Some(e) = failed {
         for p in &seg_paths {
@@ -473,11 +379,5 @@ mod tests {
         assert!(!file_ok(&f, Some("00000000000000000000000000000000"), None));
         assert!(!file_ok(&d.join("missing"), None, None));
         let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn fmt_eta_reads_sane() {
-        assert_eq!(fmt_eta(45), "~45s left");
-        assert_eq!(fmt_eta(150), "~2m 30s left");
     }
 }

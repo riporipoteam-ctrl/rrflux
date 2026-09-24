@@ -5,6 +5,8 @@
 //! Launch flow, all behind the little Flux Rec window (the console stays
 //! hidden the whole time):
 //!
+//!   0. Self-heal: verify the Steam bypass (emulator/stub DLL + settings +
+//!      VC++ runtime) and repair it automatically before anything else.
 //!   1. "Checking for updates\u{2026}" — fast (24h cache, 8s timeout, fail-soft).
 //!   2. If a newer setup exists: "Downloading update\u{2026}" with progress,
 //!      then the new setup is spawned with `--updated` and this process exits.
@@ -61,6 +63,73 @@ pub fn run_launcher(
             progress.done();
             let _ = gui_thread.join();
             std::process::exit(1);
+        }
+    }
+
+    // 1b. Self-heal: the Steam bypass must be intact or the game crashes at
+    // launch / shows "Failed to initialize Steam Platform". Verify on every
+    // --play and repair automatically instead of ever letting the game hit
+    // the broken state.
+    {
+        let bypass_state = crate::bypass::verify(dir);
+        let vcredist_ok = crate::vcredist::is_installed();
+        let broken_reason: Option<String> =
+            match (&bypass_state, vcredist_ok) {
+                (crate::bypass::BypassState::Ok(_), true) => None,
+                (crate::bypass::BypassState::Broken(r), _) => Some(r.clone()),
+                (_, false) => Some("VC++ 2022 runtime is missing".to_string()),
+            };
+        if let Some(reason) = broken_reason {
+            println!("[launcher] Steam bypass broken ({reason}) — repairing.");
+            progress.set_status("Repairing game files…", 8);
+            if !crate::vcredist::is_admin() {
+                // Repair writes into the game dir: needs one elevation.
+                let ok = crate::message_box_ok_cancel(
+                    "Flux Rec",
+                    &format!(
+                        "Flux Rec needs to repair its game files ({reason}).\n\n\
+                         Click OK to allow the one-time fix (it will ask for \
+                         administrator rights)."
+                    ),
+                );
+                if ok {
+                    let _ = crate::vcredist::relaunch_elevated();
+                }
+                // Never launch a knowingly-broken game.
+                progress.done();
+                let _ = gui_thread.join();
+                std::process::exit(0);
+            }
+            let client = reqwest::Client::builder()
+                .user_agent("FluxRec-Setup/0.1.8")
+                .connect_timeout(Duration::from_secs(30))
+                .build();
+            let repaired = match (&rt, client) {
+                (Ok(r), Ok(c)) => r
+                    .block_on(crate::bypass::repair_bypass(&c, dir, &progress))
+                    .map_err(|e| {
+                        eprintln!("[launcher] repair failed: {e}");
+                        e
+                    })
+                    .is_ok(),
+                _ => false,
+            };
+            if !repaired {
+                crate::message_box(
+                    "Flux Rec",
+                    &format!(
+                        "Flux Rec could not repair its game files ({reason}).\n\n\
+                         Please re-run FluxRec-Setup as administrator."
+                    ),
+                    true,
+                );
+                progress.set_status("Repair failed — please re-run setup.", 100);
+                std::thread::sleep(Duration::from_secs(6));
+                progress.done();
+                let _ = gui_thread.join();
+                std::process::exit(1);
+            }
+            println!("[launcher] Steam bypass repaired.");
         }
     }
 
