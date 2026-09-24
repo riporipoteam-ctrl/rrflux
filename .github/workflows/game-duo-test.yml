@@ -17,17 +17,17 @@ on:
       username2:
         description: 'Player 2 username'
         required: true
-        default: 'FluxTester43'
+        default: 'FluxTester44'
       password2:
         description: 'Player 2 password'
         required: true
         default: 'TestPass1234'
       script1:
-        description: 'Player 1 actions: click:X,Y | type:TEXT | key:{KEY} | wait:N | shot:NAME | front'
+        description: 'Player 1 POST-LOGIN actions: click:X,Y | type:TEXT | key:{KEY} | hold:W,N | wait:N | shot:NAME | front (login is automatic now)'
         required: true
         default: 'wait:150; shot:p1_boot'
       script2:
-        description: 'Player 2 actions: click:X,Y | type:TEXT | key:{KEY} | wait:N | shot:NAME | front'
+        description: 'Player 2 POST-LOGIN actions: click:X,Y | type:TEXT | key:{KEY} | hold:W,N | wait:N | shot:NAME | front (login is automatic now)'
         required: true
         default: 'wait:150; shot:p2_boot'
       tag:
@@ -239,22 +239,32 @@ jobs:
           }
           Start-Sleep -Seconds 45
 
-      - name: Create player 2 Windows user (separate HKCU registry)
+      - name: Login player 1 (existing account via + dialog)
         shell: pwsh
         run: |
-          # p2 runs as a different Windows user so it gets its own HKCU registry hive.
-          # No more shared PlayerPrefs conflicts, no backup/restore races.
-          net user p2user TestPass1234 /add | Out-Null
-          Write-Host "p2user created"
+          $procId1 = [int](Get-Content D:\p1.pid)
+          # + opens the Login dialog; type existing credentials, PLAY.
+          # Coords are client-area ~= screen (1280x720, no title bar visible).
+          & D:\runscript.ps1 -ProcId $procId1 -Script "wait:30; shot:p1_boot; click:985,225; wait:8; shot:p1_login_dialog; click:755,270; wait:2; type:${{ inputs.username1 }}; click:755,335; wait:2; type:${{ inputs.password1 }}; click:755,545; wait:45; shot:p1_after_play"
 
-      - name: Launch player 2 (as p2user)
+      - name: Isolate HKCU for player 2 (separate PlayerPrefs, same user)
         shell: pwsh
         run: |
-          $pass = ConvertTo-SecureString "TestPass1234" -AsPlainText -Force
-          $cred = New-Object System.Management.Automation.PSCredential("p2user", $pass)
-          $p = Start-Process D:\FluxRec\RecRoom.exe -Credential $cred -ArgumentList "-screen-width 1280 -screen-height 720 -screen-fullscreen 0","-logFile D:\player2.log" -PassThru
+          # v7's p2user broke input (separate window station: clicks never
+          # land). Instead: p1 is already logged in (token in memory), so
+          # back up p1's PlayerPrefs and wipe the key — p2 then launches
+          # with a clean slate and logs in as itself.
+          reg export HKCU\Software\RecRoom D:\p1prefs.reg /y | Out-Null
+          reg delete HKCU\Software\RecRoom /f | Out-Null
+          Write-Host "p1 prefs backed up, HKCU RecRoom key wiped for p2"
+
+      - name: Launch player 2 (main user, clean PlayerPrefs)
+        shell: pwsh
+        run: |
+          cd D:\FluxRec
+          $p = Start-Process .\RecRoom.exe -ArgumentList "-screen-width 1280 -screen-height 720 -screen-fullscreen 0","-logFile D:\player2.log" -PassThru
           $p.Id | Set-Content D:\p2.pid
-          Write-Host "player 2 pid: $($p.Id) as p2user, waiting for window..."
+          Write-Host "player 2 pid: $($p.Id), waiting for window..."
           $deadline = (Get-Date).AddMinutes(15)
           while ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 15
@@ -264,6 +274,12 @@ jobs:
           }
           Start-Sleep -Seconds 45
 
+      - name: Login player 2 (existing account via + dialog)
+        shell: pwsh
+        run: |
+          $procId2 = [int](Get-Content D:\p2.pid)
+          & D:\runscript.ps1 -ProcId $procId2 -Script "wait:30; shot:p2_boot; click:985,225; wait:8; shot:p2_login_dialog; click:755,270; wait:2; type:${{ inputs.username2 }}; click:755,335; wait:2; type:${{ inputs.password2 }}; click:755,545; wait:45; shot:p2_after_play"
+
       - name: Run both player scripts in parallel
         shell: pwsh
         run: |
@@ -271,20 +287,15 @@ jobs:
           $procId2 = [int](Get-Content D:\p2.pid)
           $s1 = "${{ inputs.script1 }}"
           $s2 = "${{ inputs.script2 }}"
-          # p1 runs as a background job (main user). p1 script should include
+          # Both players run as the main user now (v7's p2user broke input).
+          # p1 runs as a background job; p1's script should start with
           # keep-alive actions to avoid idle kick while p2 works.
           Start-Job -Name p1job -ScriptBlock {
             param($pid1, $script)
             & D:\runscript.ps1 -ProcId $pid1 -Script $script
           } -ArgumentList $procId1, $s1 | Out-Null
-          Write-Host "p1 job started"
-          # p2's script runs AS p2user so window clicks land in its session.
-          $pass = ConvertTo-SecureString "TestPass1234" -AsPlainText -Force
-          $cred = New-Object System.Management.Automation.PSCredential("p2user", $pass)
-          $esc = $s2 -replace '"','\"'
-          $j2 = Start-Process powershell.exe -Credential $cred -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File D:\runscript.ps1 -ProcId $procId2 -Script `"$esc`"" -PassThru
-          Write-Host "p2 script started as p2user, waiting..."
-          $j2.WaitForExit(3000000) | Out-Null
+          Write-Host "p1 job started, running p2 script inline..."
+          & D:\runscript.ps1 -ProcId $procId2 -Script $s2
           Write-Host "p2 script done, waiting for p1 job..."
           Wait-Job -Name p1job -Timeout 600 | Out-Null
           Receive-Job -Name p1job | Select-Object -Last 15 | Out-String | Write-Host
