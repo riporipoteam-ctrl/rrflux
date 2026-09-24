@@ -40,6 +40,7 @@ jobs:
           Copy-Item "game\target\release\fluxrec-download.exe" "stage\fluxrec-download.exe"
           Copy-Item "game\target\release\fluxrec-selfupdate.exe" "stage\fluxrec-selfupdate.exe"
           Copy-Item "game\installer\fluxrec.ico" "stage\fluxrec.ico"
+          Copy-Item "game\installer\assets\fluxrec-header.bmp" "stage\fluxrec-header.bmp"
 
       - name: Ensure NSIS
         shell: powershell
