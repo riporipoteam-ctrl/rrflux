@@ -1,6 +1,6 @@
 //! Parallel segmented downloading for large files.
 //!
-//! Splits a download into ~8 parallel HTTP Range segments, then concatenates
+//! Splits a download into ~16 parallel HTTP Range segments, then concatenates
 //! them. Falls back to a plain single-stream download when the server does
 //! not honor Range requests. Same verification contract as `download()` in
 //! the crate root (size + MD5), so it is a drop-in accelerator.
@@ -21,7 +21,11 @@ use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 
 /// Number of parallel segments for large files.
-pub const SEGMENTS: usize = 8;
+///
+/// 16: measured ~2.6x total throughput vs 8 on throttled routes
+/// (per-connection throttling rewards more connections; the file is
+/// ~3.8GB so 16 x ~240MB segments stay efficient).
+pub const SEGMENTS: usize = 16;
 /// Files smaller than this just use a single stream (segments add nothing).
 pub const SEGMENT_MIN_SIZE: u64 = 8 * 1024 * 1024;
 /// Per-segment attempts before the whole download fails.
@@ -237,7 +241,7 @@ fn fmt_eta(secs: u64) -> String {
 }
 
 /// Segmented download with the same contract as `crate::download`.
-/// Uses ~8 parallel Range segments when the server honors them and the
+/// Uses ~16 parallel Range segments when the server honors them and the
 /// file is large enough; otherwise a single stream.
 pub async fn download_segmented(
     client: &reqwest::Client,
