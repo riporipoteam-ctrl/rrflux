@@ -455,6 +455,114 @@ fn write_plugin_config(dir: &Path, ns_host: &str, rt: &str, voice: &str, chat: &
     Ok(())
 }
 
+/// Ensure the Windows hosts file maps ns.rec.net to the backend IP.
+/// The 2023 client resolves ns.rec.net itself via System.Net.Dns, bypassing
+/// the plugin's HTTP-level redirect. On machines where that dead hostname
+/// doesn't resolve (e.g., certain ISPs), the game hangs at "Connecting to
+/// server..." forever. This maps it to the backend so DNS succeeds.
+/// Idempotent, fail-soft (a hosts write failure never breaks the install).
+#[cfg(windows)]
+fn ensure_ns_hosts_entry(ns_host: &str) {
+    use std::net::ToSocketAddrs;
+
+    // Resolve ns_host to an IP. If it's already an IP, use it directly.
+    let ip = if ns_host.parse::<std::net::IpAddr>().is_ok() {
+        ns_host.to_string()
+    } else {
+        // Try to resolve the hostname to an IP
+        match format!("{}:80", ns_host).to_socket_addrs() {
+            Ok(mut addrs) => match addrs.next() {
+                Some(addr) => addr.ip().to_string(),
+                None => {
+                    eprintln!("[hosts] WARNING: could not resolve {}; skipping hosts entry.", ns_host);
+                    return;
+                }
+            },
+            Err(e) => {
+                eprintln!("[hosts] WARNING: DNS resolution failed for {} ({}); skipping hosts entry.", ns_host, e);
+                return;
+            }
+        }
+    };
+
+    let hosts_path = std::path::Path::new("C:\\Windows\\System32\\drivers\\etc\\hosts");
+    let content = match std::fs::read_to_string(hosts_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[hosts] WARNING: cannot read hosts file ({}); skipping.", e);
+            return;
+        }
+    };
+
+    let entry = format!("{} ns.rec.net", ip);
+    // Check if the correct entry already exists
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        // If ns.rec.net is already mapped (to any IP), we need to update or skip
+        if trimmed.contains("ns.rec.net") {
+            if trimmed == entry {
+                println!("[hosts] ns.rec.net already mapped to {}; nothing to do.", ip);
+                return;
+            } else {
+                // Entry exists but with different IP — remove old lines and add new
+                let new_content: Vec<&str> = content
+                    .lines()
+                    .filter(|l| !l.trim().contains("ns.rec.net"))
+                    .collect();
+                let mut updated = new_content.join("\n");
+                updated.push_str(&format!("\n{} # Flux Rec backend\n", entry));
+                if let Err(e) = std::fs::write(hosts_path, updated) {
+                    eprintln!("[hosts] WARNING: cannot update hosts file ({}); skipping.", e);
+                } else {
+                    println!("[hosts] updated ns.rec.net -> {} in hosts file.", ip);
+                }
+                return;
+            }
+        }
+    }
+
+    // No existing entry — append
+    let mut updated = content;
+    if !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(&format!("{} # Flux Rec backend\n", entry));
+    match std::fs::write(hosts_path, updated) {
+        Ok(_) => println!("[hosts] added {} to hosts file.", entry),
+        Err(e) => eprintln!("[hosts] WARNING: cannot write hosts file ({}); game may hang at 'Connecting to server' if DNS fails.", e),
+    }
+}
+
+#[cfg(not(windows))]
+fn ensure_ns_hosts_entry(_ns_host: &str) {
+    // No-op on non-Windows (only used for local testing)
+}
+
+/// Remove the Zone.Identifier "Mark of the Web" from a file.
+/// Files extracted from a browser-downloaded setup.exe carry this flag,
+/// and .NET/BepInEx can refuse to load them. Fail-soft.
+#[cfg(windows)]
+fn unblock_file(path: &std::path::Path) {
+    // Delete the Zone.Identifier alternate data stream via PowerShell.
+    // Using cmd /c with echo to avoid PowerShell execution policy issues.
+    let path_str = path.to_string_lossy();
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &format!("Unblock-File -Path '{}' -ErrorAction SilentlyContinue", path_str.replace('\'', "''"))])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => println!("[unblock] unblocked {}", path_str),
+        _ => eprintln!("[unblock] WARNING: could not unblock {}; plugin may fail to load.", path_str),
+    }
+}
+
+#[cfg(not(windows))]
+fn unblock_file(_path: &std::path::Path) {
+    // No-op on non-Windows
+}
+
 #[cfg(windows)]
 fn ps_escape(s: &str) -> String {
     s.replace('\'', "''")
@@ -802,6 +910,11 @@ async fn run_install(
     .await;
     if let Err(e) = plugin_res {
         eprintln!("[plugin] WARNING: plugin step failed ({}); continuing.", e);
+    } else {
+        // Unblock the plugin DLL: files extracted from a browser-downloaded
+        // setup.exe carry the Zone.Identifier "Mark of the Web", and .NET
+        // can refuse to load them. Remove the flag so BepInEx loads the plugin.
+        unblock_file(&plugins_dir.join("RecNetPlugin.dll"));
     }
 
     // 4. Plugin config (ns host + Photon IDs baked at packaging time).
@@ -810,6 +923,11 @@ async fn run_install(
     if let Err(e) = write_plugin_config(dir, ns_host, photon_rt, photon_voice, photon_chat) {
         eprintln!("[config] WARNING: plugin config step failed ({}); continuing.", e);
     }
+    // 4a. Hosts entry for ns.rec.net: the client resolves this hostname itself
+    // via System.Net.Dns, bypassing the plugin's HTTP redirect. On ISPs where
+    // the dead hostname doesn't resolve, the game hangs at "Connecting to
+    // server..." — this maps it to the backend IP. Idempotent, fail-soft.
+    ensure_ns_hosts_entry(ns_host);
     // 4b. Keep the BepInEx console window off at game launch. This is the
     // REAL kill switch: BepInEx 6.0.0-pre.2 defaults Logging.Console/Enabled
     // to true and AllocConsoles its own window inside the game process, so
