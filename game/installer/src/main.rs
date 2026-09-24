@@ -49,8 +49,14 @@ mod stealth;
 mod updater;
 mod vcredist;
 
-const CLIENT_ZIP_URL: &str =
-    "https://s3.g.megas4.com/2koayuyiwxv4groxzwdbbxg43cwustavrkvfb/recflare/client.zip";
+/// Client mirrors, fastest first. All serve the byte-identical client.zip
+/// (same MD5) — the downloader falls through to the next on any failure.
+/// (benchmark 2026-09-24: Mega 16-seg 5.4 MB/s beats HF 16-seg 1.5 MB/s;
+/// HF throttles parallel ranges, so Mega is primary, HF is the fallback).
+const CLIENT_ZIP_MIRRORS: &[&str] = &[
+    "https://s3.g.megas4.com/2koayuyiwxv4groxzwdbbxg43cwustavrkvfb/recflare/client.zip",
+    "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/recflare-client-20230414.zip",
+];
 const CLIENT_ZIP_MD5: &str = "4c4a94624eba99028bb36445ccb03253";
 const BEPINEX_URL: &str = "https://github.com/BepInEx/BepInEx/releases/download/v6.0.0-pre.2/BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip";
 const BEPINEX_SIZE: u64 = 34_146_254;
@@ -244,7 +250,7 @@ pub(crate) async fn download(
         println!("[{label}] existing file failed verification, re-downloading.");
         std::fs::remove_file(dest).map_err(|e| e.to_string())?;
     }
-    // Fast path: parallel segmented download (8 Range segments) for anything
+    // Fast path: parallel segmented download (16 Range segments) for anything
     // not known-small. Any failure falls through to the classic single
     // stream below — speed can never break a download.
     if expected_size.map(|s| s >= segmented::SEGMENT_MIN_SIZE).unwrap_or(true) {
@@ -371,6 +377,39 @@ pub(crate) async fn download(
         println!("[{label}] done ({done} bytes).");
         return Ok(());
     }
+}
+
+/// Download trying each mirror URL in order until one verifies.
+///
+/// Mirrors must serve the byte-identical file (same MD5): a corrupt mirror
+/// just fails verification and the next mirror is tried. Segment part-files
+/// are even resumable across mirrors since the bytes are identical.
+pub(crate) async fn download_mirrored(
+    client: &reqwest::Client,
+    urls: &[&str],
+    dest: &Path,
+    expected_md5: Option<&str>,
+    expected_size: Option<u64>,
+    label: &str,
+    progress: Option<(&progress::Progress, &'static str)>,
+) -> Result<(), String> {
+    let mut last_err = format!("{label}: no mirrors configured");
+    for (i, url) in urls.iter().enumerate() {
+        if i > 0 {
+            println!("[{label}] mirror {} failed ({last_err}); trying mirror {} ...", i, i + 1);
+            if let Some((p, stage)) = progress {
+                p.set_stage(stage);
+            }
+        }
+        match download(client, url, dest, expected_md5, expected_size, label, progress).await
+        {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = e;
+            }
+        }
+    }
+    Err(format!("{label}: all {} mirrors failed (last: {last_err})", urls.len()))
 }
 
 fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Result<(), String> {
@@ -697,9 +736,9 @@ async fn run_install(
         progress.set_stage("Skipping game files (already installed)…");
     } else {
         let client_zip = dir.join("client.zip");
-        download(
+        download_mirrored(
             &client,
-            CLIENT_ZIP_URL,
+            CLIENT_ZIP_MIRRORS,
             &client_zip,
             Some(CLIENT_ZIP_MD5),
             None,
