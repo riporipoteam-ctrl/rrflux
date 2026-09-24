@@ -146,7 +146,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Content -Path D:\runscript.ps1 -Value @'
-          param([int]$ProcId, [string]$Script)
+          param([int]$Pid, [string]$Script)
           Add-Type -AssemblyName System.Drawing
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
@@ -158,11 +158,11 @@ jobs:
               [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
             }
           "@
-          function GameProc { Get-Process -Id $ProcId -ErrorAction SilentlyContinue }
+          function GameProc { Get-Process -Id $Pid -ErrorAction SilentlyContinue }
           function Focus-Game {
             $p = GameProc
             if ($p -and $p.MainWindowHandle -ne 0) { [WX]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Start-Sleep -Seconds 1 }
-            else { Write-Host "WARN: game pid $ProcId has no window" }
+            else { Write-Host "WARN: game pid $Pid has no window" }
           }
           function Click-At($x, $y) {
             $p = GameProc
@@ -177,7 +177,6 @@ jobs:
             } else { Write-Host "game window not found, no click" }
           }
           function Shot($name) {
-            Focus-Game; Start-Sleep -Seconds 2
             $bmp = New-Object System.Drawing.Bitmap(1280, 720)
             $g = [System.Drawing.Graphics]::FromImage($bmp)
             $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
@@ -190,7 +189,7 @@ jobs:
             [System.Windows.Forms.SendKeys]::SendWait($e)
             Start-Sleep -Seconds 2
           }
-          Write-Host "script for pid ${ProcId}: $Script"
+          Write-Host "script for pid ${Pid}: $Script"
           foreach ($action in $Script -split ';') {
             $action = $action.Trim(); if (-not $action) { continue }
             $parts = $action -split ':', 2
@@ -206,7 +205,7 @@ jobs:
               default { Write-Host "unknown verb: $verb" }
             }
           }
-          Write-Host "script done for pid $ProcId"
+          Write-Host "script done for pid $Pid"
           '@
           Write-Host "runner written"
 
@@ -229,8 +228,8 @@ jobs:
       - name: Run player 1 script (login to dorm)
         shell: pwsh
         run: |
-          $procId1 = [int](Get-Content D:\p1.pid)
-          & D:\runscript.ps1 -ProcId $procId1 -Script "${{ inputs.script1 }}"
+          $pid1 = [int](Get-Content D:\p1.pid)
+          & D:\runscript.ps1 -Pid $pid1 -Script "${{ inputs.script1 }}"
 
       - name: Launch player 2
         shell: pwsh
@@ -251,18 +250,18 @@ jobs:
       - name: Run player 2 script (login to dorm)
         shell: pwsh
         run: |
-          $procId2 = [int](Get-Content D:\p2.pid)
-          & D:\runscript.ps1 -ProcId $procId2 -Script "${{ inputs.script2 }}"
+          $pid2 = [int](Get-Content D:\p2.pid)
+          & D:\runscript.ps1 -Pid $pid2 -Script "${{ inputs.script2 }}"
 
       - name: Final screenshots (both views)
         shell: pwsh
         run: |
-          $procId1 = [int](Get-Content D:\p1.pid)
-          $procId2 = [int](Get-Content D:\p2.pid)
-          & D:\runscript.ps1 -ProcId $procId1 -Script "front; wait:3; shot:final_p1"
-          & D:\runscript.ps1 -ProcId $procId2 -Script "front; wait:3; shot:final_p2"
-          Get-Process -Id $procId1 -ErrorAction SilentlyContinue | Select-Object Id, HasExited | Format-Table | Out-String | Write-Host
-          Get-Process -Id $procId2 -ErrorAction SilentlyContinue | Select-Object Id, HasExited | Format-Table | Out-String | Write-Host
+          $pid1 = [int](Get-Content D:\p1.pid)
+          $pid2 = [int](Get-Content D:\p2.pid)
+          & D:\runscript.ps1 -Pid $pid1 -Script "front; wait:3; shot:final_p1"
+          & D:\runscript.ps1 -Pid $pid2 -Script "front; wait:3; shot:final_p2"
+          Get-Process -Id $pid1 -ErrorAction SilentlyContinue | Select-Object Id, HasExited | Format-Table | Out-String | Write-Host
+          Get-Process -Id $pid2 -ErrorAction SilentlyContinue | Select-Object Id, HasExited | Format-Table | Out-String | Write-Host
 
       - name: Upload screenshots
         if: always()
