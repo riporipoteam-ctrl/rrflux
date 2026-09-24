@@ -83,6 +83,14 @@ jobs:
             } catch { Write-Host "  uninstall error: $_" }
           }
           Write-Host "VC++ x64 entries processed: $found"
+          # The uninstallers leave the detection key behind — remove it
+          # forcibly, or the installer's VC++ check never actually fires.
+          foreach ($k in @('HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64',
+                           'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x86',
+                           'HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64',
+                           'HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x86')) {
+            if (Test-Path $k) { Remove-Item -Path $k -Recurse -Force; Write-Host "removed key: $k" }
+          }
           $key = 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
           if (Test-Path $key) { Write-Host "WARN: VC x64 runtime key STILL present" }
           else { Write-Host "OK: VC x64 runtime key gone (this is what the installer checks)" }
