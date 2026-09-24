@@ -245,28 +245,23 @@ jobs:
           $procId1 = [int](Get-Content D:\p1.pid)
           & D:\runscript.ps1 -ProcId $procId1 -Script "${{ inputs.script1 }}"
 
-      - name: Isolate player 2 session (backup p1, clear shared PlayerPrefs)
+      - name: Create player 2 Windows user (separate HKCU registry)
         shell: pwsh
         run: |
-          # p1 is already running with prefs in memory; backup its keys, then clear
-          # registry so p2 boots fresh and does NOT auto-login as p1's account.
-          # p1's keys are restored after p2 is in-game (p2 keeps auth in memory).
-          foreach ($k in @("HKCU:\Software\Rec Room", "HKCU:\Software\Against Gravity")) {
-            $safe = ($k -split '\\')[-1] -replace ' ','_'
-            if (Test-Path $k) {
-              reg export $k.Replace('HKCU:\','HKCU\') "D:\p1_$safe.reg" /y | Out-Null
-              Remove-Item -Path $k -Recurse -Force
-              Write-Host "backed up and cleared $k"
-            } else { Write-Host "not present: $k" }
-          }
+          # p2 runs as a different Windows user so it gets its own HKCU registry hive.
+          # No more shared PlayerPrefs conflicts, no backup/restore races.
+          net user p2user TestPass1234 /add | Out-Null
+          net localgroup "Remote Desktop Users" p2user /add | Out-Null
+          Write-Host "p2user created"
 
-      - name: Launch player 2
+      - name: Launch player 2 (as p2user)
         shell: pwsh
         run: |
-          cd D:\FluxRec
-          $p = Start-Process .\RecRoom.exe -ArgumentList "-screen-width 1280 -screen-height 720 -screen-fullscreen 0","-logFile D:\player2.log" -PassThru
+          $pass = ConvertTo-SecureString "TestPass1234" -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential("p2user", $pass)
+          $p = Start-Process D:\FluxRec\RecRoom.exe -Credential $cred -ArgumentList "-screen-width 1280 -screen-height 720 -screen-fullscreen 0","-logFile D:\player2.log" -PassThru
           $p.Id | Set-Content D:\p2.pid
-          Write-Host "player 2 pid: $($p.Id), waiting for window..."
+          Write-Host "player 2 pid: $($p.Id) as p2user, waiting for window..."
           $deadline = (Get-Date).AddMinutes(15)
           while ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 15
@@ -281,17 +276,6 @@ jobs:
         run: |
           $procId2 = [int](Get-Content D:\p2.pid)
           & D:\runscript.ps1 -ProcId $procId2 -Script "${{ inputs.script2 }}"
-
-      - name: Restore player 1 registry (p2 keeps auth in memory)
-        shell: pwsh
-        run: |
-          # p2 is now in-game with auth in memory; give p1 its PlayerPrefs back so
-          # it doesn't get kicked to the picker.
-          foreach ($f in @("D:\p1_Rec_Room.reg", "D:\p1_Against_Gravity.reg")) {
-            if (Test-Path $f) { reg import $f | Out-Null; Write-Host "restored $f" }
-            else { Write-Host "missing: $f" }
-          }
-          Start-Sleep -Seconds 10
 
       - name: Final screenshots (both views)
         shell: pwsh
