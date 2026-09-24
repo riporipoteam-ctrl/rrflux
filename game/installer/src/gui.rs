@@ -178,6 +178,9 @@ mod imp {
 
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
+        // Brand the title bar + taskbar with the embedded Flux Rec icon.
+        // Never fails the install: failures are swallowed inside.
+        set_window_icon(hwnd, hinstance);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -291,6 +294,39 @@ mod imp {
     unsafe fn set_font(ctl: HWND, font: HFONT) {
         if !font.is_invalid() {
             SendMessageW(ctl, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+        }
+    }
+
+    /// Set the setup window's title-bar + taskbar icon from the icon embedded
+    /// in the EXE by build.rs (winres stores the first icon at resource id 1).
+    /// Silent no-op on any failure: the window works fine with the default icon.
+    unsafe fn set_window_icon(hwnd: HWND, hinstance: HINSTANCE) {
+        // Integer resource id == MAKEINTRESOURCEW(1).
+        let res_id = PCWSTR(1 as *const u16);
+        let load = |metric: SYSTEM_METRICS_INDEX| -> HICON {
+            let size = GetSystemMetrics(metric);
+            match LoadImageW(hinstance, res_id, IMAGE_ICON, size, size, IMAGE_FLAGS(0)) {
+                Ok(handle) => HICON(handle.0),
+                Err(_) => HICON::default(),
+            }
+        };
+        let big = load(SM_CXICON);
+        if !big.is_invalid() {
+            SendMessageW(
+                hwnd,
+                WM_SETICON,
+                WPARAM(ICON_BIG as usize),
+                LPARAM(big.0 as isize),
+            );
+        }
+        let small = load(SM_CXSMICON);
+        if !small.is_invalid() {
+            SendMessageW(
+                hwnd,
+                WM_SETICON,
+                WPARAM(ICON_SMALL as usize),
+                LPARAM(small.0 as isize),
+            );
         }
     }
 
