@@ -1,0 +1,344 @@
+{
+ "NewUntil": null,
+ "NextUpdate": "2222-02-22T22:22:00Z",
+ "StoreItems": [
+  {
+   "GiftDrop": {
+    "GiftDropId": 377,
+    "FriendlyName": "Paintball Goggles",
+    "Tooltip": "Paintball Goggles.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Paintball Goggles.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2304,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1776,
+    "FriendlyName": "Luchador Mask (Blue)",
+    "Tooltip": "A Blue Luchador Mask.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Blue Luchador Mask.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 30,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 900,
+     "StorefrontSaleData": {
+      "SalePercent": 50,
+      "SaleStartDate": "2021-05-23T21:00:00Z",
+      "SaleEndDate": "2021-05-24T21:00:00Z"
+     }
+    }
+   ],
+   "PurchasableItemId": 2305,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 810,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1775,
+    "FriendlyName": "Luchador Mask (Red)",
+    "Tooltip": "A Red Luchador Mask.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Red Luchador Mask.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 30,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 900,
+     "StorefrontSaleData": {
+      "SalePercent": 50,
+      "SaleStartDate": "2021-05-23T21:00:00Z",
+      "SaleEndDate": "2021-05-24T21:00:00Z"
+     }
+    }
+   ],
+   "PurchasableItemId": 2306,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 810,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2231,
+    "FriendlyName": "KO Icon - Grenade",
+    "Tooltip": "When you KO someone this will appear over their head.",
+    "ConsumableItemDesc": "EAhk3ZZdXEmH5wRAXXT24Q",
+    "AvatarItemDesc": "a KO Icon - Grenade.",
+    "AvatarItemType": null,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 110000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 150,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2307,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 135,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 458,
+    "FriendlyName": "Paintball Vest (Black)",
+    "Tooltip": "A Black Paintball Vest.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Paintball Vest.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2308,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2069,
+    "FriendlyName": "Paintball Vest (Blue)",
+    "Tooltip": "A Blue Paintball Vest.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Blue Paintball Vest.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2309,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2070,
+    "FriendlyName": "Paintball Vest (Red)",
+    "Tooltip": "A Red Paintball Vest.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Red Paintball Vest.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2310,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3102,
+    "FriendlyName": "Paintball Belt",
+    "Tooltip": "a Paintball Belt.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Paintball Belt.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 30,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2311,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 720,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  }
+ ],
+ "StorefrontType": 403,
+ "SubscriberDiscountPercent": 10
+}

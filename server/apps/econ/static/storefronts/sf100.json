@@ -1,0 +1,910 @@
+{
+ "StoreItems": [
+  {
+   "GiftDrop": {
+    "GiftDropId": 1962,
+    "FriendlyName": "Scallywag Bracers (Brown)",
+    "Tooltip": "Brown Scallywag Bracers from the Scallywag (Brown) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Brown Scallywag Bracers from the Scallywag (Brown) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4102,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 14,
+    "ItemSetFriendlyName": "Scallywag (Brown)"
+   },
+   "PurchasableItemId": 525,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1958,
+    "FriendlyName": "Scallywag Belt (Brown)",
+    "Tooltip": "A Brown Scallywag Belt from the Scallywag (Brown) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Brown Scallywag Belt from the Scallywag (Brown) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4102,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 14,
+    "ItemSetFriendlyName": "Scallywag (Brown)"
+   },
+   "PurchasableItemId": 521,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1954,
+    "FriendlyName": "Scallywag Vest (Brown)",
+    "Tooltip": "A Brown Scallywag Vest from the Scallywag (Brown) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Brown Scallywag Vest from the Scallywag (Brown) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4101,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 14,
+    "ItemSetFriendlyName": "Scallywag (Brown)"
+   },
+   "PurchasableItemId": 517,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 1600,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 1600,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1950,
+    "FriendlyName": "Scallywag Hat (Brown)",
+    "Tooltip": "A Brown Scallywag Hat from the Scallywag (Brown) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Brown Scallywag Hat from the Scallywag (Brown) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4100,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 14,
+    "ItemSetFriendlyName": "Scallywag (Brown)"
+   },
+   "PurchasableItemId": 513,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 3200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 3200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1963,
+    "FriendlyName": "Scallywag Bracers (Red)",
+    "Tooltip": "Red Scallywag Bracers from the Scallywag (Red) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Red Scallywag Bracers from the Scallywag (Red) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4102,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 15,
+    "ItemSetFriendlyName": "Scallywag (Red)"
+   },
+   "PurchasableItemId": 526,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1959,
+    "FriendlyName": "Scallywag Belt (Red)",
+    "Tooltip": "A Red Scallywag Belt from the Scallywag (Red) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Red Scallywag Belt from the Scallywag (Red) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4102,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 15,
+    "ItemSetFriendlyName": "Scallywag (Red)"
+   },
+   "PurchasableItemId": 522,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1955,
+    "FriendlyName": "Scallywag Vest (Red)",
+    "Tooltip": "A Red Scallywag Vest from the Scallywag (Red) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Red Scallywag Vest from the Scallywag (Red) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4101,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 15,
+    "ItemSetFriendlyName": "Scallywag (Red)"
+   },
+   "PurchasableItemId": 518,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 1600,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 1600,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1951,
+    "FriendlyName": "Scallywag Hat (Red)",
+    "Tooltip": "A Red Scallywag Hat from the Scallywag (Red) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Red Scallywag Hat from the Scallywag (Red) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4100,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 15,
+    "ItemSetFriendlyName": "Scallywag (Red)"
+   },
+   "PurchasableItemId": 514,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 3200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 3200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1947,
+    "FriendlyName": "Pirate Captain Cuffs (Black)",
+    "Tooltip": "Black Pirate Captain Cuffs from the Pirate Captain (Blue) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Black Pirate Captain Cuffs from the Pirate Captain (Blue) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4102,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 16,
+    "ItemSetFriendlyName": "Pirate Captain (Blue)"
+   },
+   "PurchasableItemId": 510,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1945,
+    "FriendlyName": "Pirate Captain Belt (Black)",
+    "Tooltip": "A Black Pirate Captain Belt from the Pirate Captain (Blue) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Pirate Captain Belt from the Pirate Captain (Blue) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4102,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 16,
+    "ItemSetFriendlyName": "Pirate Captain (Blue)"
+   },
+   "PurchasableItemId": 508,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1946,
+    "FriendlyName": "Pirate Captain Jacket (Blue)",
+    "Tooltip": "A Blue Pirate Captain Jacket from the Pirate Captain (Blue) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Blue Pirate Captain Jacket from the Pirate Captain (Blue) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4101,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 16,
+    "ItemSetFriendlyName": "Pirate Captain (Blue)"
+   },
+   "PurchasableItemId": 509,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 1600,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 1600,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1944,
+    "FriendlyName": "Pirate Captain Hat (Black)",
+    "Tooltip": "A Black Pirate Captain Hat from the Pirate Captain (Blue) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Pirate Captain Hat from the Pirate Captain (Blue) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4100,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 16,
+    "ItemSetFriendlyName": "Pirate Captain (Blue)"
+   },
+   "PurchasableItemId": 507,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 3200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 3200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1960,
+    "FriendlyName": "Pirate Captain Cuffs (Red)",
+    "Tooltip": "Red Pirate Captain Cuffs from the Pirate Captain (Red) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Red Pirate Captain Cuffs from the Pirate Captain (Red) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4102,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 17,
+    "ItemSetFriendlyName": "Pirate Captain (Red)"
+   },
+   "PurchasableItemId": 523,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1956,
+    "FriendlyName": "Pirate Captain Belt (Red)",
+    "Tooltip": "A Red Pirate Captain Belt from the Pirate Captain (Red) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Red Pirate Captain Belt from the Pirate Captain (Red) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4102,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 17,
+    "ItemSetFriendlyName": "Pirate Captain (Red)"
+   },
+   "PurchasableItemId": 519,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1952,
+    "FriendlyName": "Pirate Captain Jacket (Red)",
+    "Tooltip": "A Red Pirate Captain Jacket from the Pirate Captain (Red) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Red Pirate Captain Jacket from the Pirate Captain (Red) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4101,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 17,
+    "ItemSetFriendlyName": "Pirate Captain (Red)"
+   },
+   "PurchasableItemId": 515,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 1600,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 1600,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1948,
+    "FriendlyName": "Pirate Captain Hat (Red)",
+    "Tooltip": "A Red Pirate Captain Hat from the Pirate Captain (Red) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Red Pirate Captain Hat from the Pirate Captain (Red) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4100,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 17,
+    "ItemSetFriendlyName": "Pirate Captain (Red)"
+   },
+   "PurchasableItemId": 511,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 3200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 3200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2030,
+    "FriendlyName": "Film (Ghost Beard)",
+    "Tooltip": "Take some photos with Ghostbeard!",
+    "ConsumableItemDesc": "1c0Djlp090uBDczEobYNQw",
+    "AvatarItemDesc": "A Ghost Beard Film from the Ghost Beard's Treasures collection.",
+    "AvatarItemType": null,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4105,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 24,
+    "ItemSetFriendlyName": "Ghost Beard's Treasures"
+   },
+   "PurchasableItemId": 587,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 250,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 250,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2016,
+    "FriendlyName": "High Five Potion (Explosive)",
+    "Tooltip": "Give explosive high fives for a time.",
+    "ConsumableItemDesc": "YEfbJTnsR0yT_p7e7tb_kQ",
+    "AvatarItemDesc": "An Explosive High Five Potion from the Ghost Beard's Treasures collection.",
+    "AvatarItemType": null,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4105,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 24,
+    "ItemSetFriendlyName": "Ghost Beard's Treasures"
+   },
+   "PurchasableItemId": 576,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1936,
+    "FriendlyName": "Scallywag Hat (Black)",
+    "Tooltip": "A Black Scallywag Hat from the Scallywag (Black) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Scallywag Hat from the Scallywag (Black) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4104,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 18,
+    "ItemSetFriendlyName": "Scallywag (Black)"
+   },
+   "PurchasableItemId": 501,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 20000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 20000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1937,
+    "FriendlyName": "Scallywag Belt (Black)",
+    "Tooltip": "A Black Scallywag Belt from the Scallywag (Black) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Scallywag Belt from the Scallywag (Black) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4104,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 18,
+    "ItemSetFriendlyName": "Scallywag (Black)"
+   },
+   "PurchasableItemId": 502,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1938,
+    "FriendlyName": "Scallywag Vest (Black)",
+    "Tooltip": "A Black Scallywag Vest from the Scallywag (Black) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Scallywag Vest from the Scallywag (Black) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4104,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 18,
+    "ItemSetFriendlyName": "Scallywag (Black)"
+   },
+   "PurchasableItemId": 503,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 10000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 10000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1939,
+    "FriendlyName": "Scallywag Bracers (Black)",
+    "Tooltip": "Black Scallywag Bracers from the Scallywag (Black) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Black Scallywag Bracers from the Scallywag (Black) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": true,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4104,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 18,
+    "ItemSetFriendlyName": "Scallywag (Black)"
+   },
+   "PurchasableItemId": 504,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 100,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 100,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  }
+ ],
+ "SubscriberDiscountPercent": 10,
+ "StorefrontType": 100,
+ "NextUpdate": "2222-02-22T22:22:00Z",
+ "NewUntil": null
+}

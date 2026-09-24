@@ -1,0 +1,750 @@
+{
+ "StoreItems": [
+  {
+   "GiftDrop": {
+    "GiftDropId": 3065,
+    "FriendlyName": "Witch Hunter Torso (Blue)",
+    "Tooltip": "A Blue Witch Hunter Torso from the Witch Hunter (Blue) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Blue Witch Hunter Torso from the Witch Hunter (Blue) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 47,
+    "ItemSetFriendlyName": "Witch Hunter (Blue)"
+   },
+   "PurchasableItemId": 1571,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 2250,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3069,
+    "FriendlyName": "Witch Hunter Gloves (Blue)",
+    "Tooltip": "Blue Witch Hunter Gloves from the Witch Hunter (Blue) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Blue Witch Hunter Gloves from the Witch Hunter (Blue) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 30,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 47,
+    "ItemSetFriendlyName": "Witch Hunter (Blue)"
+   },
+   "PurchasableItemId": 1573,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 720,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3055,
+    "FriendlyName": "Witch Hunter Hat (Blue)",
+    "Tooltip": "A Blue Witch Hunter Hat from the Witch Hunter (Blue) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Blue Witch Hunter Hat from the Witch Hunter (Blue) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 47,
+    "ItemSetFriendlyName": "Witch Hunter (Blue)"
+   },
+   "PurchasableItemId": 1576,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 1500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 1350,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3073,
+    "FriendlyName": "Regal Crown (Black)",
+    "Tooltip": "A Black Regal Crown.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Regal Crown.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "PurchasableItemId": 1574,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 9000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 8100,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3071,
+    "FriendlyName": "Regal Crown (Gold)",
+    "Tooltip": "A Gold Regal Crown.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Gold Regal Crown.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "PurchasableItemId": 1568,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 9000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 8100,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3072,
+    "FriendlyName": "Regal Crown (White)",
+    "Tooltip": "A White Regal Crown.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A White Regal Crown.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "PurchasableItemId": 1580,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 9000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 8100,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3307,
+    "FriendlyName": "Tiny Crown",
+    "Tooltip": "a Tiny Crown.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Tiny Crown.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "PurchasableItemId": 1769,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 5500,
+     "StorefrontSaleData": {
+      "SalePercent": 50,
+      "SaleStartDate": "2021-09-05T21:00:00Z",
+      "SaleEndDate": "2021-09-06T21:00:00Z"
+     }
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 4950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2015,
+    "FriendlyName": "High Five Potion (Magic)",
+    "Tooltip": "Give magical high fives for a time.",
+    "ConsumableItemDesc": "VQSgL2pTLkWx4B3kwYG7UA",
+    "AvatarItemDesc": "A Magic High Five Potion.",
+    "AvatarItemType": null,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 4014,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "PurchasableItemId": 575,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 30,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 27,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3066,
+    "FriendlyName": "Wizard Robes (Purple)",
+    "Tooltip": "Purple Wizard Robes from the Wizard (Purple) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Purple Wizard Robes from the Wizard (Purple) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 48,
+    "ItemSetFriendlyName": "Wizard (Purple)"
+   },
+   "PurchasableItemId": 1572,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 2250,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3056,
+    "FriendlyName": "Wizard Hat (Purple)",
+    "Tooltip": "A Purple Wizard Hat from the Wizard (Purple) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Purple Wizard Hat from the Wizard (Purple) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 48,
+    "ItemSetFriendlyName": "Wizard (Purple)"
+   },
+   "PurchasableItemId": 1577,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 1500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 1350,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3070,
+    "FriendlyName": "Wizard Bracers (Purple)",
+    "Tooltip": "Purple Wizard Bracers from the Wizard (Purple) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Purple Wizard Bracers from the Wizard (Purple) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 30,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 48,
+    "ItemSetFriendlyName": "Wizard (Purple)"
+   },
+   "PurchasableItemId": 1578,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 900,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 810,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3306,
+    "FriendlyName": "Royal Cape (Black)",
+    "Tooltip": "A Black Royal Cape.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Royal Cape.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "PurchasableItemId": 1770,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 4500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3060,
+    "FriendlyName": "Royal Cape (Green)",
+    "Tooltip": "A Green Royal Cape.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Green Royal Cape.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "PurchasableItemId": 1593,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 4500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3059,
+    "FriendlyName": "Royal Cape (Blue)",
+    "Tooltip": "A Blue Royal Cape.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Blue Royal Cape.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "PurchasableItemId": 1579,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 4500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2572,
+    "FriendlyName": "Royal Cape (Purple)",
+    "Tooltip": "A Purple Royal Cape.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Purple Royal Cape.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "PurchasableItemId": 1138,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 4500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3087,
+    "FriendlyName": "Bog Monster Suit",
+    "Tooltip": "a Bog Monster Suit from the Bog Monster collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Bog Monster Suit from the Bog Monster collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 51,
+    "ItemSetFriendlyName": "Bog Monster"
+   },
+   "PurchasableItemId": 1607,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 3000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 2700,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3088,
+    "FriendlyName": "Bog Monster Wrist",
+    "Tooltip": "a Bog Monster Wrist from the Bog Monster collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Bog Monster Wrist from the Bog Monster collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 51,
+    "ItemSetFriendlyName": "Bog Monster"
+   },
+   "PurchasableItemId": 1605,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 1000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 900,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3089,
+    "FriendlyName": "Bog Monster Hood",
+    "Tooltip": "a Bog Monster Hood from the Bog Monster collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Bog Monster Hood from the Bog Monster collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 51,
+    "ItemSetFriendlyName": "Bog Monster"
+   },
+   "PurchasableItemId": 1606,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 9000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 8100,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  }
+ ],
+ "SubscriberDiscountPercent": 10,
+ "StorefrontType": 103,
+ "NextUpdate": "2222-02-22T22:22:00Z",
+ "NewUntil": "2020-01-28T21:00:00Z"
+}

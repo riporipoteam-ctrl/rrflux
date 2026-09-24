@@ -1,0 +1,344 @@
+{
+ "NewUntil": null,
+ "NextUpdate": "2222-02-22T22:22:00Z",
+ "StoreItems": [
+  {
+   "GiftDrop": {
+    "GiftDropId": 377,
+    "FriendlyName": "Paintball Goggles",
+    "Tooltip": "Paintball Goggles.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Paintball Goggles.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2320,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2316,
+    "FriendlyName": "Shutter Shades (Blue)",
+    "Tooltip": "Blue Shutter Shades.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "bu9tb-K7NEiocvZY3o7ukw,,,",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 6000,
+     "StorefrontSaleData": {
+      "SalePercent": 50,
+      "SaleStartDate": "2021-04-11T21:00:00Z",
+      "SaleEndDate": "2021-04-14T21:00:00Z"
+     }
+    }
+   ],
+   "PurchasableItemId": 2321,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 5400,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2585,
+    "FriendlyName": "Shutter Shades (Red)",
+    "Tooltip": "Red Shutter Shades.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "bu9tb-K7NEiocvZY3o7ukw,7B7vpnMTfkGLcMdHCZ_kWA,tqyzKPdDwkWq3jfZ8jZdaA,",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 6000,
+     "StorefrontSaleData": {
+      "SalePercent": 50,
+      "SaleStartDate": "2021-04-11T21:00:00Z",
+      "SaleEndDate": "2021-04-14T21:00:00Z"
+     }
+    }
+   ],
+   "PurchasableItemId": 2322,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 5400,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2233,
+    "FriendlyName": "KO Icon - Star Power",
+    "Tooltip": "When you KO someone this will appear over their head.",
+    "ConsumableItemDesc": "yvqSbK2czkS2sUCRdrGaEw",
+    "AvatarItemDesc": "a KO Icon - Star Power.",
+    "AvatarItemType": null,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 30,
+    "Context": 110000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2323,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 180,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 458,
+    "FriendlyName": "Paintball Vest (Black)",
+    "Tooltip": "A Black Paintball Vest.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Paintball Vest.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2324,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2069,
+    "FriendlyName": "Paintball Vest (Blue)",
+    "Tooltip": "A Blue Paintball Vest.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Blue Paintball Vest.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2325,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2070,
+    "FriendlyName": "Paintball Vest (Red)",
+    "Tooltip": "A Red Paintball Vest.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Red Paintball Vest.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2326,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3102,
+    "FriendlyName": "Paintball Belt",
+    "Tooltip": "a Paintball Belt.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Paintball Belt.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 30,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2327,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 720,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  }
+ ],
+ "StorefrontType": 405,
+ "SubscriberDiscountPercent": 10
+}

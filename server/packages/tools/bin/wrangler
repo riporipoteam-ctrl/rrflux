@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node "/home/hatch/workspace/goals/private-rec-room-revival-build/fluxrec/server/node_modules/.pnpm/wrangler@4.128.0/node_modules/wrangler/bin/wrangler.js" "$@"

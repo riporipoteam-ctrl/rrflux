@@ -1,0 +1,336 @@
+{
+ "NewUntil": null,
+ "NextUpdate": "2222-02-22T22:22:00Z",
+ "StoreItems": [
+  {
+   "GiftDrop": {
+    "GiftDropId": 377,
+    "FriendlyName": "Paintball Goggles",
+    "Tooltip": "Paintball Goggles.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Paintball Goggles.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2296,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2062,
+    "FriendlyName": "Square Glasses (Blue)",
+    "Tooltip": "Blue Square Glasses.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Blue Square Glasses.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 5500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2297,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 4950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2061,
+    "FriendlyName": "Square Glasses (Red)",
+    "Tooltip": "Red Square Glasses.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Red Square Glasses.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 50,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 5500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2298,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 4950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2075,
+    "FriendlyName": "KO Icon - Winged Skull",
+    "Tooltip": "When you KO someone this will appear over their head.",
+    "ConsumableItemDesc": "U38Qe6rhEk6mFvArHfYjng",
+    "AvatarItemDesc": "a KO Icon - Winged Skull.",
+    "AvatarItemType": null,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 110000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 100,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2299,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 90,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 458,
+    "FriendlyName": "Paintball Vest (Black)",
+    "Tooltip": "A Black Paintball Vest.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Paintball Vest.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2300,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2069,
+    "FriendlyName": "Paintball Vest (Blue)",
+    "Tooltip": "A Blue Paintball Vest.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Blue Paintball Vest.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2301,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2070,
+    "FriendlyName": "Paintball Vest (Red)",
+    "Tooltip": "A Red Paintball Vest.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Red Paintball Vest.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 20,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 550,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2302,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 495,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 3102,
+    "FriendlyName": "Paintball Belt",
+    "Tooltip": "a Paintball Belt.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Paintball Belt.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 30,
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": null,
+    "ItemSetFriendlyName": ""
+   },
+   "IsFeatured": false,
+   "NewUntil": null,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 800,
+     "StorefrontSaleData": null
+    }
+   ],
+   "PurchasableItemId": 2303,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 720,
+     "StorefrontSaleData": null
+    }
+   ],
+   "Type": 0
+  }
+ ],
+ "StorefrontType": 402,
+ "SubscriberDiscountPercent": 10
+}

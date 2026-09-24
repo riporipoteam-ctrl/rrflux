@@ -1,0 +1,15 @@
+#!/bin/bash
+set -eu
+
+# Script to get version for Workers apps
+
+if ! command -v jq >/dev/null; then
+	echo "ERROR: jq is required for getting the version of the Worker from package.json. Please install jq."
+	exit 1
+fi
+
+pkg_json_version=$(jq -r '.version' package.json)
+# Flux Rec fork: no .git in this tree — fall back to "nogit" when git is absent.
+gitsha=$(git log -1 --pretty=format:%h 2>/dev/null || echo "nogit")
+
+echo "$pkg_json_version-$gitsha"

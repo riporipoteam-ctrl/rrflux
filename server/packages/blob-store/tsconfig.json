@@ -1,0 +1,9 @@
+{
+	"extends": "@repo/typescript-config/workers-lib.json",
+	// blob-store has plain node-based unit tests (no workers pool), so pull in only
+	// the D1/Workers ambient types (drop @cloudflare/vitest-pool-workers/types that
+	// workers-lib.json adds).
+	"compilerOptions": {
+		"types": ["@cloudflare/workers-types", "node"]
+	}
+}

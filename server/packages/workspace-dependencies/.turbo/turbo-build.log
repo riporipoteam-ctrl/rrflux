@@ -1,0 +1,4 @@
+
+> @repo/workspace-dependencies@0.1.3 build /home/hatch/workspace/goals/private-rec-room-revival-build/fluxrec/server/packages/workspace-dependencies
+> runx build lib yaml.ts zod.ts zx.ts -d src -f cjs --platform node
+

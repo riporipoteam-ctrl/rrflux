@@ -1,0 +1,33 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "videos",
+	"main": "src/videos.app.ts",
+	"compatibility_date": "2026-06-16",
+	"compatibility_flags": ["nodejs_compat"],
+	// No D1, KV, R2, or secrets bindings: the video catalog is a static map in
+	// code plus the VIDEOS_MAP var override below. This worker is intentionally
+	// public (no auth) — the game client resolves board videos anonymously,
+	// exactly like it fetches the discovery document.
+	//
+	// The "local" placeholder convention is unused here because there are no
+	// resource ids to splice in; the deploy wrapper (run-wrangler-deploy) deploys
+	// this worker onto videos.<domain> from its directory name, which is also
+	// the subdomain the `ns` worker advertises to the client as `Videos`.
+	"upload_source_maps": true,
+	"observability": {
+		"logs": {
+			"enabled": true,
+			"head_sampling_rate": 1 // 100%
+		}
+	},
+	"vars": {
+		"ENVIRONMENT": "development", // overridden during deployment
+		"SENTRY_RELEASE": "unknown", // overridden during deployment
+		// Optional JSON object mapping video ids (or YouTube ids) to direct MP4
+		// URLs, merged OVER the built-in catalog in src/videos.app.ts. The URLs
+		// are public, so this is a plain var, not a secret. Example:
+		//   {"dQw4w9WgXcQ": "https://cdn.example.com/videos/never-gonna.mp4"}
+		// Values may also be {"title": "...", "url": "..."} objects.
+		"VIDEOS_MAP": "{}"
+	}
+}

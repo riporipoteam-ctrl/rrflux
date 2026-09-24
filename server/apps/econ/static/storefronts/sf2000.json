@@ -1,0 +1,45 @@
+{
+ "NextUpdate": "2226-06-14T00:12:20.1324853Z",
+ "StoreItems": [
+  {
+   "GiftDrop": {
+    "AvatarItemDesc": "A Grey Archer Quiver.",
+    "AvatarItemType": 0,
+    "ConsumableItemDesc": "",
+    "Context": 0,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "EquipmentModificationGuid": "",
+    "EquipmentPrefabName": "",
+    "FriendlyName": "Archer Quiver (Grey)",
+    "GiftDropId": 7,
+    "IsQuery": false,
+    "ItemSetFriendlyName": "",
+    "ItemSetId": 0,
+    "Rarity": 50,
+    "SubscribersOnly": false,
+    "Tooltip": "",
+    "Unique": true
+   },
+   "IsFeatured": false,
+   "Prices": [
+    {
+     "CurrencyType": 2,
+     "Price": 3000,
+     "StorefrontSaleData": null,
+     "Type": 0
+    }
+   ],
+   "PurchasableItemId": 7,
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 2,
+     "Price": 3000,
+     "StorefrontSaleData": null,
+     "Type": 0
+    }
+   ],
+   "Type": 0
+  }
+ ]
+}

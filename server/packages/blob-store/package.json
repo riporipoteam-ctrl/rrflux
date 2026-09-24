@@ -1,0 +1,20 @@
+{
+	"devDependencies": {
+		"@cloudflare/workers-types": "4.20260630.1",
+		"@repo/tools": "workspace:*",
+		"@repo/typescript-config": "workspace:*",
+		"@types/node": "26.0.1",
+		"vitest": "4.1.9"
+	},
+	"main": "src/index.ts",
+	"name": "@repo/blob-store",
+	"private": true,
+	"scripts": {
+		"check:lint": "run-oxlint",
+		"check:types": "run-tsc",
+		"test": "run-vitest"
+	},
+	"sideEffects": false,
+	"type": "module",
+	"version": "0.1.0"
+}

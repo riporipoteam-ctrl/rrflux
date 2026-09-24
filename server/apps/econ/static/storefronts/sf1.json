@@ -1,0 +1,1648 @@
+{
+ "StoreItems": [
+  {
+   "GiftDrop": {
+    "GiftDropId": 3852,
+    "FriendlyName": "Bucket Skin (SciFi)",
+    "Tooltip": "A SciFi skin for your bucket from the Carpet Couture collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A SciFi skin for your bucket from the Carpet Couture collection.",
+    "AvatarItemType": null,
+    "EquipmentPrefabName": "[Bucket]",
+    "EquipmentModificationGuid": "VW3WV6oQOkqYshf1xc9n3A",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 39,
+    "ItemSetFriendlyName": "Carpet Couture"
+   },
+   "PurchasableItemId": 2100,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 100000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 100000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": "2021-07-02T21:00:00Z"
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1901,
+    "FriendlyName": "RECS Shirt (White)",
+    "Tooltip": "A White RECS Shirt from the Hangar Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A White RECS Shirt from the Hangar Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 36,
+    "ItemSetFriendlyName": "Hangar Tees"
+   },
+   "PurchasableItemId": 475,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 700,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 700,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1915,
+    "FriendlyName": "RECS Shirt (Green)",
+    "Tooltip": "A Green RECS Shirt from the Hangar Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Green RECS Shirt from the Hangar Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 36,
+    "ItemSetFriendlyName": "Hangar Tees"
+   },
+   "PurchasableItemId": 487,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 700,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 700,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1903,
+    "FriendlyName": "Robo Logo Shirt (Pink)",
+    "Tooltip": "A Pink Robo Logo Shirt from the Hangar Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Pink Robo Logo Shirt from the Hangar Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 36,
+    "ItemSetFriendlyName": "Hangar Tees"
+   },
+   "PurchasableItemId": 477,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 700,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 700,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1904,
+    "FriendlyName": "Robo Logo Shirt (Blue)",
+    "Tooltip": "A Blue Robo Logo Shirt from the Hangar Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Blue Robo Logo Shirt from the Hangar Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 36,
+    "ItemSetFriendlyName": "Hangar Tees"
+   },
+   "PurchasableItemId": 478,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 700,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 700,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1905,
+    "FriendlyName": "Squad Goals Shirt",
+    "Tooltip": "a Squad Goals Shirt from the Hangar Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Squad Goals Shirt from the Hangar Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 36,
+    "ItemSetFriendlyName": "Hangar Tees"
+   },
+   "PurchasableItemId": 479,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1908,
+    "FriendlyName": "Hang In There Shirt",
+    "Tooltip": "a Hang In There Shirt from the Hangar Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Hang In There Shirt from the Hangar Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 36,
+    "ItemSetFriendlyName": "Hangar Tees"
+   },
+   "PurchasableItemId": 482,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1895,
+    "FriendlyName": "KO Skull Shirt (Black)",
+    "Tooltip": "A Black KO Skull Shirt from the Hangar Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black KO Skull Shirt from the Hangar Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 36,
+    "ItemSetFriendlyName": "Hangar Tees"
+   },
+   "PurchasableItemId": 470,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1907,
+    "FriendlyName": "KO Skull Shirt (Pink)",
+    "Tooltip": "A Pink KO Skull Shirt from the Hangar Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Pink KO Skull Shirt from the Hangar Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 36,
+    "ItemSetFriendlyName": "Hangar Tees"
+   },
+   "PurchasableItemId": 481,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2298,
+    "FriendlyName": "Cyber Junk City Shirt",
+    "Tooltip": "a Cyber Junk City Shirt from the Cyber Junk Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Cyber Junk City Shirt from the Cyber Junk Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 37,
+    "ItemSetFriendlyName": "Cyber Junk Tees"
+   },
+   "PurchasableItemId": 848,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2293,
+    "FriendlyName": "Cyber Trash Shirt (Yellow)",
+    "Tooltip": "A Yellow Cyber Trash Shirt from the Cyber Junk Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Yellow Cyber Trash Shirt from the Cyber Junk Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 37,
+    "ItemSetFriendlyName": "Cyber Junk Tees"
+   },
+   "PurchasableItemId": 847,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 7500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 7500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2294,
+    "FriendlyName": "Cyber Trash Shirt (Black)",
+    "Tooltip": "A Black Cyber Trash Shirt from the Cyber Junk Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black Cyber Trash Shirt from the Cyber Junk Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 37,
+    "ItemSetFriendlyName": "Cyber Junk Tees"
+   },
+   "PurchasableItemId": 849,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 7500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 7500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2292,
+    "FriendlyName": "Emerald Syndicate Shirt",
+    "Tooltip": "an Emerald Syndicate Shirt from the Cyber Junk Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "an Emerald Syndicate Shirt from the Cyber Junk Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 37,
+    "ItemSetFriendlyName": "Cyber Junk Tees"
+   },
+   "PurchasableItemId": 843,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2296,
+    "FriendlyName": "Laser Graffiti Shirt",
+    "Tooltip": "a Laser Graffiti Shirt from the Cyber Junk Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Laser Graffiti Shirt from the Cyber Junk Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 37,
+    "ItemSetFriendlyName": "Cyber Junk Tees"
+   },
+   "PurchasableItemId": 845,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 3000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 3000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2297,
+    "FriendlyName": "Hack Graffiti Shirt",
+    "Tooltip": "a Hack Graffiti Shirt from the Cyber Junk Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Hack Graffiti Shirt from the Cyber Junk Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 37,
+    "ItemSetFriendlyName": "Cyber Junk Tees"
+   },
+   "PurchasableItemId": 844,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 3000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 3000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2291,
+    "FriendlyName": "Rebel Rose Shirt",
+    "Tooltip": "a Rebel Rose Shirt from the Cyber Junk Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Rebel Rose Shirt from the Cyber Junk Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 37,
+    "ItemSetFriendlyName": "Cyber Junk Tees"
+   },
+   "PurchasableItemId": 842,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 5000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1906,
+    "FriendlyName": "Alpaca Shirt",
+    "Tooltip": "an Alpaca Shirt from the Premium Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "an Alpaca Shirt from the Premium Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 38,
+    "ItemSetFriendlyName": "Premium Tees"
+   },
+   "PurchasableItemId": 480,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 10000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 10000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1902,
+    "FriendlyName": "Laser Unicorn Shirt",
+    "Tooltip": "a Laser Unicorn Shirt from the Premium Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Laser Unicorn Shirt from the Premium Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 38,
+    "ItemSetFriendlyName": "Premium Tees"
+   },
+   "PurchasableItemId": 476,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 10000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 10000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2295,
+    "FriendlyName": "No Laser Ham Shirt",
+    "Tooltip": "a No Laser Ham Shirt from the Premium Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a No Laser Ham Shirt from the Premium Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 38,
+    "ItemSetFriendlyName": "Premium Tees"
+   },
+   "PurchasableItemId": 846,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 15000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 15000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2299,
+    "FriendlyName": "Hyper Noodle Shirt",
+    "Tooltip": "a Hyper Noodle Shirt from the Premium Tees collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "a Hyper Noodle Shirt from the Premium Tees collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 38,
+    "ItemSetFriendlyName": "Premium Tees"
+   },
+   "PurchasableItemId": 850,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 25000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 25000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2017,
+    "FriendlyName": "High Five Potion (Laser)",
+    "Tooltip": "Give futuristic high fives for a time.",
+    "ConsumableItemDesc": "xHOwjwpXd0GDkvBz2VqieA",
+    "AvatarItemDesc": "A Laser High Five Potion from the Premium Tees collection.",
+    "AvatarItemType": null,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 38,
+    "ItemSetFriendlyName": "Premium Tees"
+   },
+   "PurchasableItemId": 577,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 150,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 150,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1897,
+    "FriendlyName": "Headband (SciFi)",
+    "Tooltip": "A SciFi Headband from the Carpet Couture collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A SciFi Headband from the Carpet Couture collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 39,
+    "ItemSetFriendlyName": "Carpet Couture"
+   },
+   "PurchasableItemId": 472,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1898,
+    "FriendlyName": "Wristbands (SciFi)",
+    "Tooltip": "SciFi Wristbands from the Carpet Couture collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "SciFi Wristbands from the Carpet Couture collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 39,
+    "ItemSetFriendlyName": "Carpet Couture"
+   },
+   "PurchasableItemId": 473,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 200,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2046,
+    "FriendlyName": "Bow (SciFi)",
+    "Tooltip": "A SciFi Bow from the Carpet Couture collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A SciFi Bow from the Carpet Couture collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 39,
+    "ItemSetFriendlyName": "Carpet Couture"
+   },
+   "PurchasableItemId": 603,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2060,
+    "FriendlyName": "Top Hat (Black, SciFi)",
+    "Tooltip": "A Black, SciFi Top Hat from the Carpet Couture collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Black, SciFi Top Hat from the Carpet Couture collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 39,
+    "ItemSetFriendlyName": "Carpet Couture"
+   },
+   "PurchasableItemId": 617,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 25000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 25000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2063,
+    "FriendlyName": "Bowtie (SciFi)",
+    "Tooltip": "A SciFi Bowtie from the Carpet Couture collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A SciFi Bowtie from the Carpet Couture collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 39,
+    "ItemSetFriendlyName": "Carpet Couture"
+   },
+   "PurchasableItemId": 620,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2064,
+    "FriendlyName": "Business Tie (SciFi)",
+    "Tooltip": "A SciFi Business Tie from the Carpet Couture collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A SciFi Business Tie from the Carpet Couture collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 39,
+    "ItemSetFriendlyName": "Carpet Couture"
+   },
+   "PurchasableItemId": 621,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 1000,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2028,
+    "FriendlyName": "Film (Jumbotron)",
+    "Tooltip": "Take some photos with Jumbotron!",
+    "ConsumableItemDesc": "Il4VmrnjDkqjmjzddqoIEw",
+    "AvatarItemDesc": "A Jumbotron Film from the Premium Tees collection.",
+    "AvatarItemType": null,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": 0,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 38,
+    "ItemSetFriendlyName": "Premium Tees"
+   },
+   "PurchasableItemId": 585,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 100,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 100,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1910,
+    "FriendlyName": "Laser Tag Sensors (Blue)",
+    "Tooltip": "Blue Laser Tag Sensors from the Laser Tag Outfit (Blue) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Blue Laser Tag Sensors from the Laser Tag Outfit (Blue) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 40,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Blue)"
+   },
+   "PurchasableItemId": 484,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1918,
+    "FriendlyName": "Laser Tag Gloves (Blue)",
+    "Tooltip": "Blue Laser Tag Gloves from the Laser Tag Outfit (Blue) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Blue Laser Tag Gloves from the Laser Tag Outfit (Blue) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 40,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Blue)"
+   },
+   "PurchasableItemId": 489,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2669,
+    "FriendlyName": "Laser Tag Visor (Blue)",
+    "Tooltip": "A Blue Laser Tag Visor from the Laser Tag Outfit (Blue) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Blue Laser Tag Visor from the Laser Tag Outfit (Blue) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 40,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Blue)"
+   },
+   "PurchasableItemId": 1190,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1909,
+    "FriendlyName": "Laser Tag Sensors (Pink)",
+    "Tooltip": "Pink Laser Tag Sensors from the Laser Tag Outfit (Pink) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Pink Laser Tag Sensors from the Laser Tag Outfit (Pink) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 43,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Pink)"
+   },
+   "PurchasableItemId": 483,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1916,
+    "FriendlyName": "Laser Tag Gloves (Pink)",
+    "Tooltip": "Pink Laser Tag Gloves from the Laser Tag Outfit (Pink) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Pink Laser Tag Gloves from the Laser Tag Outfit (Pink) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 43,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Pink)"
+   },
+   "PurchasableItemId": 488,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 1911,
+    "FriendlyName": "Laser Tag Visor (Pink)",
+    "Tooltip": "A Pink Laser Tag Visor from the Laser Tag Outfit (Pink) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Pink Laser Tag Visor from the Laser Tag Outfit (Pink) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 43,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Pink)"
+   },
+   "PurchasableItemId": 485,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2303,
+    "FriendlyName": "Laser Tag Sensors (Teal)",
+    "Tooltip": "Teal Laser Tag Sensors from the Laser Tag Outfit (Teal) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Teal Laser Tag Sensors from the Laser Tag Outfit (Teal) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 42,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Teal)"
+   },
+   "PurchasableItemId": 838,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2305,
+    "FriendlyName": "Laser Tag Gloves (Teal)",
+    "Tooltip": "Teal Laser Tag Gloves from the Laser Tag Outfit (Teal) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Teal Laser Tag Gloves from the Laser Tag Outfit (Teal) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 42,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Teal)"
+   },
+   "PurchasableItemId": 840,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2301,
+    "FriendlyName": "Laser Tag Visor (Teal)",
+    "Tooltip": "A Teal Laser Tag Visor from the Laser Tag Outfit (Teal) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "A Teal Laser Tag Visor from the Laser Tag Outfit (Teal) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 42,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Teal)"
+   },
+   "PurchasableItemId": 836,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2302,
+    "FriendlyName": "Laser Tag Sensors (Orange)",
+    "Tooltip": "Orange Laser Tag Sensors from the Laser Tag Outfit (Orange) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Orange Laser Tag Sensors from the Laser Tag Outfit (Orange) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 41,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Orange)"
+   },
+   "PurchasableItemId": 839,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2304,
+    "FriendlyName": "Laser Tag Gloves (Orange)",
+    "Tooltip": "Orange Laser Tag Gloves from the Laser Tag Outfit (Orange) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "Orange Laser Tag Gloves from the Laser Tag Outfit (Orange) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 41,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Orange)"
+   },
+   "PurchasableItemId": 841,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 950,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  },
+  {
+   "GiftDrop": {
+    "GiftDropId": 2300,
+    "FriendlyName": "Laser Tag Visor (Orange)",
+    "Tooltip": "An Orange Laser Tag Visor from the Laser Tag Outfit (Orange) collection.",
+    "ConsumableItemDesc": "",
+    "AvatarItemDesc": "An Orange Laser Tag Visor from the Laser Tag Outfit (Orange) collection.",
+    "AvatarItemType": 0,
+    "EquipmentPrefabName": "",
+    "EquipmentModificationGuid": "",
+    "IsQuery": false,
+    "QueryRedirectContext": null,
+    "QueryRedirectRarity": null,
+    "Unique": false,
+    "SubscribersOnly": false,
+    "Rarity": -1,
+    "Context": 100000,
+    "Currency": 0,
+    "CurrencyType": 0,
+    "ItemSetId": 41,
+    "ItemSetFriendlyName": "Laser Tag Outfit (Orange)"
+   },
+   "PurchasableItemId": 837,
+   "Type": 0,
+   "Prices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "SubscriberPrices": [
+    {
+     "CurrencyType": 1,
+     "Price": 2500,
+     "StorefrontSaleData": null
+    }
+   ],
+   "IsFeatured": false,
+   "NewUntil": null
+  }
+ ],
+ "SubscriberDiscountPercent": 10,
+ "StorefrontType": 1,
+ "NextUpdate": "2222-02-22T22:22:00Z",
+ "NewUntil": null
+}
