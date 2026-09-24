@@ -2,8 +2,8 @@ name: game-flow-explore
 # Manual-only exploratory runs: boots the real 2023 Rec Room client on a
 # windows-2022 runner (WARP software rendering), optionally applies the Flux
 # Rec logo bundle, screenshots the account menu, optionally clicks at up to
-# nine client-relative coordinates in sequence (screenshot after each), can
-# type text after the fourth and sixth clicks, and screenshots the result.
+# three client-relative coordinates in sequence (with a screenshot after the
+# third) and screenshots the result.
 on:
   workflow_dispatch:
     inputs:
@@ -27,6 +27,10 @@ on:
         description: 'Second client-relative Y to click (0 = no second click)'
         required: false
         default: '0'
+      mid_click_wait:
+        description: 'Seconds to wait between first and second click'
+        required: false
+        default: '20'
       click3_x:
         description: 'Third client-relative X to click (0 = no third click)'
         required: false
@@ -35,6 +39,10 @@ on:
         description: 'Third client-relative Y to click (0 = no third click)'
         required: false
         default: '0'
+      click3_wait:
+        description: 'Seconds to wait between second and third click'
+        required: false
+        default: '20'
       click4_x:
         description: 'Fourth client-relative X to click (0 = no fourth click)'
         required: false
@@ -43,58 +51,14 @@ on:
         description: 'Fourth client-relative Y to click (0 = no fourth click)'
         required: false
         default: '0'
-      click5_x:
-        description: 'Fifth client-relative X to click (0 = no fifth click)'
+      click4_wait:
+        description: 'Seconds to wait between third and fourth click'
         required: false
-        default: '0'
-      click5_y:
-        description: 'Fifth client-relative Y to click (0 = no fifth click)'
-        required: false
-        default: '0'
+        default: '20'
       post_click_wait:
         description: 'Seconds to wait after click before final screenshot'
         required: false
         default: '60'
-      type1_text:
-        description: 'Text to type after the fourth click (0/empty = no typing)'
-        required: false
-        default: ''
-      type2_text:
-        description: 'Text to type after the sixth click (0/empty = no typing)'
-        required: false
-        default: ''
-      click6_x:
-        description: 'Sixth client-relative X to click (0 = no sixth click)'
-        required: false
-        default: '0'
-      click6_y:
-        description: 'Sixth client-relative Y to click (0 = no sixth click)'
-        required: false
-        default: '0'
-      click7_x:
-        description: 'Seventh client-relative X to click (0 = no seventh click)'
-        required: false
-        default: '0'
-      click7_y:
-        description: 'Seventh client-relative Y to click (0 = no seventh click)'
-        required: false
-        default: '0'
-      click8_x:
-        description: 'Eighth client-relative X to click (0 = no eighth click)'
-        required: false
-        default: '0'
-      click8_y:
-        description: 'Eighth client-relative Y to click (0 = no eighth click)'
-        required: false
-        default: '0'
-      click9_x:
-        description: 'Ninth client-relative X to click (0 = no ninth click)'
-        required: false
-        default: '0'
-      click9_y:
-        description: 'Ninth client-relative Y to click (0 = no ninth click)'
-        required: false
-        default: '0'
 
 jobs:
   test:
@@ -302,7 +266,7 @@ jobs:
         if: ${{ inputs.click2_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"20")
+          Start-Sleep -Seconds ([int]"${{ inputs.mid_click_wait }}")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
@@ -340,7 +304,7 @@ jobs:
         if: ${{ inputs.click3_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"45")
+          Start-Sleep -Seconds ([int]"${{ inputs.click3_wait }}")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
@@ -378,7 +342,7 @@ jobs:
         if: ${{ inputs.click4_x != '0' }}
         shell: pwsh
         run: |
-          Start-Sleep -Seconds ([int]"20")
+          Start-Sleep -Seconds ([int]"${{ inputs.click4_wait }}")
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
             using System; using System.Runtime.InteropServices;
@@ -411,250 +375,6 @@ jobs:
           $bmp.Save("D:\shots\shot_mid4.png", [System.Drawing.Imaging.ImageFormat]::Png)
           $g.Dispose(); $bmp.Dispose()
           Write-Host "saved shot_mid4.png"
-
-      - name: Type text 1 (after fourth click)
-        if: ${{ inputs.type1_text != '' }}
-        shell: pwsh
-        run: |
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type @"
-            using System; using System.Runtime.InteropServices;
-            public class W32t1 {
-              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-            }
-          "@
-          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($p -and $p.MainWindowHandle -ne 0) {
-            [W32t1]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-            Start-Sleep -Seconds 2
-            [System.Windows.Forms.SendKeys]::SendWait("${{ inputs.type1_text }}")
-            Write-Host "typed text1"
-            Start-Sleep -Seconds 3
-          } else { Write-Host "game window not found, no typing" }
-          Add-Type -AssemblyName System.Drawing
-          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
-          $bmp.Save("D:\shots\shot_type1.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          $g.Dispose(); $bmp.Dispose()
-          Write-Host "saved shot_type1.png"
-
-      - name: Fifth click at client-relative coordinate
-        if: ${{ inputs.click5_x != '0' }}
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds ([int]"30")
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type @"
-            using System; using System.Runtime.InteropServices;
-            public class W32c5 {
-              [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
-              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-              [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
-              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
-            }
-          "@
-          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($p -and $p.MainWindowHandle -ne 0) {
-            [W32c5]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-            Start-Sleep -Seconds 2
-            $pt = New-Object W32c5+POINT
-            $pt.X = [int]"${{ inputs.click5_x }}"; $pt.Y = [int]"${{ inputs.click5_y }}"
-            [W32c5]::ClientToScreen($p.MainWindowHandle, [ref]$pt) | Out-Null
-            Write-Host "fifth click at screen ($($pt.X),$($pt.Y))"
-            [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($pt.X, $pt.Y)
-            Start-Sleep -Milliseconds 500
-            [W32c5]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 150
-            [W32c5]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-            Write-Host "fifth click done"
-          } else { Write-Host "game window not found, no fifth click" }
-          Add-Type -AssemblyName System.Drawing
-          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
-          $bmp.Save("D:\shots\shot_mid5.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          $g.Dispose(); $bmp.Dispose()
-          Write-Host "saved shot_mid5.png"
-
-      - name: Sixth click at client-relative coordinate
-        if: ${{ inputs.click6_x != '0' }}
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds ([int]"10")
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type @"
-            using System; using System.Runtime.InteropServices;
-            public class W32c6 {
-              [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
-              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-              [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
-              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
-            }
-          "@
-          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($p -and $p.MainWindowHandle -ne 0) {
-            [W32c6]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-            Start-Sleep -Seconds 2
-            $pt = New-Object W32c6+POINT
-            $pt.X = [int]"${{ inputs.click6_x }}"; $pt.Y = [int]"${{ inputs.click6_y }}"
-            [W32c6]::ClientToScreen($p.MainWindowHandle, [ref]$pt) | Out-Null
-            Write-Host "sixth click at screen ($($pt.X),$($pt.Y))"
-            [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($pt.X, $pt.Y)
-            Start-Sleep -Milliseconds 500
-            [W32c6]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 150
-            [W32c6]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-            Write-Host "sixth click done"
-          } else { Write-Host "game window not found, no sixth click" }
-          Add-Type -AssemblyName System.Drawing
-          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
-          $bmp.Save("D:\shots\shot_mid6.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          $g.Dispose(); $bmp.Dispose()
-          Write-Host "saved shot_mid6.png"
-
-      - name: Type text 2 (after sixth click)
-        if: ${{ inputs.type2_text != '' }}
-        shell: pwsh
-        run: |
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type @"
-            using System; using System.Runtime.InteropServices;
-            public class W32t2 {
-              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-            }
-          "@
-          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($p -and $p.MainWindowHandle -ne 0) {
-            [W32t2]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-            Start-Sleep -Seconds 2
-            [System.Windows.Forms.SendKeys]::SendWait("${{ inputs.type2_text }}")
-            Write-Host "typed text2"
-            Start-Sleep -Seconds 3
-          } else { Write-Host "game window not found, no typing" }
-          Add-Type -AssemblyName System.Drawing
-          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
-          $bmp.Save("D:\shots\shot_type2.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          $g.Dispose(); $bmp.Dispose()
-          Write-Host "saved shot_type2.png"
-
-      - name: Seventh click at client-relative coordinate
-        if: ${{ inputs.click7_x != '0' }}
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds ([int]"30")
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type @"
-            using System; using System.Runtime.InteropServices;
-            public class W32c7 {
-              [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
-              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-              [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
-              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
-            }
-          "@
-          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($p -and $p.MainWindowHandle -ne 0) {
-            [W32c7]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-            Start-Sleep -Seconds 2
-            $pt = New-Object W32c7+POINT
-            $pt.X = [int]"${{ inputs.click7_x }}"; $pt.Y = [int]"${{ inputs.click7_y }}"
-            [W32c7]::ClientToScreen($p.MainWindowHandle, [ref]$pt) | Out-Null
-            Write-Host "seventh click at screen ($($pt.X),$($pt.Y))"
-            [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($pt.X, $pt.Y)
-            Start-Sleep -Milliseconds 500
-            [W32c7]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 150
-            [W32c7]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-            Write-Host "seventh click done"
-          } else { Write-Host "game window not found, no seventh click" }
-          Add-Type -AssemblyName System.Drawing
-          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
-          $bmp.Save("D:\shots\shot_mid7.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          $g.Dispose(); $bmp.Dispose()
-          Write-Host "saved shot_mid7.png"
-
-      - name: Eighth click at client-relative coordinate
-        if: ${{ inputs.click8_x != '0' }}
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds ([int]"20")
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type @"
-            using System; using System.Runtime.InteropServices;
-            public class W32c8 {
-              [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
-              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-              [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
-              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
-            }
-          "@
-          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($p -and $p.MainWindowHandle -ne 0) {
-            [W32c8]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-            Start-Sleep -Seconds 2
-            $pt = New-Object W32c8+POINT
-            $pt.X = [int]"${{ inputs.click8_x }}"; $pt.Y = [int]"${{ inputs.click8_y }}"
-            [W32c8]::ClientToScreen($p.MainWindowHandle, [ref]$pt) | Out-Null
-            Write-Host "eighth click at screen ($($pt.X),$($pt.Y))"
-            [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($pt.X, $pt.Y)
-            Start-Sleep -Milliseconds 500
-            [W32c8]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 150
-            [W32c8]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-            Write-Host "eighth click done"
-          } else { Write-Host "game window not found, no eighth click" }
-          Add-Type -AssemblyName System.Drawing
-          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
-          $bmp.Save("D:\shots\shot_mid8.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          $g.Dispose(); $bmp.Dispose()
-          Write-Host "saved shot_mid8.png"
-
-      - name: Ninth click at client-relative coordinate
-        if: ${{ inputs.click9_x != '0' }}
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds ([int]"20")
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type @"
-            using System; using System.Runtime.InteropServices;
-            public class W32c9 {
-              [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
-              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-              [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
-              [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
-            }
-          "@
-          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($p -and $p.MainWindowHandle -ne 0) {
-            [W32c9]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-            Start-Sleep -Seconds 2
-            $pt = New-Object W32c9+POINT
-            $pt.X = [int]"${{ inputs.click9_x }}"; $pt.Y = [int]"${{ inputs.click9_y }}"
-            [W32c9]::ClientToScreen($p.MainWindowHandle, [ref]$pt) | Out-Null
-            Write-Host "ninth click at screen ($($pt.X),$($pt.Y))"
-            [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($pt.X, $pt.Y)
-            Start-Sleep -Milliseconds 500
-            [W32c9]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 150
-            [W32c9]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-            Write-Host "ninth click done"
-          } else { Write-Host "game window not found, no ninth click" }
-          Add-Type -AssemblyName System.Drawing
-          $bmp = New-Object System.Drawing.Bitmap(1280, 720)
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
-          $bmp.Save("D:\shots\shot_mid9.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          $g.Dispose(); $bmp.Dispose()
-          Write-Host "saved shot_mid9.png"
 
       - name: Wait then screenshot after
         shell: pwsh
