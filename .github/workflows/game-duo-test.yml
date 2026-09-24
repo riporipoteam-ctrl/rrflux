@@ -155,9 +155,21 @@ jobs:
               [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
               [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
               [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
+              [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr e);
               [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
             }
           "@
+          $VK = @{ W=0x57; A=0x41; S=0x53; D=0x44; F=0x46; E=0x45; SPACE=0x20 }
+          function Hold-Key($keyName, $seconds) {
+            $vk = $VK[$keyName.ToUpper()]
+            if (-not $vk) { Write-Host "unknown hold key: $keyName"; return }
+            Focus-Game
+            [WX]::keybd_event($vk, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Seconds ([int]$seconds)
+            [WX]::keybd_event($vk, 0, 0x0002, [UIntPtr]::Zero)
+            Start-Sleep -Seconds 1
+            Write-Host "held $keyName for ${seconds}s"
+          }
           function GameProc { Get-Process -Id $ProcId -ErrorAction SilentlyContinue }
           function Focus-Game {
             $p = GameProc
@@ -200,6 +212,7 @@ jobs:
               'click' { $xy = $arg -split ','; Click-At $xy[0] $xy[1]; Start-Sleep -Seconds 3 }
               'type' { Type-Text $arg }
               'key' { Focus-Game; [System.Windows.Forms.SendKeys]::SendWait($arg); Start-Sleep -Seconds 3 }
+              'hold' { $hp = $arg -split ','; Hold-Key $hp[0] $hp[1]; Start-Sleep -Seconds 2 }
               'wait' { Start-Sleep -Seconds ([int]$arg) }
               'shot' { Shot $arg }
               'front' { Focus-Game }
