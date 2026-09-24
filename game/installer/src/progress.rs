@@ -100,6 +100,13 @@ impl Progress {
         self.send(percent, stage);
     }
 
+    /// Replace the status-line text without moving the bar.
+    /// Used for live download speed / ETA readouts.
+    pub fn set_text(&self, text: String) {
+        let pct = self.inner.last.lock().map(|l| l.0).unwrap_or(0);
+        self.send(pct, &text);
+    }
+
     /// Install finished: tell the GUI to close its window.
     pub fn done(&self) {
         // "done" is the GUI's close sentinel; the (100, "done") pair is
