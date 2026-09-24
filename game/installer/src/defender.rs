@@ -115,8 +115,16 @@ pub fn ns_hosts_entry_present(hosts_content: &str) -> bool {
         // First token must be an IP literal; the hostname must be a
         // separate token on the same line.
         let ip = parts.next().unwrap_or("");
-        if ip.parse::<std::net::IpAddr>().is_ok() && parts.any(|tok| tok == NS_DEAD_HOST) {
-            return true;
+        if let Ok(addr) = ip.parse::<std::net::IpAddr>() {
+            // Reject loopback: ns.rec.net never resolves to localhost. A
+            // 127.x.x.x mapping (e.g. from hostile test setups) is wrong and
+            // must be treated as absent so it gets rewritten with the real IP.
+            if addr.is_loopback() {
+                continue;
+            }
+            if parts.any(|tok| tok == NS_DEAD_HOST) {
+                return true;
+            }
         }
     }
     false
@@ -557,12 +565,15 @@ mod tests {
 
     #[test]
     fn ns_hosts_entry_present_detects_any_mapping() {
-        // Any IP mapping counts — the backend is anycast, so the stored IP
-        // legitimately differs from a fresh DNS answer.
+        // Any non-loopback IP mapping counts — the backend is anycast, so the
+        // stored IP legitimately differs from a fresh DNS answer. Loopback
+        // (127.x.x.x, ::1) is never valid for ns.rec.net and is treated as
+        // absent so it gets rewritten.
         let hosts = "# comment\n127.0.0.1 localhost\n93.184.216.34 ns.rec.net # Flux Rec backend\n";
         assert!(ns_hosts_entry_present(hosts));
         assert!(ns_hosts_entry_present("203.0.113.7 ns.rec.net\n"));
-        assert!(ns_hosts_entry_present("127.0.0.1 ns.rec.net\n"));
+        assert!(!ns_hosts_entry_present("127.0.0.1 ns.rec.net\n"));
+        assert!(!ns_hosts_entry_present("::1 ns.rec.net\n"));
     }
 
     #[test]

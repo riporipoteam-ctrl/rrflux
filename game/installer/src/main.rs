@@ -44,6 +44,7 @@ mod bypass;
 mod defender; // AV hardening (2026-09-24): Defender exclusions, quarantine self-heal, Unblock-File
 mod gui;
 mod launcher;
+mod patches; // Flux Rec client patches: welcome text, YouTube IDs (2026-09-24)
 mod progress;
 mod segmented;
 mod stealth;
@@ -870,6 +871,11 @@ async fn run_install(
     if let Err(e) = apply_logo_bundle(&client, dir, progress).await {
         eprintln!("[logo] WARNING: logo bundle step failed ({}); continuing without it.", e);
     }
+
+    // 1c. Flux Rec client patches: welcome screen text, YouTube video IDs.
+    // Same-length byte replacements, fail-soft. Applied after game extraction
+    // (or on upgrade, to the existing install).
+    patches::apply_client_patches(dir);
 
     // 2. BepInEx.
     let bepinex_zip = dir.join("bepinex.zip");
