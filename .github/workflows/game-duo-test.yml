@@ -26,6 +26,14 @@ on:
         description: 'Player 1 POST-LOGIN actions: click:X,Y | type:TEXT | key:{KEY} | hold:W,N | wait:N | shot:NAME | front (login is automatic now)'
         required: true
         default: 'wait:150; shot:p1_boot'
+      login_script1:
+        description: 'Player 1 login script: sclick:X,Y | type:TEXT | wait:N | shot:NAME (the + button is at 863,221 in 1280x720 shots)'
+        required: false
+        default: 'wait:30; shot:p1_boot; sclick:863,221; wait:10; shot:p1_login_dialog'
+      login_script2:
+        description: 'Player 2 login script: sclick:X,Y | type:TEXT | wait:N | shot:NAME'
+        required: false
+        default: 'wait:30; shot:p2_boot; sclick:863,221; wait:10; shot:p2_login_dialog'
       script2:
         description: 'Player 2 POST-LOGIN actions: click:X,Y | type:TEXT | key:{KEY} | hold:W,N | wait:N | shot:NAME | front (login is automatic now)'
         required: true
@@ -257,9 +265,9 @@ jobs:
         shell: pwsh
         run: |
           $procId1 = [int](Get-Content D:\p1.pid)
-          # + opens the Login dialog; type existing credentials, PLAY.
-          # sclick = raw screen coords from the 1280x720 screenshots.
-          & D:\runscript.ps1 -ProcId $procId1 -Script "wait:30; shot:p1_boot; sclick:985,225; wait:8; shot:p1_login_dialog; sclick:755,270; wait:2; type:${{ inputs.username1 }}; sclick:742,335; wait:2; type:${{ inputs.password1 }}; sclick:755,545; wait:45; shot:p1_after_play"
+          # + (at 863,221 in 1280x720) opens the Login dialog. Script is an
+          # input so coordinates can be iterated without committing.
+          & D:\runscript.ps1 -ProcId $procId1 -Script "${{ inputs.login_script1 }}"
 
       - name: Isolate HKCU for player 2 (separate PlayerPrefs, same user)
         shell: pwsh
@@ -297,7 +305,7 @@ jobs:
         shell: pwsh
         run: |
           $procId2 = [int](Get-Content D:\p2.pid)
-          & D:\runscript.ps1 -ProcId $procId2 -Script "wait:30; shot:p2_boot; sclick:985,225; wait:8; shot:p2_login_dialog; sclick:755,270; wait:2; type:${{ inputs.username2 }}; sclick:742,335; wait:2; type:${{ inputs.password2 }}; sclick:755,545; wait:45; shot:p2_after_play"
+          & D:\runscript.ps1 -ProcId $procId2 -Script "${{ inputs.login_script2 }}"
 
       - name: Run both player scripts in parallel
         shell: pwsh
