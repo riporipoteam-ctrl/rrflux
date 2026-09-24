@@ -154,13 +154,15 @@ jobs:
         run: |
           Start-Process D:\FluxRec\FluxRecLauncher.exe -ArgumentList "--play","--dir","D:\FluxRec"
           Write-Host "launcher started, waiting for RecRoom window..."
+          $booted = $false
           $deadline = (Get-Date).AddMinutes(12)
           while ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 15
             $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($p -and $p.MainWindowHandle -ne 0) { Write-Host "game window up"; break }
+            if ($p -and $p.MainWindowHandle -ne 0) { Write-Host "game window up"; $booted = $true; break }
             if (-not (Get-Process RecRoom -ErrorAction SilentlyContinue)) { Write-Host "no RecRoom process yet..." }
           }
+          if (-not $booted) { Write-Host "::error::PROOF FAILED — RecRoom window never appeared (launcher may be stuck)"; exit 1 }
           Write-Host "waiting 90s for boot past Steam init..."
           Start-Sleep -Seconds 90
 
@@ -178,7 +180,7 @@ jobs:
           }
           Shot boot
           $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($p) { Write-Host "RecRoom still running (id $($p.Id))" } else { Write-Host "RecRoom NOT running" }
+          if ($p) { Write-Host "RecRoom still running (id $($p.Id))" } else { Write-Host "::error::PROOF FAILED — RecRoom not running at screenshot time"; exit 1 }
           Start-Sleep -Seconds 45
           Shot boot2
 

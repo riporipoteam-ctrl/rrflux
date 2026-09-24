@@ -93,22 +93,45 @@ pub fn already_excluded(excluded: &[String], dir: &Path) -> bool {
     })
 }
 
-/// Pure check: does this hosts-file text already map `ns.rec.net` to
-/// `backend_ip`? Comment lines are ignored; an inline `# comment` after the
-/// entry is fine.
-pub fn ns_hosts_entry_ok(hosts_content: &str, backend_ip: &str) -> bool {
+/// Pure check: does this hosts-file text contain ANY mapping for
+/// `ns.rec.net` (to any IP)? Comment lines are ignored; an inline
+/// `# comment` after the entry is fine.
+///
+/// This is deliberately IP-agnostic: the backend sits behind anycast DNS,
+/// so two back-to-back resolutions of the backend host can legitimately
+/// return different IPs. Comparing the entry against a freshly-resolved IP
+/// (the old `ns_resolution_ok` approach) false-positived whenever the
+/// anycast answer rotated — which sent the launcher into a bogus "repair"
+/// loop that ended in a blocking error dialog. What matters for the game
+/// is only that the dead hostname resolves at all, which any hosts-file
+/// entry guarantees (the system resolver honors the hosts file).
+pub fn ns_hosts_entry_present(hosts_content: &str) -> bool {
     for line in hosts_content.lines() {
         let t = line.trim();
         if t.is_empty() || t.starts_with('#') {
             continue;
         }
         let mut parts = t.split_whitespace();
+        // First token must be an IP literal; the hostname must be a
+        // separate token on the same line.
         let ip = parts.next().unwrap_or("");
-        if ip == backend_ip && parts.any(|tok| tok == NS_DEAD_HOST) {
+        if ip.parse::<std::net::IpAddr>().is_ok() && parts.any(|tok| tok == NS_DEAD_HOST) {
             return true;
         }
     }
     false
+}
+
+/// Read the system hosts file. `None` when unreadable (or not on Windows).
+pub fn read_hosts_file() -> Option<String> {
+    #[cfg(windows)]
+    {
+        std::fs::read_to_string("C:\\Windows\\System32\\drivers\\etc\\hosts").ok()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 /// Strip an optional `http(s)://` scheme and any trailing path from a
@@ -145,21 +168,6 @@ pub fn resolve_backend_ip(ns_host: &str) -> Option<String> {
         .ok()?
         .next()
         .map(|a| a.ip().to_string())
-}
-
-/// True when `ns.rec.net` currently resolves to `backend_ip`.
-///
-/// The system resolver honors the hosts file, so a correct hosts entry
-/// makes this true; a missing entry plus a dead/unhelpful DNS makes it
-/// false. Used both as the "do we need to touch hosts at all?" pre-check
-/// (writing to hosts is itself AV-suspicious — don't do it when DNS is
-/// already fine) and as the self-heal verification.
-pub fn ns_resolution_ok(backend_ip: &str) -> bool {
-    use std::net::ToSocketAddrs;
-    match format!("{NS_DEAD_HOST}:80").to_socket_addrs() {
-        Ok(mut addrs) => addrs.any(|a| a.ip().to_string() == backend_ip),
-        Err(_) => false,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +358,7 @@ pub fn describe_problems(problems: &[QuarantineProblem]) -> String {
 /// Inspect the install dir for the files Windows Security likes to
 /// quarantine. Pure filesystem checks plus one DNS resolution — safe to run
 /// on every `--play`. Never deletes or quarantines anything itself.
-pub fn verify_quarantine_targets(dir: &Path, ns_host: &str) -> Vec<QuarantineProblem> {
+pub fn verify_quarantine_targets(dir: &Path, _ns_host: &str) -> Vec<QuarantineProblem> {
     let mut problems = Vec::new();
 
     // 1. Redirect plugin — the #1 quarantine target (unsigned .NET DLL).
@@ -365,15 +373,18 @@ pub fn verify_quarantine_targets(dir: &Path, ns_host: &str) -> Vec<QuarantinePro
         problems.push(QuarantineProblem::SteamBypassBroken(reason));
     }
 
-    // 3. ns.rec.net must resolve to the backend. When it doesn't, either
-    // the hosts entry was removed or DNS regressed — either way the game
-    // would hang at "Connecting to server...". Skip the check when the
-    // backend itself can't be resolved (offline): nothing to compare
-    // against, and reporting "missing" would be a false positive.
-    if let Some(ip) = resolve_backend_ip(ns_host) {
-        if !ns_resolution_ok(&ip) {
-            problems.push(QuarantineProblem::HostsEntryMissing);
-        }
+    // 3. ns.rec.net must be mapped in the hosts file. When it isn't, the
+    // 2023 client (which resolves the dead hostname itself via
+    // System.Net.Dns) hangs at "Connecting to server...". This checks the
+    // hosts FILE CONTENT, not a live DNS comparison: the backend is
+    // anycast, so comparing against a freshly-resolved IP false-positives
+    // whenever the anycast answer rotates between lookups. An unreadable
+    // hosts file is treated as OK (can't verify — don't cry wolf).
+    let hosts_ok = read_hosts_file()
+        .map(|c| ns_hosts_entry_present(&c))
+        .unwrap_or(true);
+    if !hosts_ok {
+        problems.push(QuarantineProblem::HostsEntryMissing);
     }
 
     problems
@@ -447,12 +458,13 @@ pub async fn repair_quarantine_targets(
             QuarantineProblem::HostsEntryMissing => {
                 progress.set_stage("Repairing network configuration…");
                 crate::ensure_ns_hosts_entry(ns_host);
-                match resolve_backend_ip(ns_host) {
-                    Some(ip) => ns_resolution_ok(&ip),
-                    // Offline: can't verify — don't report failure for
-                    // something we can't check.
-                    None => true,
-                }
+                // Verify by re-reading the hosts file: any ns.rec.net entry
+                // means the client will resolve the dead hostname.
+                // Deliberately not a DNS comparison — anycast rotations made
+                // that check flaky and caused bogus repair loops.
+                read_hosts_file()
+                    .map(|c| ns_hosts_entry_present(&c))
+                    .unwrap_or(false)
             }
             QuarantineProblem::SteamBypassBroken(_) => {
                 match crate::bypass::repair_bypass(client, dir, progress).await {
@@ -544,33 +556,35 @@ mod tests {
     }
 
     #[test]
-    fn ns_hosts_entry_ok_detects_correct_mapping() {
+    fn ns_hosts_entry_present_detects_any_mapping() {
+        // Any IP mapping counts — the backend is anycast, so the stored IP
+        // legitimately differs from a fresh DNS answer.
         let hosts = "# comment\n127.0.0.1 localhost\n93.184.216.34 ns.rec.net # Flux Rec backend\n";
-        assert!(ns_hosts_entry_ok(hosts, "93.184.216.34"));
-        assert!(!ns_hosts_entry_ok(hosts, "1.2.3.4"));
+        assert!(ns_hosts_entry_present(hosts));
+        assert!(ns_hosts_entry_present("203.0.113.7 ns.rec.net\n"));
+        assert!(ns_hosts_entry_present("127.0.0.1 ns.rec.net\n"));
     }
 
     #[test]
-    fn ns_hosts_entry_ok_ignores_comments_and_wrong_entries() {
+    fn ns_hosts_entry_present_ignores_comments_and_garbage() {
         // Commented-out mapping doesn't count.
-        assert!(!ns_hosts_entry_ok(
-            "# 93.184.216.34 ns.rec.net\n",
-            "93.184.216.34"
-        ));
-        // Mapping to a different IP doesn't count.
-        assert!(!ns_hosts_entry_ok(
-            "203.0.113.7 ns.rec.net\n",
-            "93.184.216.34"
-        ));
+        assert!(!ns_hosts_entry_present("# 93.184.216.34 ns.rec.net\n"));
+        // Non-IP first token doesn't count.
+        assert!(!ns_hosts_entry_present("example.com ns.rec.net\n"));
         // Missing entirely.
-        assert!(!ns_hosts_entry_ok("127.0.0.1 localhost\n", "93.184.216.34"));
+        assert!(!ns_hosts_entry_present("127.0.0.1 localhost\n"));
+        // Empty file.
+        assert!(!ns_hosts_entry_present(""));
     }
 
     #[test]
-    fn ns_hosts_entry_ok_handles_multi_host_lines() {
-        assert!(ns_hosts_entry_ok(
-            "93.184.216.34 ns.rec.net api.rec.net\n",
-            "93.184.216.34"
+    fn ns_hosts_entry_present_handles_multi_host_lines() {
+        assert!(ns_hosts_entry_present(
+            "93.184.216.34 ns.rec.net api.rec.net\n"
+        ));
+        // Inline comment after the entry is fine.
+        assert!(ns_hosts_entry_present(
+            "93.184.216.34 ns.rec.net # Flux Rec backend\n"
         ));
     }
 
@@ -621,12 +635,13 @@ mod tests {
         let d = std::env::temp_dir().join("fluxrec-defender-test-missing");
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        // Empty dir: plugin missing, bypass broken, hosts unresolvable-to-IP.
-        // ns_host as an IP literal keeps the check deterministic (no real
-        // DNS needed): ns.rec.net will never resolve to 127.0.0.1.
+        // Empty dir: plugin missing, bypass broken. The hosts-file check is
+        // deliberately not asserted here: on non-Windows the hosts file
+        // can't be read (treated as "can't verify", not a problem), and on
+        // Windows it depends on the machine's real hosts file. The pure
+        // ns_hosts_entry_present tests cover that logic hermetically.
         let problems = verify_quarantine_targets(&d, "127.0.0.1");
         assert!(problems.contains(&QuarantineProblem::PluginDllMissing));
-        assert!(problems.contains(&QuarantineProblem::HostsEntryMissing));
         assert!(problems
             .iter()
             .any(|p| matches!(p, QuarantineProblem::SteamBypassBroken(_))));

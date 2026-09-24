@@ -464,37 +464,18 @@ fn write_plugin_config(dir: &Path, ns_host: &str, rt: &str, voice: &str, chat: &
 /// Idempotent, fail-soft (a hosts write failure never breaks the install).
 #[cfg(windows)]
 pub(crate) fn ensure_ns_hosts_entry(ns_host: &str) {
-    use std::net::ToSocketAddrs;
-
-    // Resolve ns_host to an IP. If it's already an IP, use it directly.
-    let ip = if ns_host.parse::<std::net::IpAddr>().is_ok() {
-        ns_host.to_string()
-    } else {
-        // Try to resolve the hostname to an IP
-        match format!("{}:80", ns_host).to_socket_addrs() {
-            Ok(mut addrs) => match addrs.next() {
-                Some(addr) => addr.ip().to_string(),
-                None => {
-                    eprintln!("[hosts] WARNING: could not resolve {}; skipping hosts entry.", ns_host);
-                    return;
-                }
-            },
-            Err(e) => {
-                eprintln!("[hosts] WARNING: DNS resolution failed for {} ({}); skipping hosts entry.", ns_host, e);
-                return;
-            }
+    // Resolve ns_host to an IP (shared helper: IP literals pass through,
+    // schemes/paths are stripped). None when offline/unresolvable.
+    let ip = match crate::defender::resolve_backend_ip(ns_host) {
+        Some(ip) => ip,
+        None => {
+            eprintln!(
+                "[hosts] WARNING: could not resolve {}; skipping hosts entry.",
+                ns_host
+            );
+            return;
         }
     };
-
-    // 2026-09-24 (defender.rs hardening): don't BE the malware — writing to
-    // the hosts file is itself AV-suspicious, so only touch it when needed.
-    // If ns.rec.net already resolves to the backend IP (the system resolver
-    // honors the hosts file too), there is nothing to fix: skip the write
-    // entirely.
-    if crate::defender::ns_resolution_ok(&ip) {
-        println!("[hosts] ns.rec.net already resolves to {ip}; nothing to do.");
-        return;
-    }
 
     let hosts_path = std::path::Path::new("C:\\Windows\\System32\\drivers\\etc\\hosts");
     let content = match std::fs::read_to_string(hosts_path) {
@@ -504,6 +485,17 @@ pub(crate) fn ensure_ns_hosts_entry(ns_host: &str) {
             return;
         }
     };
+
+    // 2026-09-24 (defender.rs hardening): don't BE the malware — writing to
+    // the hosts file is itself AV-suspicious, so only touch it when the
+    // entry is actually absent. Checked against the file content, not a live
+    // DNS comparison: the backend is anycast and a fresh resolution can
+    // return a different IP than the stored entry, which used to send the
+    // launcher into bogus "repair" loops ending in a blocking error dialog.
+    if crate::defender::ns_hosts_entry_present(&content) {
+        println!("[hosts] ns.rec.net entry already present; nothing to do.");
+        return;
+    }
 
     let entry = format!("{} ns.rec.net", ip);
     // Check if the correct entry already exists
