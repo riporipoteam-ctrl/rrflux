@@ -845,15 +845,15 @@ imageRoutes
 			await Promise.all(
 				roomIds.map(async (roomId) => {
 					const room = await getRoomById(c.env.DB, roomId).catch(() => null)
-					if (room) roomNames.set(roomId, room.Name)
+					if (room) roomNames.set(roomId, room.Name as string)
 				})
 			)
 
 			return c.json({
 				photos: visible.map((img) => ({
 					id: img.Id,
-					imageName: img.ImageName,
-					url: `${imgBase}/${img.ImageName}`,
+					imageName: img.ImageName as string,
+					url: `${imgBase}/${img.ImageName as string}`,
 					takenAt: img.CreatedAt,
 					visibility:
 						img.Accessibility === 1 ? 'public' : img.Accessibility === 2 ? 'friends' : 'private',
