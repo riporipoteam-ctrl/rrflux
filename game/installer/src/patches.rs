@@ -30,23 +30,42 @@ const WELCOME_PATCH: BytePatch = BytePatch {
     desc: "welcome screen text",
 };
 
+/// Rec Room+ membership price text. The client shows "($10 USD value, ...)" — replace
+/// with Flux Rec Tokens. Found in the RR+ UI AssetBundle.
+const RRPLUS_USD_PATCH: BytePatch = BytePatch {
+    file: "RecRoom_Data/StreamingAssets/aa/StandaloneWindows64/345318383a217ece0ae0ca51345ec71c.bundle",
+    from: b"$10 USD value",
+    to: b"10000 tokens!",
+    desc: "RR+ USD to Flux Rec Tokens",
+};
+
+/// Rec Room+ Membership title. Stored as " Room+ Membership" (leading space, "Rec" is a
+/// separate UI element). Found in the RR+ UI AssetBundle at offset 1443123.
+const RRPLUS_TITLE_PATCH: BytePatch = BytePatch {
+    file: "RecRoom_Data/StreamingAssets/aa/StandaloneWindows64/345318383a217ece0ae0ca51345ec71c.bundle",
+    from: b" Room+ Membership",
+    to: b" Flux Rec+ Member",
+    desc: "RR+ Membership title to Flux Rec+",
+};
+
+/// "Join Rec Room+" button text. Found in the RR+ UI AssetBundle at offset 1551629.
+const RRPLUS_JOIN_PATCH: BytePatch = BytePatch {
+    file: "RecRoom_Data/StreamingAssets/aa/StandaloneWindows64/345318383a217ece0ae0ca51345ec71c.bundle",
+    from: b"Join Rec Room+",
+    to: b"Join Flux Rec+",
+    desc: "Join RR+ button to Flux Rec+",
+};
+
 /// YouTube board video IDs. The 2023 client hardcodes stale 2023 Rec Room video
 /// IDs in GameAssembly.dll. Replace with Ripo Team videos (all IDs are 11 chars,
-/// YouTube video IDs are fixed length — safe same-length replacement).
-///
-/// Verified Ripo Team videos (public/embeddable as of 2026-09-24):
-/// - 9yxvLdJXh5Q: Official Song "Dust And Destiny" Country Song
-/// - dlLAVqbClVU: TheHauntingOfChris 7: The Final Tape
-/// - nsrNhZWOA2U: RipoHangout Reveal Trailer
-/// - wl2YtvlA6Z8: RipoHangout 10.0 Update Trailer
-/// - cfcx07aXfAQ: HorizonOfDespair RRS OFFICIAL TRAILER
+/// YouTube board: The v0.1.14 patches targeted FinalIK documentation URLs (third-party
+/// IK asset tutorial links), NOT the actual YouTube board video IDs. They have been
+/// removed. The board requires a `videos` backend worker serving direct MP4 URLs —
+/// Unity VideoPlayer cannot play youtube.com/watch URLs directly.
+/// (See investigation 2026-09-24: no videos worker exists, zero YouTube handling in backend.)
 const YOUTUBE_PATCHES: &[BytePatch] = &[
-    // Stale 2023 Rec Room video IDs -> Ripo Team videos (all 11 chars, safe)
-    BytePatch { file: "GameAssembly.dll", from: b"9MiZiaJorws", to: b"9yxvLdJXh5Q", desc: "youtube video 1" },
-    BytePatch { file: "GameAssembly.dll", from: b"wT8fViZpLmQ", to: b"dlLAVqbClVU", desc: "youtube video 2" },
-    BytePatch { file: "GameAssembly.dll", from: b"7__IafZGwvI", to: b"nsrNhZWOA2U", desc: "youtube video 3" },
-    BytePatch { file: "GameAssembly.dll", from: b"r5jiZnsDH3M", to: b"wl2YtvlA6Z8", desc: "youtube video 4" },
-    BytePatch { file: "GameAssembly.dll", from: b"-TDZpNjt2mk", to: b"cfcx07aXfAQ", desc: "youtube video 5" },
+    // Intentionally empty — do not patch YouTube IDs without locating the actual board video IDs
+    // via runtime traffic capture first.
 ];
 
 /// Apply all client patches. Fail-soft: logs warnings but never fails the install.
@@ -55,6 +74,15 @@ pub fn apply_client_patches(dir: &Path) {
 
     // Welcome screen patch
     apply_patch(dir, &WELCOME_PATCH);
+
+    // RR+ USD to tokens patch
+    apply_patch(dir, &RRPLUS_USD_PATCH);
+
+    // RR+ Membership title patch
+    apply_patch(dir, &RRPLUS_TITLE_PATCH);
+
+    // Join RR+ button patch
+    apply_patch(dir, &RRPLUS_JOIN_PATCH);
 
     // YouTube patches (if any are defined)
     for patch in YOUTUBE_PATCHES {
