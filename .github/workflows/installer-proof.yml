@@ -17,6 +17,11 @@ on:
         description: 'Install this older tag first (simulates upgrading a broken install); empty = fresh install'
         required: false
         default: ''
+      hostile:
+        description: 'Hostile mode: uninstall VC++ redist + remove Steam before install (tests self-heal on a broken PC)'
+        required: false
+        default: 'false'
+        type: boolean
 
 jobs:
   proof:
@@ -54,6 +59,54 @@ jobs:
           Write-Host "old installer exit code:" $p.ExitCode
           $legacy = Get-Content "D:\FluxRec\steam_appid.txt" -Raw -ErrorAction SilentlyContinue
           Write-Host "legacy steam_appid.txt after old install: [$legacy]"
+
+      - name: Hostile environment (rip out VC++ + Steam)
+        if: inputs.hostile
+        shell: pwsh
+        run: |
+          # 1. Uninstall all x64 VC++ redistributables via their quiet uninstall strings
+          $paths = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+          )
+          $found = 0
+          Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object {
+            $_.DisplayName -like 'Microsoft Visual C++*Redistributable (x64)*'
+          } | ForEach-Object {
+            $found++
+            Write-Host "uninstalling: $($_.DisplayName)"
+            $qs = $_.QuietUninstallString
+            if (-not $qs) { $qs = $_.UninstallString }
+            try {
+              $p = Start-Process cmd.exe -ArgumentList "/c", $qs -PassThru -Wait
+              Write-Host "  exit: $($p.ExitCode)"
+            } catch { Write-Host "  uninstall error: $_" }
+          }
+          Write-Host "VC++ x64 entries processed: $found"
+          $key = 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
+          if (Test-Path $key) { Write-Host "WARN: VC x64 runtime key STILL present" }
+          else { Write-Host "OK: VC x64 runtime key gone (this is what the installer checks)" }
+
+          # 2. Remove the Steam client if present
+          $steamPaths = @("${env:ProgramFiles(x86)}\Steam\steam.exe", "$env:ProgramFiles\Steam\steam.exe")
+          foreach ($sp in $steamPaths) {
+            if (Test-Path $sp) {
+              Write-Host "Steam found at $sp - uninstalling..."
+              $sk = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -like 'Steam*' } | Select-Object -First 1
+              if ($sk -and $sk.UninstallString) {
+                Start-Process cmd.exe -ArgumentList "/c", ($sk.UninstallString + ' /quiet') -Wait
+              }
+              if (Test-Path $sp) {
+                Remove-Item -Recurse -Force (Split-Path $sp) -ErrorAction SilentlyContinue
+                Write-Host "force-removed Steam dir"
+              }
+            }
+          }
+          $steamLeft = $false
+          foreach ($sp in $steamPaths) { if (Test-Path $sp) { $steamLeft = $true } }
+          if ($steamLeft) { Write-Host "WARN: Steam still present" }
+          else { Write-Host "OK: no Steam client on this PC" }
 
       - name: Run installer (hidden console + GUI progress window)
         shell: pwsh
