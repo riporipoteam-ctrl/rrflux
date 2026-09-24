@@ -232,6 +232,16 @@ jobs:
           $procId1 = [int](Get-Content D:\p1.pid)
           & D:\runscript.ps1 -ProcId $procId1 -Script "${{ inputs.script1 }}"
 
+      - name: Isolate player 2 session (clear shared PlayerPrefs)
+        shell: pwsh
+        run: |
+          # p1 is already running with prefs in memory; clear registry so p2 boots fresh
+          # and does NOT auto-login as p1's account.
+          foreach ($k in @("HKCU:\Software\Rec Room", "HKCU:\Software\Against Gravity")) {
+            if (Test-Path $k) { Remove-Item -Path $k -Recurse -Force; Write-Host "cleared $k" }
+            else { Write-Host "not present: $k" }
+          }
+
       - name: Launch player 2
         shell: pwsh
         run: |
