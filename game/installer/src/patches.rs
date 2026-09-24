@@ -20,13 +20,13 @@ struct BytePatch {
     desc: &'static str,
 }
 
-/// Welcome screen: "Welcome to Rec Room" -> "Welcome to Flux Rec"
+/// Welcome screen: "Welcome to Rec Room" -> "Welcome To Flux Rec"
 /// Found in RecRoom_Data/level32 at offset 943476 (2023 client).
 /// Both strings are 18 characters — safe same-length replacement.
 const WELCOME_PATCH: BytePatch = BytePatch {
     file: "RecRoom_Data/level32",
     from: b"Welcome to Rec Room",
-    to: b"Welcome to Flux Rec",
+    to: b"Welcome To Flux Rec",
     desc: "welcome screen text",
 };
 
@@ -41,9 +41,12 @@ const WELCOME_PATCH: BytePatch = BytePatch {
 /// - wl2YtvlA6Z8: RipoHangout 10.0 Update Trailer
 /// - cfcx07aXfAQ: HorizonOfDespair RRS OFFICIAL TRAILER
 const YOUTUBE_PATCHES: &[BytePatch] = &[
-    // NOTE: The old IDs below are placeholders — the actual stale 2023 IDs must
-    // be extracted from GameAssembly.dll. These will be filled in once the
-    // exact byte sequences are confirmed.
+    // Stale 2023 Rec Room video IDs -> Ripo Team videos (all 11 chars, safe)
+    BytePatch { file: "GameAssembly.dll", from: b"9MiZiaJorws", to: b"9yxvLdJXh5Q", desc: "youtube video 1" },
+    BytePatch { file: "GameAssembly.dll", from: b"wT8fViZpLmQ", to: b"dlLAVqbClVU", desc: "youtube video 2" },
+    BytePatch { file: "GameAssembly.dll", from: b"7__IafZGwvI", to: b"nsrNhZWOA2U", desc: "youtube video 3" },
+    BytePatch { file: "GameAssembly.dll", from: b"r5jiZnsDH3M", to: b"wl2YtvlA6Z8", desc: "youtube video 4" },
+    BytePatch { file: "GameAssembly.dll", from: b"-TDZpNjt2mk", to: b"cfcx07aXfAQ", desc: "youtube video 5" },
 ];
 
 /// Apply all client patches. Fail-soft: logs warnings but never fails the install.
