@@ -22,10 +22,11 @@ use std::time::Duration;
 
 use crate::progress::Progress;
 
-const VERSION_URL: &str = "https://api.ripo-ripoteam.workers.dev/api/installer/version";
+const RELEASES_URL: &str =
+    "https://api.github.com/repos/riporipoteam-ctrl/rrflux/releases?per_page=20";
 const SETUP_ASSET_NAME: &str = "FluxRec-Setup.exe";
 /// Hard ceiling for the whole update check (keeps launches snappy).
-const CHECK_TIMEOUT_SECS: u64 = 15;
+const CHECK_TIMEOUT_SECS: u64 = 5;
 
 /// Diagnostic record of the last completed check. Written after every
 /// check; never read to skip one — every launch checks live.
@@ -101,7 +102,12 @@ pub async fn check_for_updates(install_dir: &Path, progress: &Progress) -> Updat
 }
 
 async fn check_inner(client: &reqwest::Client) -> UpdateDecision {
-    let resp = match client.get(VERSION_URL).send().await {
+    let resp = match client
+        .get(RELEASES_URL)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(_) => return UpdateDecision::UpToDate,
     };
@@ -112,31 +118,13 @@ async fn check_inner(client: &reqwest::Client) -> UpdateDecision {
         Ok(t) => t,
         Err(_) => return UpdateDecision::UpToDate,
     };
-    // New format: {"latest": "0.1.13", "download_url": "https://..."}
-    // Served from our own domain to avoid GitHub API rate limits.
-    let info: serde_json::Value = match serde_json::from_str(&text) {
+    // A non-array body (e.g. an API error object) parses as Err here and
+    // falls through to UpToDate, same as before.
+    let releases: Vec<serde_json::Value> = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(_) => return UpdateDecision::UpToDate,
     };
-    let latest = info.get("latest").and_then(|v| v.as_str()).unwrap_or("");
-    let download_url = info
-        .get("download_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if latest.is_empty() || download_url.is_empty() {
-        return UpdateDecision::UpToDate;
-    }
-    let ver = match parse_version(&format!("recflare-installer-v{}", latest)) {
-        Some(v) => v,
-        None => return UpdateDecision::UpToDate,
-    };
-    if ver <= current_version() {
-        return UpdateDecision::UpToDate;
-    }
-    UpdateDecision::Available {
-        version: latest.to_string(),
-        download_url: download_url.to_string(),
-    }
+    find_update(&releases, current_version())
 }
 
 /// Pure update decision over a releases list (newest first, as the GitHub
