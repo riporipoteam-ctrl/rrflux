@@ -20,13 +20,13 @@ struct BytePatch {
     desc: &'static str,
 }
 
-/// Welcome screen: "Welcome to Rec Room" -> "Welcome To Flux Rec"
+/// Welcome screen: "Welcome to Rec Room" -> "Welcome to Flux Rec"
 /// Found in RecRoom_Data/level32 at offset 943476 (2023 client).
 /// Both strings are 18 characters — safe same-length replacement.
 const WELCOME_PATCH: BytePatch = BytePatch {
     file: "RecRoom_Data/level32",
     from: b"Welcome to Rec Room",
-    to: b"Welcome To Flux Rec",
+    to: b"Welcome to Flux Rec",
     desc: "welcome screen text",
 };
 
