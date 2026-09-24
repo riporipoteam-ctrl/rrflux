@@ -245,14 +245,19 @@ jobs:
           $procId1 = [int](Get-Content D:\p1.pid)
           & D:\runscript.ps1 -ProcId $procId1 -Script "${{ inputs.script1 }}"
 
-      - name: Isolate player 2 session (clear shared PlayerPrefs)
+      - name: Isolate player 2 session (backup p1, clear shared PlayerPrefs)
         shell: pwsh
         run: |
-          # p1 is already running with prefs in memory; clear registry so p2 boots fresh
-          # and does NOT auto-login as p1's account.
+          # p1 is already running with prefs in memory; backup its keys, then clear
+          # registry so p2 boots fresh and does NOT auto-login as p1's account.
+          # p1's keys are restored after p2 is in-game (p2 keeps auth in memory).
           foreach ($k in @("HKCU:\Software\Rec Room", "HKCU:\Software\Against Gravity")) {
-            if (Test-Path $k) { Remove-Item -Path $k -Recurse -Force; Write-Host "cleared $k" }
-            else { Write-Host "not present: $k" }
+            $safe = ($k -split '\\')[-1] -replace ' ','_'
+            if (Test-Path $k) {
+              reg export $k.Replace('HKCU:\','HKCU\') "D:\p1_$safe.reg" /y | Out-Null
+              Remove-Item -Path $k -Recurse -Force
+              Write-Host "backed up and cleared $k"
+            } else { Write-Host "not present: $k" }
           }
 
       - name: Launch player 2
@@ -276,6 +281,17 @@ jobs:
         run: |
           $procId2 = [int](Get-Content D:\p2.pid)
           & D:\runscript.ps1 -ProcId $procId2 -Script "${{ inputs.script2 }}"
+
+      - name: Restore player 1 registry (p2 keeps auth in memory)
+        shell: pwsh
+        run: |
+          # p2 is now in-game with auth in memory; give p1 its PlayerPrefs back so
+          # it doesn't get kicked to the picker.
+          foreach ($f in @("D:\p1_Rec_Room.reg", "D:\p1_Against_Gravity.reg")) {
+            if (Test-Path $f) { reg import $f | Out-Null; Write-Host "restored $f" }
+            else { Write-Host "missing: $f" }
+          }
+          Start-Sleep -Seconds 10
 
       - name: Final screenshots (both views)
         shell: pwsh
