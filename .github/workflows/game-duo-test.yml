@@ -188,6 +188,19 @@ jobs:
               [WX]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             } else { Write-Host "game window not found, no click" }
           }
+          function SClick-At($x, $y) {
+            # Screen coordinates: NO ClientToScreen translation. Use coords
+            # measured directly from the 1280x720 screenshots.
+            $p = GameProc
+            if ($p -and $p.MainWindowHandle -ne 0) {
+              [WX]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Start-Sleep -Seconds 2
+              [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point([int]$x, [int]$y)
+              Start-Sleep -Milliseconds 400
+              [WX]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 150
+              [WX]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+              Write-Host "sclicked screen ($x,$y)"
+            } else { Write-Host "game window not found, no sclick" }
+          }
           function Shot($name) {
             Focus-Game; Start-Sleep -Seconds 2
             $bmp = New-Object System.Drawing.Bitmap(1280, 720)
@@ -210,6 +223,7 @@ jobs:
             Write-Host ">> $verb : $arg"
             switch ($verb) {
               'click' { $xy = $arg -split ','; Click-At $xy[0] $xy[1]; Start-Sleep -Seconds 3 }
+              'sclick' { $xy = $arg -split ','; SClick-At $xy[0] $xy[1]; Start-Sleep -Seconds 3 }
               'type' { Type-Text $arg }
               'key' { Focus-Game; [System.Windows.Forms.SendKeys]::SendWait($arg); Start-Sleep -Seconds 3 }
               'hold' { $hp = $arg -split ','; Hold-Key $hp[0] $hp[1]; Start-Sleep -Seconds 2 }
@@ -244,8 +258,8 @@ jobs:
         run: |
           $procId1 = [int](Get-Content D:\p1.pid)
           # + opens the Login dialog; type existing credentials, PLAY.
-          # Coords are client-area ~= screen (1280x720, no title bar visible).
-          & D:\runscript.ps1 -ProcId $procId1 -Script "wait:30; shot:p1_boot; click:985,225; wait:8; shot:p1_login_dialog; click:755,270; wait:2; type:${{ inputs.username1 }}; click:755,335; wait:2; type:${{ inputs.password1 }}; click:755,545; wait:45; shot:p1_after_play"
+          # sclick = raw screen coords from the 1280x720 screenshots.
+          & D:\runscript.ps1 -ProcId $procId1 -Script "wait:30; shot:p1_boot; sclick:985,225; wait:8; shot:p1_login_dialog; sclick:755,270; wait:2; type:${{ inputs.username1 }}; sclick:742,335; wait:2; type:${{ inputs.password1 }}; sclick:755,545; wait:45; shot:p1_after_play"
 
       - name: Isolate HKCU for player 2 (separate PlayerPrefs, same user)
         shell: pwsh
@@ -253,10 +267,15 @@ jobs:
           # v7's p2user broke input (separate window station: clicks never
           # land). Instead: p1 is already logged in (token in memory), so
           # back up p1's PlayerPrefs and wipe the key — p2 then launches
-          # with a clean slate and logs in as itself.
-          reg export HKCU\Software\RecRoom D:\p1prefs.reg /y | Out-Null
-          reg delete HKCU\Software\RecRoom /f | Out-Null
-          Write-Host "p1 prefs backed up, HKCU RecRoom key wiped for p2"
+          # with a clean slate and logs in as itself. Tolerant: the key may
+          # not exist if p1's login didn't reach PlayerPrefs yet.
+          if (Test-Path "HKCU:\Software\RecRoom") {
+            reg export HKCU\Software\RecRoom D:\p1prefs.reg /y | Out-Null
+            reg delete HKCU\Software\RecRoom /f | Out-Null
+            Write-Host "p1 prefs backed up, HKCU RecRoom key wiped for p2"
+          } else {
+            Write-Host "no HKCU RecRoom key to wipe — p2 gets a clean slate anyway"
+          }
 
       - name: Launch player 2 (main user, clean PlayerPrefs)
         shell: pwsh
@@ -278,7 +297,7 @@ jobs:
         shell: pwsh
         run: |
           $procId2 = [int](Get-Content D:\p2.pid)
-          & D:\runscript.ps1 -ProcId $procId2 -Script "wait:30; shot:p2_boot; click:985,225; wait:8; shot:p2_login_dialog; click:755,270; wait:2; type:${{ inputs.username2 }}; click:755,335; wait:2; type:${{ inputs.password2 }}; click:755,545; wait:45; shot:p2_after_play"
+          & D:\runscript.ps1 -ProcId $procId2 -Script "wait:30; shot:p2_boot; sclick:985,225; wait:8; shot:p2_login_dialog; sclick:755,270; wait:2; type:${{ inputs.username2 }}; sclick:742,335; wait:2; type:${{ inputs.password2 }}; sclick:755,545; wait:45; shot:p2_after_play"
 
       - name: Run both player scripts in parallel
         shell: pwsh
