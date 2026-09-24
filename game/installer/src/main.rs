@@ -1,16 +1,8 @@
 // FluxRec-Setup — zero-touch installer for the RecFlare-pipeline Flux Rec client.
 //
 // Flow:
-//   0. (Upgrade mode) If RecRoom.exe is already present in the install dir,
-//      skip step 1 (the ~3.8GB client.zip download + extract) and only
-//      refresh the Steam bypass, logo bundle, BepInEx, plugin, config, and
-//      shortcuts in place. The game dir is never wiped. The dir of every
-//      successful install is remembered in
-//      %LOCALAPPDATA%\FluxRec\install_dir.txt so later runs (and the
-//      launcher) find it without needing --dir again.
 //   1. Download the 2023 Rec Room client zip from the public mirror, verify MD5,
-//      extract into the install dir. (We host no game binaries ourselves.
-//      Skipped entirely in upgrade mode, see step 0.)
+//      extract into the install dir. (We host no game binaries ourselves.)
 //   1b. Download the Flux Rec logo bundle (gzipped patched Addressables UI
 //      bundle, hosted on our Hugging Face dataset), verify MD5, gunzip, and
 //      overwrite the stock bundle so the loading screen shows Flux Rec
@@ -21,14 +13,11 @@
 //      baked in at packaging time from FLUXREC_NS_HOST / FLUXREC_PHOTON_RT /
 //      FLUXREC_PHOTON_VOICE / FLUXREC_PHOTON_CHAT env vars (or pass --ns-host /
 //      --photon-rt / --photon-voice / --photon-chat at install time).
-//   5. Steam bypass pipeline (see bypass.rs): VC++ 2022 x64 runtime first
-//      (the vs22-built emulator DLL crashes without it), then the Goldberg
-//      emulator swap (stock DLL backed up once), steam_settings/
-//      steam_appid.txt = 471710 + steam_interfaces.txt. If Goldberg fails,
-//      a minimal Flux Rec stub DLL (no VC++ dependency) is used instead.
-//      No Steam client installed, none needed.
-//   6. Create Start Menu + desktop shortcuts (Windows only), using the blue
-//      Flux Rec .ico.
+//   5. Steam bypass via the Goldberg emulator (gbe_fork): the game's
+//      steam_api64.dll is swapped for the emulator (stock backed up once),
+//      steam_settings/steam_appid.txt = 471710 + steam_interfaces.txt are
+//      written beside it. No Steam client installed, none needed.
+//   6. Create Start Menu + desktop shortcuts (Windows only).
 //
 // Exit 0 on success, 1 with an ERROR line on failure.
 // Usage: FluxRec-Setup [--dir <path>] [--ns-host <url>] [--photon-rt <id>] [--photon-voice <id>] [--photon-chat <id>]
@@ -40,30 +29,20 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 mod assets;
-mod bypass;
-mod defender; // AV hardening (2026-09-24): Defender exclusions, quarantine self-heal, Unblock-File
 mod gui;
 mod launcher;
 mod progress;
-mod segmented;
 mod stealth;
 mod updater;
-mod vcredist;
 
-/// Client mirrors, fastest first. All serve the byte-identical client.zip
-/// (same MD5) — the downloader falls through to the next on any failure.
-/// (benchmark 2026-09-24: Mega 16-seg 5.4 MB/s beats HF 16-seg 1.5 MB/s;
-/// HF throttles parallel ranges, so Mega is primary, HF is the fallback).
-const CLIENT_ZIP_MIRRORS: &[&str] = &[
-    "https://s3.g.megas4.com/2koayuyiwxv4groxzwdbbxg43cwustavrkvfb/recflare/client.zip",
-    "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/recflare-client-20230414.zip",
-];
+const CLIENT_ZIP_URL: &str =
+    "https://s3.g.megas4.com/2koayuyiwxv4groxzwdbbxg43cwustavrkvfb/recflare/client.zip";
 const CLIENT_ZIP_MD5: &str = "4c4a94624eba99028bb36445ccb03253";
 const BEPINEX_URL: &str = "https://github.com/BepInEx/BepInEx/releases/download/v6.0.0-pre.2/BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip";
 const BEPINEX_SIZE: u64 = 34_146_254;
-pub(crate) const PLUGIN_URL: &str =
+const PLUGIN_URL: &str =
     "https://github.com/recflare/patch/releases/download/20230414.2/RecNetPlugin.dll";
-pub(crate) const PLUGIN_SIZE: u64 = 45_056;
+const PLUGIN_SIZE: u64 = 45_056;
 /// Flux Rec logo bundle: gzipped patched Addressables UI bundle (loading
 /// screen logos replaced). Hosted on our Hugging Face dataset; verified by
 /// MD5 before use, then gunzipped over the stock bundle.
@@ -83,9 +62,9 @@ const GBE_URL: &str =
 /// Path of the win-x64 emulator DLL inside the archive.
 const GBE_DLL_INNER: &str = "release/regular/x64/steam_api64.dll";
 /// Rec Room's real Steam app ID (matches our cloud test setup).
-pub(crate) const STEAM_APP_ID: &str = "471710";
+const STEAM_APP_ID: &str = "471710";
 /// steam_interfaces.txt, embedded from assets/ (same file the cloud tests copy).
-pub(crate) const STEAM_INTERFACES: &str = include_str!("../assets/steam_interfaces.txt");
+const STEAM_INTERFACES: &str = include_str!("../assets/steam_interfaces.txt");
 
 const NS_PLACEHOLDER: &str = "%%FLUXREC_NS%%";
 /// Compile-time wiring (GitHub Secrets -> CI env -> baked in at build).
@@ -113,75 +92,6 @@ const MAX_ATTEMPTS: u32 = 3;
 fn default_install_dir() -> PathBuf {
     let drive = std::env::var("SYSTEMDRIVE").unwrap_or_else(|_| "C:".to_string());
     PathBuf::from(format!("{drive}\\Games\\FluxRec"))
-}
-
-/// File that records the install directory of the last successful install.
-/// Lets later runs (and the launcher) find the game dir without --dir.
-fn persisted_install_dir_file() -> PathBuf {
-    let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
-    install_dir_file_in(&local_appdata)
-}
-
-/// Pure part of the above, kept separate so tests can point it at a scratch
-/// dir instead of the real %LOCALAPPDATA%.
-fn install_dir_file_in(local_appdata: &str) -> PathBuf {
-    PathBuf::from(local_appdata)
-        .join("FluxRec")
-        .join("install_dir.txt")
-}
-
-/// Read a previously persisted install dir, trimming whitespace. Returns
-/// None when the file is missing, unreadable, or empty.
-fn read_install_dir_file(file: &Path) -> Option<String> {
-    let raw = std::fs::read_to_string(file).ok()?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-/// Persist the install dir after a successful install. Fail-soft by design:
-/// this is bookkeeping, so a missing %LOCALAPPDATA%, a locked file, or any
-/// other error just means the dir won't be remembered — it never fails the
-/// install.
-fn write_install_dir_file(file: &Path, dir: &Path) {
-    if let Some(parent) = file.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
-            return;
-        }
-    }
-    // A trailing newline is harmless — the reader trims.
-    let _ = std::fs::write(file, format!("{}\n", dir.display()));
-}
-
-fn read_persisted_install_dir() -> Option<String> {
-    read_install_dir_file(&persisted_install_dir_file())
-}
-
-fn persist_install_dir(dir: &Path) {
-    write_install_dir_file(&persisted_install_dir_file(), dir);
-}
-
-/// Resolve the effective install dir for this run.
-/// Priority: an explicitly passed --dir always wins; otherwise the dir
-/// persisted by a previous successful install; otherwise the default.
-pub(crate) fn resolve_install_dir(
-    dir_arg: Option<&Path>,
-    persisted: Option<&str>,
-    default: &Path,
-) -> PathBuf {
-    if let Some(d) = dir_arg {
-        return d.to_path_buf();
-    }
-    if let Some(p) = persisted {
-        let trimmed = p.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
-    }
-    default.to_path_buf()
 }
 
 fn md5_of_file(path: &Path) -> Result<String, String> {
@@ -230,7 +140,7 @@ async fn probe_range(client: &reqwest::Client, url: &str) -> bool {
 ///
 /// `progress` optionally carries `(&Progress, stage_name)`; the stage's
 /// percent range is filled as bytes arrive. Never blocks, never panics.
-pub(crate) async fn download(
+async fn download(
     client: &reqwest::Client,
     url: &str,
     dest: &Path,
@@ -250,27 +160,6 @@ pub(crate) async fn download(
     if dest.exists() {
         println!("[{label}] existing file failed verification, re-downloading.");
         std::fs::remove_file(dest).map_err(|e| e.to_string())?;
-    }
-    // Fast path: parallel segmented download (16 Range segments) for anything
-    // not known-small. Any failure falls through to the classic single
-    // stream below — speed can never break a download.
-    if expected_size.map(|s| s >= segmented::SEGMENT_MIN_SIZE).unwrap_or(true) {
-        match segmented::download_segmented(
-            client,
-            url,
-            dest,
-            expected_md5,
-            expected_size,
-            label,
-            progress,
-        )
-        .await
-        {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                eprintln!("[{label}] segmented download failed ({e}); single-stream fallback.");
-            }
-        }
     }
     let part: PathBuf = {
         let mut p = dest.as_os_str().to_owned();
@@ -380,39 +269,6 @@ pub(crate) async fn download(
     }
 }
 
-/// Download trying each mirror URL in order until one verifies.
-///
-/// Mirrors must serve the byte-identical file (same MD5): a corrupt mirror
-/// just fails verification and the next mirror is tried. Segment part-files
-/// are even resumable across mirrors since the bytes are identical.
-pub(crate) async fn download_mirrored(
-    client: &reqwest::Client,
-    urls: &[&str],
-    dest: &Path,
-    expected_md5: Option<&str>,
-    expected_size: Option<u64>,
-    label: &str,
-    progress: Option<(&progress::Progress, &'static str)>,
-) -> Result<(), String> {
-    let mut last_err = format!("{label}: no mirrors configured");
-    for (i, url) in urls.iter().enumerate() {
-        if i > 0 {
-            println!("[{label}] mirror {} failed ({last_err}); trying mirror {} ...", i, i + 1);
-            if let Some((p, stage)) = progress {
-                p.set_stage(stage);
-            }
-        }
-        match download(client, url, dest, expected_md5, expected_size, label, progress).await
-        {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                last_err = e;
-            }
-        }
-    }
-    Err(format!("{label}: all {} mirrors failed (last: {last_err})", urls.len()))
-}
-
 fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Result<(), String> {
     println!("[{label}] extracting...");
     let f = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
@@ -456,106 +312,31 @@ fn write_plugin_config(dir: &Path, ns_host: &str, rt: &str, voice: &str, chat: &
     Ok(())
 }
 
-/// Ensure the Windows hosts file maps ns.rec.net to the backend IP.
-/// The 2023 client resolves ns.rec.net itself via System.Net.Dns, bypassing
-/// the plugin's HTTP-level redirect. On machines where that dead hostname
-/// doesn't resolve (e.g., certain ISPs), the game hangs at "Connecting to
-/// server..." forever. This maps it to the backend so DNS succeeds.
-/// Idempotent, fail-soft (a hosts write failure never breaks the install).
-#[cfg(windows)]
-pub(crate) fn ensure_ns_hosts_entry(ns_host: &str) {
-    use std::net::ToSocketAddrs;
-
-    // Resolve ns_host to an IP. If it's already an IP, use it directly.
-    let ip = if ns_host.parse::<std::net::IpAddr>().is_ok() {
-        ns_host.to_string()
-    } else {
-        // Try to resolve the hostname to an IP
-        match format!("{}:80", ns_host).to_socket_addrs() {
-            Ok(mut addrs) => match addrs.next() {
-                Some(addr) => addr.ip().to_string(),
-                None => {
-                    eprintln!("[hosts] WARNING: could not resolve {}; skipping hosts entry.", ns_host);
-                    return;
-                }
-            },
-            Err(e) => {
-                eprintln!("[hosts] WARNING: DNS resolution failed for {} ({}); skipping hosts entry.", ns_host, e);
-                return;
-            }
-        }
-    };
-
-    // 2026-09-24 (defender.rs hardening): don't BE the malware — writing to
-    // the hosts file is itself AV-suspicious, so only touch it when needed.
-    // If ns.rec.net already resolves to the backend IP (the system resolver
-    // honors the hosts file too), there is nothing to fix: skip the write
-    // entirely.
-    if crate::defender::ns_resolution_ok(&ip) {
-        println!("[hosts] ns.rec.net already resolves to {ip}; nothing to do.");
-        return;
+/// Keep the BepInEx console window from popping at game launch.
+///
+/// Appends `[Logging.Console] Enabled = false` to BepInEx.cfg when no
+/// `[Logging.Console]` section exists yet. Never rewrites or clobbers an
+/// existing config — purely additive. Fail-soft: the launcher also spawns
+/// the game with CREATE_NO_WINDOW, so this is belt-and-braces.
+fn write_bepinex_console_config(dir: &Path) -> Result<(), String> {
+    let cfg_path = dir.join("BepInEx").join("config").join("BepInEx.cfg");
+    if let Some(parent) = cfg_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-
-    let hosts_path = std::path::Path::new("C:\\Windows\\System32\\drivers\\etc\\hosts");
-    let content = match std::fs::read_to_string(hosts_path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[hosts] WARNING: cannot read hosts file ({}); skipping.", e);
-            return;
-        }
-    };
-
-    let entry = format!("{} ns.rec.net", ip);
-    // Check if the correct entry already exists
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') || trimmed.is_empty() {
-            continue;
-        }
-        // If ns.rec.net is already mapped (to any IP), we need to update or skip
-        if trimmed.contains("ns.rec.net") {
-            if trimmed == entry {
-                println!("[hosts] ns.rec.net already mapped to {}; nothing to do.", ip);
-                return;
-            } else {
-                // Entry exists but with different IP — remove old lines and add new
-                let new_content: Vec<&str> = content
-                    .lines()
-                    .filter(|l| !l.trim().contains("ns.rec.net"))
-                    .collect();
-                let mut updated = new_content.join("\n");
-                updated.push_str(&format!("\n{} # Flux Rec backend\n", entry));
-                if let Err(e) = std::fs::write(hosts_path, updated) {
-                    eprintln!("[hosts] WARNING: cannot update hosts file ({}); skipping.", e);
-                } else {
-                    println!("[hosts] updated ns.rec.net -> {} in hosts file.", ip);
-                }
-                return;
-            }
-        }
+    let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+    if existing.contains("[Logging.Console]") {
+        println!("[config] BepInEx.cfg already has [Logging.Console], leaving it.");
+        return Ok(());
     }
-
-    // No existing entry — append
-    let mut updated = content;
-    if !updated.ends_with('\n') {
-        updated.push('\n');
+    let mut out = existing;
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
     }
-    updated.push_str(&format!("{} # Flux Rec backend\n", entry));
-    match std::fs::write(hosts_path, updated) {
-        Ok(_) => println!("[hosts] added {} to hosts file.", entry),
-        Err(e) => eprintln!("[hosts] WARNING: cannot write hosts file ({}); game may hang at 'Connecting to server' if DNS fails.", e),
-    }
+    out.push_str("\n[Logging.Console]\nEnabled = false\n");
+    std::fs::write(&cfg_path, out).map_err(|e| e.to_string())?;
+    println!("[config] disabled BepInEx console window in BepInEx.cfg.");
+    Ok(())
 }
-
-#[cfg(not(windows))]
-pub(crate) fn ensure_ns_hosts_entry(_ns_host: &str) {
-    // No-op on non-Windows (only used for local testing)
-}
-
-// NOTE (2026-09-24): `unblock_file` moved to defender.rs
-// (`defender::unblock_file`) — same behavior, but via the hidden
-// PowerShell helper (no console flash) and applied to every
-// internet-sourced file we write, not just the plugin DLL.
 
 #[cfg(windows)]
 fn ps_escape(s: &str) -> String {
@@ -563,33 +344,20 @@ fn ps_escape(s: &str) -> String {
 }
 
 /// Windows-only: create a .lnk via WScript.Shell. Skipped elsewhere.
-fn create_shortcut(
-    lnk: &Path,
-    target: &Path,
-    args: &str,
-    workdir: &Path,
-    icon: Option<&Path>,
-) -> Result<(), String> {
+fn create_shortcut(lnk: &Path, target: &Path, args: &str, workdir: &Path) -> Result<(), String> {
     #[cfg(not(windows))]
     {
-        let _ = (lnk, target, args, workdir, icon);
+        let _ = (lnk, target, args, workdir);
         println!("[shortcut] skipped (not Windows): {}", lnk.display());
         return Ok(());
     }
     #[cfg(windows)]
     {
-        let icon_line = match icon {
-            Some(p) => format!(
-                "$sc.IconLocation = '{ico}';",
-                ico = ps_escape(&p.to_string_lossy())
-            ),
-            None => String::new(),
-        };
         let cmd = format!(
             "$ws = New-Object -ComObject WScript.Shell; \
              $sc = $ws.CreateShortcut('{lnk}'); \
              $sc.TargetPath = '{tgt}'; $sc.Arguments = '{args}'; \
-             $sc.WorkingDirectory = '{wd}'; $sc.Description = 'Flux Rec'; {icon_line} $sc.Save()",
+             $sc.WorkingDirectory = '{wd}'; $sc.Description = 'Flux Rec'; $sc.Save()",
             lnk = ps_escape(&lnk.to_string_lossy()),
             tgt = ps_escape(&target.to_string_lossy()),
             args = ps_escape(args),
@@ -622,15 +390,6 @@ pub(crate) fn find_game_exe(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Upgrade-mode decision (pure): skip the ~3.8GB client.zip download +
-/// extract when the game exe is already present in the dir. Re-running setup
-/// then only repairs/refreshes the Steam bypass, logo bundle, BepInEx,
-/// plugin, config, and shortcuts in place — never re-downloading the client,
-/// and never wiping the dir.
-pub(crate) fn should_skip_client_download(dir: &Path) -> bool {
-    find_game_exe(dir).is_some()
-}
-
 fn create_shortcuts(dir: &Path) -> Result<(), String> {
     let exe = match find_game_exe(dir) {
         Some(p) => p,
@@ -656,10 +415,6 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
             match std::fs::copy(&me, &launcher_exe) {
                 Ok(_) => {
                     println!("[shortcut] installed launcher: {}", launcher_exe.display());
-                    // AV hardening (2026-09-24): a copied exe keeps its
-                    // Mark-of-the-Web; clear it so Defender/SmartScreen treat
-                    // the launcher like a local file.
-                    defender::unblock_file(&launcher_exe);
                     true
                 }
                 Err(e) => {
@@ -694,18 +449,12 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         let desktop_dir = String::from_utf8_lossy(&desktop.stdout).trim().to_string();
         let desktop_lnk = PathBuf::from(format!("{desktop_dir}\\Flux Rec.lnk"));
-        // Blue logo icon for both shortcuts (fail-soft: generic icon if the
-        // write fails).
-        let icon_path = dir.join("fluxrec.ico");
-        if let Err(e) = assets::write_icon_ico(&icon_path) {
-            eprintln!("[shortcut] WARNING: icon write failed ({}).", e);
-        }
-        create_shortcut(&start_menu, &target, args, dir, Some(&icon_path))?;
-        create_shortcut(&desktop_lnk, &target, args, dir, Some(&icon_path))?;
+        create_shortcut(&start_menu, &target, args, dir)?;
+        create_shortcut(&desktop_lnk, &target, args, dir)?;
     }
     #[cfg(not(windows))]
     {
-        create_shortcut(&PathBuf::from("Flux Rec.lnk"), &target, args, dir, None)?;
+        create_shortcut(&PathBuf::from("Flux Rec.lnk"), &target, args, dir)?;
     }
     Ok(())
 }
@@ -802,8 +551,6 @@ async fn apply_logo_bundle(
         Some((progress, "Applying Flux Rec branding…")),
     )
     .await?;
-    // AV hardening (defender.rs): strip the Mark of the Web from the archive.
-    defender::unblock_file(&gz_path);
 
     let res = install_logo_bundle(
         &gz_path,
@@ -831,45 +578,29 @@ async fn run_install(
         .build()
         .map_err(|e| e.to_string())?;
 
-    // 1. Game client. UPGRADE MODE: if the game is already installed
-    // (RecRoom.exe present), skip the ~3.8GB download + extract entirely —
-    // every step below still runs in the same order, so setup repairs and
-    // refreshes everything else in place. The game dir is never wiped.
-    let skip_client_download = should_skip_client_download(dir);
-    if skip_client_download {
-        println!(
-            "[upgrade] game already installed at {} — skipping client download.",
-            dir.display()
-        );
-        progress.set_stage("Skipping game files (already installed)…");
-    } else {
-        let client_zip = dir.join("client.zip");
-        download_mirrored(
-            &client,
-            CLIENT_ZIP_MIRRORS,
-            &client_zip,
-            Some(CLIENT_ZIP_MD5),
-            None,
-            "client",
-            Some((progress, "Downloading game files…")),
-        )
-        .await?;
-        // AV hardening (defender.rs): strip the Mark of the Web from the
-        // archive before extracting it.
-        defender::unblock_file(&client_zip);
-        progress.set_stage("Extracting game files…");
-        extract_zip(&client_zip, dir, "client")?;
-        let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
-    }
+    // 1. Game client.
+    let client_zip = dir.join("client.zip");
+    download(
+        &client,
+        CLIENT_ZIP_URL,
+        &client_zip,
+        Some(CLIENT_ZIP_MD5),
+        None,
+        "client",
+        Some((progress, "Downloading game files…")),
+    )
+    .await?;
+    progress.set_stage("Extracting game files…");
+    extract_zip(&client_zip, dir, "client")?;
+    let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
 
     // 1a. Steam bypass FIRST: the game cannot boot without this, and no
-    // later step may ever prevent it from being in place. Pipeline:
-    // VC++ 2022 runtime (the vs22-built emulator DLL crashes without it)
-    // -> Goldberg emulator (proven) -> minimal stub fallback.
-    // Never hard-fails the whole install on the bypass alone: the stub
-    // keeps the game bootable even if the emulator cannot be fetched.
-    let bypass_method = bypass::apply_steam_bypass(&client, dir, progress).await?;
-    println!("[install] Steam bypass in place: {bypass_method:?}.");
+    // later step may ever prevent it from being in place. This swaps the
+    // stock steam_api64.dll for the Goldberg emulator (the setup our cloud
+    // test runs prove boots with no Steam client installed). Hard-fails:
+    // without a working Steam bypass the install is unplayable, so fail
+    // loudly instead of shipping a broken game.
+    apply_goldberg_steam_fix(&client, dir, progress).await?;
 
     // 1b. Flux Rec logo bundle: patched loading-screen bundle over the stock one.
     // Never triggers a full client re-download: applies in place, stock backed up once.
@@ -891,8 +622,6 @@ async fn run_install(
         Some((progress, "Installing BepInEx…")),
     )
     .await?;
-    // AV hardening (defender.rs): strip the Mark of the Web from the archive.
-    defender::unblock_file(&bepinex_zip);
     extract_zip(&bepinex_zip, dir, "bepinex")?;
     let _ = std::fs::remove_file(&bepinex_zip);
 
@@ -915,11 +644,6 @@ async fn run_install(
     .await;
     if let Err(e) = plugin_res {
         eprintln!("[plugin] WARNING: plugin step failed ({}); continuing.", e);
-    } else {
-        // Unblock the plugin DLL (defender.rs): files that came from the
-        // internet carry the Zone.Identifier "Mark of the Web", and .NET
-        // can refuse to load them. Remove the flag so BepInEx loads the plugin.
-        defender::unblock_file(&plugins_dir.join("RecNetPlugin.dll"));
     }
 
     // 4. Plugin config (ns host + Photon IDs baked at packaging time).
@@ -928,30 +652,17 @@ async fn run_install(
     if let Err(e) = write_plugin_config(dir, ns_host, photon_rt, photon_voice, photon_chat) {
         eprintln!("[config] WARNING: plugin config step failed ({}); continuing.", e);
     }
-    // 4a. Hosts entry for ns.rec.net: the client resolves this hostname itself
-    // via System.Net.Dns, bypassing the plugin's HTTP redirect. On ISPs where
-    // the dead hostname doesn't resolve, the game hangs at "Connecting to
-    // server..." — this maps it to the backend IP. Idempotent, fail-soft.
-    ensure_ns_hosts_entry(ns_host);
-    // 4b. Keep the BepInEx console window off at game launch. This is the
-    // REAL kill switch: BepInEx 6.0.0-pre.2 defaults Logging.Console/Enabled
-    // to true and AllocConsoles its own window inside the game process, so
-    // no spawn flag can stop it. Corrective: repairs stale Enabled=true
-    // from earlier installs (the old additive-only writer left those behind
-    // forever); infallible per the stealth.rs contract.
-    stealth::ensure_bepinex_console_disabled(dir);
+    // 4b. Keep the BepInEx console window off at game launch (belt-and-braces
+    // alongside the hidden spawn flags used by the launcher).
+    if let Err(e) = write_bepinex_console_config(dir) {
+        eprintln!("[config] WARNING: bepinex console config failed ({}); continuing.", e);
+    }
 
     // 6. Shortcuts. Fail-soft: missing shortcuts never break the game.
     progress.set_stage("Creating shortcuts…");
     if let Err(e) = create_shortcuts(dir) {
         eprintln!("[shortcut] WARNING: shortcut step failed ({}); continuing.", e);
     }
-
-    // 6b. Defender exclusion (defender.rs, 2026-09-24): Windows Security
-    // quarantined a game file on Armin's PC, hanging the game at
-    // "Connecting to server...". Exclude the game dir so it can't happen
-    // again. Idempotent, fail-soft, silent.
-    defender::ensure_defender_exclusions(dir);
 
     // 7. Final verification: report exactly what is (and isn't) in place,
     // so a broken install is never silent.
@@ -983,10 +694,6 @@ async fn run_install(
         eprintln!("[verify] WARNING: missing: {}.", missing.join(", "));
     }
 
-    // Remember the install dir for future runs (launcher + later setup
-    // invocations without --dir). Fail-soft; see persist_install_dir.
-    persist_install_dir(dir);
-
     Ok(())
 }
 
@@ -1004,11 +711,10 @@ async fn run_install(
 ///   5. Deletes the legacy root `steam_appid.txt` (the old 480 trick) if a
 ///      previous install left one behind.
 ///
-/// Hard-fails on download/extract errors: without the emulator the bypass
-/// pipeline falls back to the minimal stub (see `bypass::apply_steam_bypass`),
-/// so a broken download must surface loudly rather than silently shipping
-/// the weaker fallback.
-pub(crate) async fn apply_goldberg_steam_fix(
+/// Hard-fails: without this the game shows "Failed to initialize Steam
+/// Platform" and cannot boot, so a broken download must fail loudly rather
+/// than ship an unplayable install.
+async fn apply_goldberg_steam_fix(
     client: &reqwest::Client,
     dir: &Path,
     progress: &progress::Progress,
@@ -1035,8 +741,6 @@ pub(crate) async fn apply_goldberg_steam_fix(
         Some((progress, "Applying Steam bypass…")),
     )
     .await?;
-    // AV hardening (defender.rs): strip the Mark of the Web from the archive.
-    defender::unblock_file(&sevenz_path);
 
     // 2. Extract; we only need the one win-x64 DLL.
     let extract_dir = dir.join(".gbe-extract");
@@ -1062,9 +766,6 @@ pub(crate) async fn apply_goldberg_steam_fix(
     }
     std::fs::copy(&gbe_dll, &stock_dll)
         .map_err(|e| format!("steam emulator install failed: {e}"))?;
-    // AV hardening (defender.rs): the emulator DLL is a classic heuristic
-    // target and must also be loadable by the game without a MotW flag.
-    defender::unblock_file(&stock_dll);
 
     // 4. steam_settings: app ID + interfaces list.
     let settings_dir = plug_dir.join("steam_settings");
@@ -1114,57 +815,9 @@ pub(crate) fn spawn_gui(
     })
 }
 
-/// Native Win32 message box. `error` selects the error vs warning icon.
-/// A failed install must NEVER look successful — this is how v0.1.7's
-/// problems went undiagnosed. Non-Windows: no-op (callers also eprintln).
-#[cfg(windows)]
-pub(crate) fn message_box(title: &str, text: &str, error: bool) {
-    use windows::core::{HSTRING, PCWSTR};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        MessageBoxW, MB_ICONERROR, MB_ICONWARNING, MB_OK,
-    };
-    let title_h = HSTRING::from(title);
-    let text_h = HSTRING::from(text);
-    let style = MB_OK | if error { MB_ICONERROR } else { MB_ICONWARNING };
-    unsafe {
-        MessageBoxW(
-            None,
-            PCWSTR(text_h.as_ptr()),
-            PCWSTR(title_h.as_ptr()),
-            style,
-        );
-    }
-}
-
-/// OK/Cancel variant. Returns true when the user pressed OK.
-#[cfg(windows)]
-pub(crate) fn message_box_ok_cancel(title: &str, text: &str) -> bool {
-    use windows::core::{HSTRING, PCWSTR};
-    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDOK, MB_ICONWARNING, MB_OKCANCEL};
-    let title_h = HSTRING::from(title);
-    let text_h = HSTRING::from(text);
-    unsafe {
-        MessageBoxW(
-            None,
-            PCWSTR(text_h.as_ptr()),
-            PCWSTR(title_h.as_ptr()),
-            MB_OKCANCEL | MB_ICONWARNING,
-        ) == IDOK
-    }
-}
-
-#[cfg(not(windows))]
-pub(crate) fn message_box(_title: &str, _text: &str, _error: bool) {}
-
-#[cfg(not(windows))]
-pub(crate) fn message_box_ok_cancel(_title: &str, _text: &str) -> bool {
-    true
-}
-
 fn main() {
     stealth::hide_own_console(); // first: no console flash, ever
     let mut dir = default_install_dir();
-    let mut dir_arg: Option<PathBuf> = None;
     let mut ns_arg: Option<String> = None;
     let mut rt_arg: Option<String> = None;
     let mut voice_arg: Option<String> = None;
@@ -1176,7 +829,7 @@ fn main() {
         match a.as_str() {
             "--dir" => {
                 if let Some(v) = args.next() {
-                    dir_arg = Some(PathBuf::from(v));
+                    dir = PathBuf::from(v);
                 }
             }
             "--ns-host" => ns_arg = args.next(),
@@ -1188,15 +841,6 @@ fn main() {
             _ => {}
         }
     }
-    // --dir always wins when explicitly passed; otherwise fall back to the
-    // dir persisted by the last successful install, then the default. This
-    // resolution happens before --play/--updated dispatch so the launcher
-    // and update flows benefit from it too.
-    dir = resolve_install_dir(
-        dir_arg.as_deref(),
-        read_persisted_install_dir().as_deref(),
-        &dir,
-    );
     let ns_host = resolve_value(ns_arg, "FLUXREC_NS_HOST", NS_HOST_DEFAULT);
     let photon_rt = resolve_value(rt_arg, "FLUXREC_PHOTON_RT", PHOTON_RT_DEFAULT);
     let photon_voice = resolve_value(voice_arg, "FLUXREC_PHOTON_VOICE", PHOTON_VOICE_DEFAULT);
@@ -1206,40 +850,6 @@ fn main() {
     // Never returns.
     if play_mode {
         launcher::run_launcher(&dir, &ns_host, &photon_rt, &photon_voice, &photon_chat);
-    }
-
-    // Install mode needs administrator rights: the VC++ runtime silent
-    // install and the game-dir writes both require them. Re-launch elevated
-    // once instead of failing halfway with access-denied errors.
-    #[cfg(windows)]
-    if !vcredist::is_admin() {
-        match vcredist::relaunch_elevated() {
-            Ok(()) => std::process::exit(0), // the elevated child continues
-            Err(e) => {
-                if updated_mode {
-                    // Auto-update that can't elevate must not strand the
-                    // player: launch the already-installed game instead of
-                    // dying here. (UAC cancel also lands in this arm.)
-                    eprintln!("[updated] elevation unavailable ({e}) — launching installed game.");
-                    let (progress, rx) = progress::channel();
-                    let gui_thread = spawn_gui(rx);
-                    launcher::launch_game(&dir, &progress);
-                    progress.done();
-                    let _ = gui_thread.join();
-                    std::process::exit(0);
-                }
-                message_box(
-                    "Flux Rec Setup",
-                    &format!(
-                        "Could not request administrator rights: {e}\n\n\
-                         Please right-click FluxRec-Setup.exe and choose \
-                         \"Run as administrator\"."
-                    ),
-                    true,
-                );
-                std::process::exit(1);
-            }
-        }
     }
 
     // Install mode: pretty window + hidden console from here on.
@@ -1259,16 +869,6 @@ fn main() {
         &progress,
     )) {
         eprintln!("ERROR: {e}");
-        // Visible failure: a native message box with the actual error text.
-        // A failed install can never again look successful.
-        message_box(
-            "Flux Rec Setup",
-            &format!(
-                "Flux Rec install failed:\n\n{e}\n\n\
-                 Please take a screenshot of this message and send it to Ripo Team."
-            ),
-            true,
-        );
         let msg = format!("Install failed: {e}");
         let short = msg.chars().take(90).collect::<String>();
         progress.set_status(&short, 100);
@@ -1313,80 +913,6 @@ mod tests {
 
     fn md5_of(bytes: &[u8]) -> String {
         format!("{:x}", md5::compute(bytes))
-    }
-
-    #[test]
-    fn upgrade_skips_client_download_only_when_exe_present() {
-        let with_exe = tmp_dir("upgrade-with-exe");
-        std::fs::write(with_exe.join("RecRoom.exe"), b"fake-exe").unwrap();
-        assert!(should_skip_client_download(&with_exe));
-
-        // The lowercase fallback counts as present too.
-        let lower = tmp_dir("upgrade-lower");
-        std::fs::write(lower.join("recroom.exe"), b"fake-exe").unwrap();
-        assert!(should_skip_client_download(&lower));
-
-        // A dir with other files but no game exe: no skip (fresh install).
-        let no_exe = tmp_dir("upgrade-no-exe");
-        std::fs::write(no_exe.join("some-other-file.txt"), b"junk").unwrap();
-        assert!(!should_skip_client_download(&no_exe));
-
-        let _ = std::fs::remove_dir_all(&with_exe);
-        let _ = std::fs::remove_dir_all(&lower);
-        let _ = std::fs::remove_dir_all(&no_exe);
-    }
-
-    #[test]
-    fn resolve_install_dir_priority_arg_persisted_default() {
-        let default = PathBuf::from(r"C:\Games\FluxRec");
-        let arg = Path::new(r"D:\MyGames\FluxRec");
-        let persisted = r"C:\Games\FluxRec-Old";
-
-        // Explicit --dir wins over everything.
-        assert_eq!(
-            resolve_install_dir(Some(arg), Some(persisted), &default),
-            arg
-        );
-        // Persisted dir wins over the default.
-        assert_eq!(
-            resolve_install_dir(None, Some(persisted), &default),
-            PathBuf::from(persisted)
-        );
-        // Blank persisted content falls back to the default.
-        assert_eq!(resolve_install_dir(None, Some("   \n"), &default), default);
-        assert_eq!(resolve_install_dir(None, None, &default), default);
-    }
-
-    #[test]
-    fn persisted_install_dir_roundtrip_trims_and_ignores_empty() {
-        let root = tmp_dir("persisted");
-        let file = install_dir_file_in(root.to_str().unwrap());
-        assert_eq!(file, root.join("FluxRec").join("install_dir.txt"));
-
-        // Missing file -> None.
-        assert_eq!(read_install_dir_file(&file), None);
-
-        let dir = PathBuf::from(r"C:\Games\FluxRec");
-        write_install_dir_file(&file, &dir);
-        assert!(file.exists());
-        assert_eq!(
-            read_install_dir_file(&file),
-            Some(dir.display().to_string())
-        );
-
-        // The writer's trailing newline must not change resolution.
-        let raw = std::fs::read_to_string(&file).unwrap();
-        assert!(raw.ends_with('\n'));
-        assert_eq!(
-            resolve_install_dir(None, Some(&raw), &PathBuf::from(r"D:\other")),
-            dir
-        );
-
-        // Empty/blank file -> None (caller falls back to default).
-        std::fs::write(&file, "  \n ").unwrap();
-        assert_eq!(read_install_dir_file(&file), None);
-
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

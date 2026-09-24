@@ -8,10 +8,8 @@
 //! installs over the game dir and then launches the game itself.
 //!
 //! Design rules:
-//!   * The check runs on EVERY launch (no skip-cache): a release published
-//!     minutes after the last launch must be offered on the next one, and
-//!     the player was promised a visible check each time. A live check has
-//!     a 5s timeout so a dead network never stalls a launch.
+//!   * FAST when there is nothing to do: a 24h check cache means repeat
+//!     launches skip the network entirely; a live check has an 8s timeout.
 //!   * FAIL-SOFT: any network/parse error -> `UpToDate`, the game launches
 //!     anyway. An update check must never strand the player.
 //!   * No Win32 code: compiles and runs on Linux unchanged.
@@ -25,11 +23,11 @@ use crate::progress::Progress;
 const RELEASES_URL: &str =
     "https://api.github.com/repos/riporipoteam-ctrl/rrflux/releases?per_page=20";
 const SETUP_ASSET_NAME: &str = "FluxRec-Setup.exe";
+/// Skip the network check if the last one completed more recently than this.
+const CHECK_CACHE_SECS: u64 = 24 * 3600;
 /// Hard ceiling for the whole update check (keeps launches snappy).
-const CHECK_TIMEOUT_SECS: u64 = 5;
+const CHECK_TIMEOUT_SECS: u64 = 8;
 
-/// Diagnostic record of the last completed check. Written after every
-/// check; never read to skip one — every launch checks live.
 fn cache_path(install_dir: &Path) -> std::path::PathBuf {
     install_dir.join(".fluxrec_last_update_check")
 }
@@ -41,8 +39,14 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Record when the last check completed (diagnostic only; never gates a
-/// future check).
+fn cache_fresh(install_dir: &Path) -> bool {
+    let p = cache_path(install_dir);
+    let txt = std::fs::read_to_string(p).unwrap_or_default();
+    let then: u64 = txt.trim().parse().unwrap_or(0);
+    let now = now_secs();
+    then > 0 && now >= then && now - then < CHECK_CACHE_SECS
+}
+
 fn stamp_cache(install_dir: &Path) {
     let _ = std::fs::write(cache_path(install_dir), now_secs().to_string());
 }
@@ -69,7 +73,7 @@ fn current_version() -> (u64, u64, u64) {
 
 /// What the update check decided.
 pub enum UpdateDecision {
-    /// No newer setup, or the check failed: just launch the game.
+    /// No newer setup, or the check failed/ was skipped: just launch the game.
     UpToDate,
     /// A newer setup is available at `download_url`.
     Available { version: String, download_url: String },
@@ -77,13 +81,14 @@ pub enum UpdateDecision {
 
 /// Ask GitHub releases for a newer `FluxRec-Setup.exe`.
 ///
-/// Shows "Checking for updates\u{2026}" on the progress handle. The check
-/// runs live on every call — there is deliberately no skip-cache: stamping
-/// "nothing new" (or a transient failure) must never hide a release that
-/// appears minutes later. Returns [`UpdateDecision::UpToDate`] on any
-/// failure — never an error.
+/// Shows "Checking for updates\u{2026}" on the progress handle. Returns
+/// [`UpdateDecision::UpToDate`] on any failure — never an error.
 pub async fn check_for_updates(install_dir: &Path, progress: &Progress) -> UpdateDecision {
     progress.set_status("Checking for updates\u{2026}", 5);
+
+    if cache_fresh(install_dir) {
+        return UpdateDecision::UpToDate;
+    }
 
     let client = match reqwest::Client::builder()
         .user_agent("FluxRec-Launcher")
@@ -95,8 +100,8 @@ pub async fn check_for_updates(install_dir: &Path, progress: &Progress) -> Updat
     };
 
     let decision = check_inner(&client).await;
-    // Diagnostic record of the completed check. This is not a gate: the
-    // next launch checks live again regardless.
+    // Stamp the cache whenever a check *completed* (even a failed one —
+    // hammering a broken network every launch helps nobody).
     stamp_cache(install_dir);
     decision
 }
@@ -118,19 +123,15 @@ async fn check_inner(client: &reqwest::Client) -> UpdateDecision {
         Ok(t) => t,
         Err(_) => return UpdateDecision::UpToDate,
     };
-    // A non-array body (e.g. an API error object) parses as Err here and
-    // falls through to UpToDate, same as before.
-    let releases: Vec<serde_json::Value> = match serde_json::from_str(&text) {
+    let body: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(_) => return UpdateDecision::UpToDate,
     };
-    find_update(&releases, current_version())
-}
-
-/// Pure update decision over a releases list (newest first, as the GitHub
-/// API returns it). Split out from the network fetch so the product-line
-/// filter and version comparison are unit-testable.
-fn find_update(releases: &[serde_json::Value], current: (u64, u64, u64)) -> UpdateDecision {
+    let releases = match body.as_array() {
+        Some(a) => a,
+        None => return UpdateDecision::UpToDate,
+    };
+    let current = current_version();
     // The API returns newest first: the first release carrying our asset
     // that is newer than us wins.
     for rel in releases {
@@ -221,108 +222,16 @@ mod tests {
         assert_eq!(parse_version("v0.1.7"), Some((0, 1, 7)));
         assert_eq!(parse_version("0.1.6"), Some((0, 1, 6)));
         assert_eq!(parse_version("recflare-installer-v0.1.1"), Some((0, 1, 1)));
-        assert_eq!(
-            parse_version("recflare-installer-v0.1.11"),
-            Some((0, 1, 11))
-        );
         assert_eq!(parse_version("v10.2"), Some((10, 2, 0)));
         assert_eq!(parse_version("nope"), None);
         assert!((0, 1, 7) > (0, 1, 6));
-        assert!((0, 1, 11) > (0, 1, 10));
-    }
-
-    fn rel(tag: &str, asset_url: Option<&str>) -> serde_json::Value {
-        let assets = match asset_url {
-            Some(url) => serde_json::json!([{
-                "name": "FluxRec-Setup.exe",
-                "browser_download_url": url,
-            }]),
-            None => serde_json::json!([]),
-        };
-        serde_json::json!({ "tag_name": tag, "assets": assets })
     }
 
     #[test]
-    fn find_update_picks_newest_newer_release_with_asset() {
-        // Newest-first, as the API returns them.
-        let releases = vec![
-            rel("recflare-installer-v0.1.11", Some("https://dl/0.1.11.exe")),
-            rel("recflare-installer-v0.1.10", Some("https://dl/0.1.10.exe")),
-        ];
-        match find_update(&releases, (0, 1, 10)) {
-            UpdateDecision::Available { version, download_url } => {
-                assert_eq!(version, "recflare-installer-v0.1.11");
-                assert_eq!(download_url, "https://dl/0.1.11.exe");
-            }
-            UpdateDecision::UpToDate => panic!("expected an update"),
-        }
-    }
-
-    #[test]
-    fn find_update_ignores_same_or_older_versions() {
-        let releases = vec![
-            rel("recflare-installer-v0.1.10", Some("https://dl/0.1.10.exe")),
-            rel("recflare-installer-v0.1.9", Some("https://dl/0.1.9.exe")),
-        ];
-        assert!(matches!(
-            find_update(&releases, (0, 1, 10)),
-            UpdateDecision::UpToDate
-        ));
-    }
-
-    #[test]
-    fn find_update_ignores_other_product_lines() {
-        // The v0.5.x bootstrap line also ships a FluxRec-Setup.exe asset
-        // but must never pull the recflare line across products — even
-        // though 0.5.8 > 0.1.10 numerically.
-        let releases = vec![
-            rel("v0.5.8", Some("https://dl/bootstrap.exe")),
-            rel("recflare-installer-v0.1.10", Some("https://dl/0.1.10.exe")),
-        ];
-        assert!(matches!(
-            find_update(&releases, (0, 1, 10)),
-            UpdateDecision::UpToDate
-        ));
-    }
-
-    #[test]
-    fn find_update_skips_releases_without_usable_asset() {
-        // Newer tag but no asset / no download URL: keep scanning, don't
-        // offer a broken update.
-        let releases = vec![
-            rel("recflare-installer-v0.1.12", None),
-            rel("recflare-installer-v0.1.11", Some("https://dl/0.1.11.exe")),
-        ];
-        match find_update(&releases, (0, 1, 10)) {
-            UpdateDecision::Available { version, .. } => {
-                assert_eq!(version, "recflare-installer-v0.1.11");
-            }
-            UpdateDecision::UpToDate => panic!("expected an update"),
-        }
-    }
-
-    #[test]
-    fn find_update_ignores_unparseable_tags() {
-        let releases = vec![
-            rel("recflare-installer-latest", Some("https://dl/x.exe")),
-            rel("recflare-installer-v0.1.11", Some("https://dl/0.1.11.exe")),
-        ];
-        match find_update(&releases, (0, 1, 10)) {
-            UpdateDecision::Available { version, .. } => {
-                assert_eq!(version, "recflare-installer-v0.1.11");
-            }
-            UpdateDecision::UpToDate => panic!("expected an update"),
-        }
-    }
-
-    #[test]
-    fn last_check_record_is_written_and_parseable() {
+    fn stale_cache_is_not_fresh() {
         let d = std::env::temp_dir().join("fluxrec-upd-test");
         let _ = std::fs::create_dir_all(&d);
-        stamp_cache(&d);
-        let txt = std::fs::read_to_string(cache_path(&d)).unwrap();
-        let then: u64 = txt.trim().parse().expect("timestamp must parse");
-        assert!(then > 0 && then <= now_secs());
+        assert!(!cache_fresh(&d));
         let _ = std::fs::remove_dir_all(&d);
     }
 }
