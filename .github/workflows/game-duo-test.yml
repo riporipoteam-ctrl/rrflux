@@ -146,7 +146,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Content -Path D:\runscript.ps1 -Value @'
-          param([int]$ProcId, [string]$Script)
+          param([int]$Pid, [string]$Script)
           Add-Type -AssemblyName System.Drawing
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type @"
@@ -155,26 +155,14 @@ jobs:
               [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
               [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
               [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
-              [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr e);
               [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
             }
           "@
-          $VK = @{ W=0x57; A=0x41; S=0x53; D=0x44; F=0x46; E=0x45; SPACE=0x20 }
-          function Hold-Key($keyName, $seconds) {
-            $vk = $VK[$keyName.ToUpper()]
-            if (-not $vk) { Write-Host "unknown hold key: $keyName"; return }
-            Focus-Game
-            [WX]::keybd_event($vk, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Seconds ([int]$seconds)
-            [WX]::keybd_event($vk, 0, 0x0002, [UIntPtr]::Zero)
-            Start-Sleep -Seconds 1
-            Write-Host "held $keyName for ${seconds}s"
-          }
-          function GameProc { Get-Process -Id $ProcId -ErrorAction SilentlyContinue }
+          function GameProc { Get-Process -Id $Pid -ErrorAction SilentlyContinue }
           function Focus-Game {
             $p = GameProc
             if ($p -and $p.MainWindowHandle -ne 0) { [WX]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Start-Sleep -Seconds 1 }
-            else { Write-Host "WARN: game pid $ProcId has no window" }
+            else { Write-Host "WARN: game pid $Pid has no window" }
           }
           function Click-At($x, $y) {
             $p = GameProc
@@ -189,7 +177,6 @@ jobs:
             } else { Write-Host "game window not found, no click" }
           }
           function Shot($name) {
-            Focus-Game; Start-Sleep -Seconds 2
             $bmp = New-Object System.Drawing.Bitmap(1280, 720)
             $g = [System.Drawing.Graphics]::FromImage($bmp)
             $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
@@ -202,7 +189,7 @@ jobs:
             [System.Windows.Forms.SendKeys]::SendWait($e)
             Start-Sleep -Seconds 2
           }
-          Write-Host "script for pid ${ProcId}: $Script"
+          Write-Host "script for pid ${Pid}: $Script"
           foreach ($action in $Script -split ';') {
             $action = $action.Trim(); if (-not $action) { continue }
             $parts = $action -split ':', 2
@@ -212,14 +199,13 @@ jobs:
               'click' { $xy = $arg -split ','; Click-At $xy[0] $xy[1]; Start-Sleep -Seconds 3 }
               'type' { Type-Text $arg }
               'key' { Focus-Game; [System.Windows.Forms.SendKeys]::SendWait($arg); Start-Sleep -Seconds 3 }
-              'hold' { $hp = $arg -split ','; Hold-Key $hp[0] $hp[1]; Start-Sleep -Seconds 2 }
               'wait' { Start-Sleep -Seconds ([int]$arg) }
               'shot' { Shot $arg }
               'front' { Focus-Game }
               default { Write-Host "unknown verb: $verb" }
             }
           }
-          Write-Host "script done for pid $ProcId"
+          Write-Host "script done for pid $Pid"
           '@
           Write-Host "runner written"
 
@@ -242,18 +228,8 @@ jobs:
       - name: Run player 1 script (login to dorm)
         shell: pwsh
         run: |
-          $procId1 = [int](Get-Content D:\p1.pid)
-          & D:\runscript.ps1 -ProcId $procId1 -Script "${{ inputs.script1 }}"
-
-      - name: Isolate player 2 session (clear shared PlayerPrefs)
-        shell: pwsh
-        run: |
-          # p1 is already running with prefs in memory; clear registry so p2 boots fresh
-          # and does NOT auto-login as p1's account.
-          foreach ($k in @("HKCU:\Software\Rec Room", "HKCU:\Software\Against Gravity")) {
-            if (Test-Path $k) { Remove-Item -Path $k -Recurse -Force; Write-Host "cleared $k" }
-            else { Write-Host "not present: $k" }
-          }
+          $pid1 = [int](Get-Content D:\p1.pid)
+          & D:\runscript.ps1 -Pid $pid1 -Script "${{ inputs.script1 }}"
 
       - name: Launch player 2
         shell: pwsh
@@ -274,18 +250,18 @@ jobs:
       - name: Run player 2 script (login to dorm)
         shell: pwsh
         run: |
-          $procId2 = [int](Get-Content D:\p2.pid)
-          & D:\runscript.ps1 -ProcId $procId2 -Script "${{ inputs.script2 }}"
+          $pid2 = [int](Get-Content D:\p2.pid)
+          & D:\runscript.ps1 -Pid $pid2 -Script "${{ inputs.script2 }}"
 
       - name: Final screenshots (both views)
         shell: pwsh
         run: |
-          $procId1 = [int](Get-Content D:\p1.pid)
-          $procId2 = [int](Get-Content D:\p2.pid)
-          & D:\runscript.ps1 -ProcId $procId1 -Script "front; wait:3; shot:final_p1"
-          & D:\runscript.ps1 -ProcId $procId2 -Script "front; wait:3; shot:final_p2"
-          Get-Process -Id $procId1 -ErrorAction SilentlyContinue | Select-Object Id, HasExited | Format-Table | Out-String | Write-Host
-          Get-Process -Id $procId2 -ErrorAction SilentlyContinue | Select-Object Id, HasExited | Format-Table | Out-String | Write-Host
+          $pid1 = [int](Get-Content D:\p1.pid)
+          $pid2 = [int](Get-Content D:\p2.pid)
+          & D:\runscript.ps1 -Pid $pid1 -Script "front; wait:3; shot:final_p1"
+          & D:\runscript.ps1 -Pid $pid2 -Script "front; wait:3; shot:final_p2"
+          Get-Process -Id $pid1 -ErrorAction SilentlyContinue | Select-Object Id, HasExited | Format-Table | Out-String | Write-Host
+          Get-Process -Id $pid2 -ErrorAction SilentlyContinue | Select-Object Id, HasExited | Format-Table | Out-String | Write-Host
 
       - name: Upload screenshots
         if: always()
