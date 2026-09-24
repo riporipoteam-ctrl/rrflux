@@ -124,6 +124,31 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
 /// Never hard-fails: on any problem it logs and returns so the game can
 /// still launch.
 pub async fn ensure_bepinex(game_dir: &Path) {
+    // Keep the BepInEx console window from popping when the game launches.
+    // Purely additive: only appends when no [Logging.Console] section exists
+    // yet, never rewrites the player's existing config. Runs on every
+    // launch (before the idempotency check) so existing installs get it too.
+    {
+        let bepinex_cfg = game_dir.join("BepInEx").join("config").join("BepInEx.cfg");
+        let existing = std::fs::read_to_string(&bepinex_cfg).unwrap_or_default();
+        if !existing.contains("[Logging.Console]") {
+            if let Some(parent) = bepinex_cfg.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let mut out = existing;
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str("\n[Logging.Console]\nEnabled = false\n");
+            match std::fs::write(&bepinex_cfg, out) {
+                Ok(_) => util::crash_log("bepinex: disabled BepInEx console window in BepInEx.cfg"),
+                Err(e) => util::crash_log(&format!(
+                    "bepinex WARNING: couldn't disable console window ({e})"
+                )),
+            }
+        }
+    }
+
     let plugin_path = game_dir
         .join("BepInEx")
         .join("plugins")

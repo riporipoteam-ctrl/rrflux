@@ -31,6 +31,10 @@ RequestExecutionLevel user
 !define MUI_ICON "${STAGEDIR}\fluxrec.ico"
 !define MUI_UNICON "${STAGEDIR}\fluxrec.ico"
 
+; Flux Rec logo in the header of every installer page (150x57 BMP).
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_BITMAP "${STAGEDIR}\fluxrec-header.bmp"
+
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
