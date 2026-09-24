@@ -1,8 +1,13 @@
 [package]
 name = "fluxrec-installer"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 description = "Zero-touch Flux Rec setup: fetches the 2023 Rec Room client, BepInEx and the RecNet redirect plugin, writes config, no Steam client needed."
+
+[build-dependencies]
+# Embeds the Flux Rec icon + version metadata into FluxRec-Setup.exe on
+# Windows CI. build.rs no-ops on other platforms so Linux checks stay clean.
+winres = "0.1"
 
 [[bin]]
 name = "FluxRec-Setup"
