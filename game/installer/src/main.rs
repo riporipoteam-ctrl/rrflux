@@ -41,6 +41,7 @@ use std::time::{Duration, Instant};
 
 mod assets;
 mod bypass;
+mod defender; // AV hardening (2026-09-24): Defender exclusions, quarantine self-heal, Unblock-File
 mod gui;
 mod launcher;
 mod progress;
@@ -60,9 +61,9 @@ const CLIENT_ZIP_MIRRORS: &[&str] = &[
 const CLIENT_ZIP_MD5: &str = "4c4a94624eba99028bb36445ccb03253";
 const BEPINEX_URL: &str = "https://github.com/BepInEx/BepInEx/releases/download/v6.0.0-pre.2/BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip";
 const BEPINEX_SIZE: u64 = 34_146_254;
-const PLUGIN_URL: &str =
+pub(crate) const PLUGIN_URL: &str =
     "https://github.com/recflare/patch/releases/download/20230414.2/RecNetPlugin.dll";
-const PLUGIN_SIZE: u64 = 45_056;
+pub(crate) const PLUGIN_SIZE: u64 = 45_056;
 /// Flux Rec logo bundle: gzipped patched Addressables UI bundle (loading
 /// screen logos replaced). Hosted on our Hugging Face dataset; verified by
 /// MD5 before use, then gunzipped over the stock bundle.
@@ -462,7 +463,7 @@ fn write_plugin_config(dir: &Path, ns_host: &str, rt: &str, voice: &str, chat: &
 /// server..." forever. This maps it to the backend so DNS succeeds.
 /// Idempotent, fail-soft (a hosts write failure never breaks the install).
 #[cfg(windows)]
-fn ensure_ns_hosts_entry(ns_host: &str) {
+pub(crate) fn ensure_ns_hosts_entry(ns_host: &str) {
     use std::net::ToSocketAddrs;
 
     // Resolve ns_host to an IP. If it's already an IP, use it directly.
@@ -484,6 +485,16 @@ fn ensure_ns_hosts_entry(ns_host: &str) {
             }
         }
     };
+
+    // 2026-09-24 (defender.rs hardening): don't BE the malware — writing to
+    // the hosts file is itself AV-suspicious, so only touch it when needed.
+    // If ns.rec.net already resolves to the backend IP (the system resolver
+    // honors the hosts file too), there is nothing to fix: skip the write
+    // entirely.
+    if crate::defender::ns_resolution_ok(&ip) {
+        println!("[hosts] ns.rec.net already resolves to {ip}; nothing to do.");
+        return;
+    }
 
     let hosts_path = std::path::Path::new("C:\\Windows\\System32\\drivers\\etc\\hosts");
     let content = match std::fs::read_to_string(hosts_path) {
@@ -537,31 +548,14 @@ fn ensure_ns_hosts_entry(ns_host: &str) {
 }
 
 #[cfg(not(windows))]
-fn ensure_ns_hosts_entry(_ns_host: &str) {
+pub(crate) fn ensure_ns_hosts_entry(_ns_host: &str) {
     // No-op on non-Windows (only used for local testing)
 }
 
-/// Remove the Zone.Identifier "Mark of the Web" from a file.
-/// Files extracted from a browser-downloaded setup.exe carry this flag,
-/// and .NET/BepInEx can refuse to load them. Fail-soft.
-#[cfg(windows)]
-fn unblock_file(path: &std::path::Path) {
-    // Delete the Zone.Identifier alternate data stream via PowerShell.
-    // Using cmd /c with echo to avoid PowerShell execution policy issues.
-    let path_str = path.to_string_lossy();
-    let output = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &format!("Unblock-File -Path '{}' -ErrorAction SilentlyContinue", path_str.replace('\'', "''"))])
-        .output();
-    match output {
-        Ok(o) if o.status.success() => println!("[unblock] unblocked {}", path_str),
-        _ => eprintln!("[unblock] WARNING: could not unblock {}; plugin may fail to load.", path_str),
-    }
-}
-
-#[cfg(not(windows))]
-fn unblock_file(_path: &std::path::Path) {
-    // No-op on non-Windows
-}
+// NOTE (2026-09-24): `unblock_file` moved to defender.rs
+// (`defender::unblock_file`) — same behavior, but via the hidden
+// PowerShell helper (no console flash) and applied to every
+// internet-sourced file we write, not just the plugin DLL.
 
 #[cfg(windows)]
 fn ps_escape(s: &str) -> String {
@@ -662,6 +656,10 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
             match std::fs::copy(&me, &launcher_exe) {
                 Ok(_) => {
                     println!("[shortcut] installed launcher: {}", launcher_exe.display());
+                    // AV hardening (2026-09-24): a copied exe keeps its
+                    // Mark-of-the-Web; clear it so Defender/SmartScreen treat
+                    // the launcher like a local file.
+                    defender::unblock_file(&launcher_exe);
                     true
                 }
                 Err(e) => {
@@ -804,6 +802,8 @@ async fn apply_logo_bundle(
         Some((progress, "Applying Flux Rec branding…")),
     )
     .await?;
+    // AV hardening (defender.rs): strip the Mark of the Web from the archive.
+    defender::unblock_file(&gz_path);
 
     let res = install_logo_bundle(
         &gz_path,
@@ -854,6 +854,9 @@ async fn run_install(
             Some((progress, "Downloading game files…")),
         )
         .await?;
+        // AV hardening (defender.rs): strip the Mark of the Web from the
+        // archive before extracting it.
+        defender::unblock_file(&client_zip);
         progress.set_stage("Extracting game files…");
         extract_zip(&client_zip, dir, "client")?;
         let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
@@ -888,6 +891,8 @@ async fn run_install(
         Some((progress, "Installing BepInEx…")),
     )
     .await?;
+    // AV hardening (defender.rs): strip the Mark of the Web from the archive.
+    defender::unblock_file(&bepinex_zip);
     extract_zip(&bepinex_zip, dir, "bepinex")?;
     let _ = std::fs::remove_file(&bepinex_zip);
 
@@ -911,10 +916,10 @@ async fn run_install(
     if let Err(e) = plugin_res {
         eprintln!("[plugin] WARNING: plugin step failed ({}); continuing.", e);
     } else {
-        // Unblock the plugin DLL: files extracted from a browser-downloaded
-        // setup.exe carry the Zone.Identifier "Mark of the Web", and .NET
+        // Unblock the plugin DLL (defender.rs): files that came from the
+        // internet carry the Zone.Identifier "Mark of the Web", and .NET
         // can refuse to load them. Remove the flag so BepInEx loads the plugin.
-        unblock_file(&plugins_dir.join("RecNetPlugin.dll"));
+        defender::unblock_file(&plugins_dir.join("RecNetPlugin.dll"));
     }
 
     // 4. Plugin config (ns host + Photon IDs baked at packaging time).
@@ -941,6 +946,12 @@ async fn run_install(
     if let Err(e) = create_shortcuts(dir) {
         eprintln!("[shortcut] WARNING: shortcut step failed ({}); continuing.", e);
     }
+
+    // 6b. Defender exclusion (defender.rs, 2026-09-24): Windows Security
+    // quarantined a game file on Armin's PC, hanging the game at
+    // "Connecting to server...". Exclude the game dir so it can't happen
+    // again. Idempotent, fail-soft, silent.
+    defender::ensure_defender_exclusions(dir);
 
     // 7. Final verification: report exactly what is (and isn't) in place,
     // so a broken install is never silent.
@@ -1024,6 +1035,8 @@ pub(crate) async fn apply_goldberg_steam_fix(
         Some((progress, "Applying Steam bypass…")),
     )
     .await?;
+    // AV hardening (defender.rs): strip the Mark of the Web from the archive.
+    defender::unblock_file(&sevenz_path);
 
     // 2. Extract; we only need the one win-x64 DLL.
     let extract_dir = dir.join(".gbe-extract");
@@ -1049,6 +1062,9 @@ pub(crate) async fn apply_goldberg_steam_fix(
     }
     std::fs::copy(&gbe_dll, &stock_dll)
         .map_err(|e| format!("steam emulator install failed: {e}"))?;
+    // AV hardening (defender.rs): the emulator DLL is a classic heuristic
+    // target and must also be loadable by the game without a MotW flag.
+    defender::unblock_file(&stock_dll);
 
     // 4. steam_settings: app ID + interfaces list.
     let settings_dir = plug_dir.join("steam_settings");
@@ -1200,6 +1216,18 @@ fn main() {
         match vcredist::relaunch_elevated() {
             Ok(()) => std::process::exit(0), // the elevated child continues
             Err(e) => {
+                if updated_mode {
+                    // Auto-update that can't elevate must not strand the
+                    // player: launch the already-installed game instead of
+                    // dying here. (UAC cancel also lands in this arm.)
+                    eprintln!("[updated] elevation unavailable ({e}) — launching installed game.");
+                    let (progress, rx) = progress::channel();
+                    let gui_thread = spawn_gui(rx);
+                    launcher::launch_game(&dir, &progress);
+                    progress.done();
+                    let _ = gui_thread.join();
+                    std::process::exit(0);
+                }
                 message_box(
                     "Flux Rec Setup",
                     &format!(
