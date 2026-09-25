@@ -3,6 +3,7 @@ using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
+using TMPro;
 
 namespace RecNetPlugin.Patches;
 
