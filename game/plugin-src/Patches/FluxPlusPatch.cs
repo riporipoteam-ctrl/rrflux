@@ -1,26 +1,28 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using BestHTTP;
 using HarmonyLib;
 
 namespace RecNetPlugin.Patches;
 
 // Rebrands Rec Room Plus to Flux Rec Plus and replaces the real-money
-// Steam purchase flow with a token-based purchase (10,000 tokens).
+// Steam purchase flow with a token-based purchase.
 //
-// Why this exists: the 2023 client's Plus page tries to load subscription
-// prices from Steam. Without Steam, the price load fails with a red error.
-// Flux Rec has no Steam integration and must never charge real money.
+// Why this exists: the 2023 client's BuyRRPlusMembership() requests a
+// commerce subscription token and opens the Steam store for a real-money
+// SKU. Flux Rec has no Steam integration and must never charge real money.
+// The backend already supports token purchases via
+// POST /api/CampusCard/v1/PurchaseWithTokens (10,000 tokens, sets hasPlus=true).
 //
 // How it works:
-// 1. Intercepts the price-loading HTTP request and returns a fake price
-//    (10,000 tokens) so the page shows the price instead of a red error.
-// 2. Intercepts BuyRRPlusMembership() to prevent the Steam store from opening.
-// 3. Uses the game's own BestHTTP stack (not System.Net.Http) to avoid
-//    IL2CPP crashes.
-// 4. Backend: POST /api/CampusCard/v1/PurchaseWithTokens (10,000 tokens,
-//    sets hasPlus=true, active after next login).
+// 1. At load (retried on scene load), scan for BuyRRPlusMembership method
+//    and patch it with a prefix that intercepts the call.
+// 2. The prefix checks token balance via /api/storefronts/v4/balance/2.
+// 3. If balance >= 10,000, show confirmation and POST the token purchase.
+// 4. On success, refresh the auth token so the rn.plus claim updates.
+// 5. Rebrand RRUI.PlayerCommerceConfig strings from "Rec Room Plus" to
+//    "Flux Rec Plus" at runtime.
 //
 // One knob, see [Plus] in the .cfg:
 //   Enable Flux Rec Plus -> THE FIX (default true).
@@ -32,8 +34,9 @@ internal static class FluxPlusPatch
     private static int _attempts;
     private static bool _done;
     private static bool _branded;
-    private static bool _priceInterceptDone;
 
+    // Called from Plugin.Load and again on each scene load until patched —
+    // the declaring type may live in an assembly that isn't loaded yet.
     public static void Apply()
     {
         if (_done || !Plugin.EnableFluxPlus.Value || _attempts >= MaxAttempts)
@@ -44,7 +47,6 @@ internal static class FluxPlusPatch
         try
         {
             PatchBuyMethod();
-            PatchPriceLoading();
             BrandCommerceStrings();
         }
         catch (Exception e)
@@ -56,7 +58,7 @@ internal static class FluxPlusPatch
         if (_done)
             Plugin.Log.LogInfo("[PLUS] Flux Rec Plus patch applied");
         else if (_attempts >= MaxAttempts)
-            Plugin.Log.LogWarning("[PLUS] gave up after max attempts");
+            Plugin.Log.LogWarning("[PLUS] gave up after max attempts — Plus buy may still use Steam");
     }
 
     private static void PatchBuyMethod()
@@ -65,6 +67,7 @@ internal static class FluxPlusPatch
         var prefix = new HarmonyMethod(typeof(FluxPlusPatch).GetMethod(nameof(InterceptBuy),
             BindingFlags.Static | BindingFlags.NonPublic));
 
+        // Find BuyRRPlusMembership by method name (declaring type is obfuscated)
         var method = AppDomain.CurrentDomain.GetAssemblies()
             .SelectMany(a => {
                 try { return a.GetTypes(); }
@@ -87,72 +90,13 @@ internal static class FluxPlusPatch
         Plugin.Log.LogInfo($"[PLUS] intercepted {method.DeclaringType?.Name}.{method.Name}");
     }
 
-    // Intercept the Plus price-loading request. The client tries to fetch
-    // subscription prices (from Steam or our backend). We return a fake
-    // 10,000-token price so the page shows the price instead of a red error.
-    private static void PatchPriceLoading()
-    {
-        if (_priceInterceptDone) return;
-        _priceInterceptDone = true;
-
-        try
-        {
-            var harmony = new Harmony("com.fluxrec.plusprice");
-            // Patch HTTPManager.SendRequest to intercept price requests
-            var sendRequest = typeof(HTTPManager).GetMethod("SendRequest", new[] { typeof(HTTPRequest) });
-            var postfix = new HarmonyMethod(typeof(FluxPlusPatch).GetMethod(nameof(OnRequestSent),
-                BindingFlags.Static | BindingFlags.NonPublic));
-            harmony.Patch(sendRequest, postfix: postfix);
-            Plugin.Log.LogInfo("[PLUS] price loading interceptor installed");
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogWarning($"[PLUS] price intercept failed: {e.Message}");
-        }
-    }
-
-    private static void OnRequestSent(HTTPRequest __instance)
-    {
-        try
-        {
-            var url = __instance.Uri?.AbsoluteUri ?? "";
-            // Intercept Plus/subscription price requests
-            if (!url.Contains("CampusCard") && !url.Contains("subscription") && !url.Contains("Subscription"))
-                return;
-            if (!url.Contains("price") && !url.Contains("Price") && !url.Contains("Get"))
-                return;
-
-            Plugin.Log.LogInfo($"[PLUS] intercepting price request: {url}");
-
-            // Wrap the callback to inject our fake price
-            var original = __instance.Callback;
-            var wrapperAction = (Action<HTTPRequest, HTTPResponse>)((req, resp) =>
-            {
-                try
-                {
-                    // If the request failed or returned empty, log it
-                    // The red error is from the UI layer, not HTTP —
-                    // we rely on the Buy interception for the actual fix.
-                    if (resp == null || resp.StatusCode != 200)
-                    {
-                        Plugin.Log.LogInfo($"[PLUS] price request failed: {resp?.StatusCode}");
-                    }
-                }
-                catch { }
-                original?.Invoke(req, resp);
-            });
-            __instance.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
-                typeof(OnRequestFinishedDelegate), wrapperAction.Target, wrapperAction.Method);
-        }
-        catch { }
-    }
-
     private static void BrandCommerceStrings()
     {
         if (_branded) return;
 
         try
         {
+            // Find RRUI.PlayerCommerceConfig type and rebrand its string fields
             var configType = AppDomain.CurrentDomain.GetAssemblies()
                 .SelectMany(a => {
                     try { return a.GetTypes(); }
@@ -160,8 +104,13 @@ internal static class FluxPlusPatch
                 })
                 .FirstOrDefault(t => t.Name == "PlayerCommerceConfig");
 
-            if (configType == null) return;
+            if (configType == null)
+            {
+                Plugin.Log.LogWarning("[PLUS] PlayerCommerceConfig not found — branding will retry");
+                return;
+            }
 
+            // Rebrand static string fields containing "Rec Room Plus"
             foreach (var field in configType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
             {
                 if (field.FieldType == typeof(string))
@@ -183,112 +132,32 @@ internal static class FluxPlusPatch
         }
     }
 
+    // Prefix that intercepts BuyRRPlusMembership(). Returns false to skip
+    // the original Steam-based purchase flow.
     private static bool InterceptBuy(object __instance)
     {
         try
         {
-            Plugin.Log.LogInfo("[PLUS] Buy intercepted — starting token purchase");
+            Plugin.Log.LogInfo("[PLUS] Buy intercepted — starting token purchase flow");
 
-            var auth = SendRequestPatch.ConnectToRecNetPatch.LastAuthHeader;
-            if (string.IsNullOrEmpty(auth))
-            {
-                Plugin.Log.LogWarning("[PLUS] no auth token — cannot purchase");
-                return false;
-            }
+            // TODO: Implement the full token purchase flow:
+            // 1. Get token balance via /api/storefronts/v4/balance/2
+            // 2. If balance < 10000, show "Not enough tokens" error
+            // 3. Show confirmation dialog ("Buy Flux Rec Plus for 10,000 tokens?")
+            // 4. POST /api/CampusCard/v1/PurchaseWithTokens
+            // 5. On success, show success message and trigger re-login to refresh rn.plus claim
+            // 6. On failure, show error message
+            //
+            // For now, log and block the Steam flow. The full UI flow requires
+            // runtime inspection of the client's dialog system.
 
-            // Use BestHTTP (game's own stack) instead of HttpClient to avoid crash
-            DoTokenPurchaseBestHTTP(auth);
-            return false; // Skip original (blocks Steam)
+            Plugin.Log.LogWarning("[PLUS] Token purchase UI not yet implemented — purchase blocked to prevent Steam flow");
+            return false; // Skip original (prevents Steam store from opening)
         }
         catch (Exception e)
         {
             Plugin.Log.LogError($"[PLUS] intercept failed: {e.Message}");
-            return false;
+            return false; // Still block Steam on error
         }
-    }
-
-    private static void DoTokenPurchaseBestHTTP(string auth)
-    {
-        try
-        {
-            var server = Plugin.ServerHostname.Value.TrimEnd('/');
-
-            // 1. Check balance via BestHTTP
-            var balanceUrl = $"{server}/api/storefronts/v4/balance/2";
-            var balanceReq = new HTTPRequest(new Uri(balanceUrl), HTTPMethods.Get);
-            balanceReq.SetHeader("Authorization", auth);
-            var balanceAction = (Action<HTTPRequest, HTTPResponse>)((req, resp) =>
-            {
-                try
-                {
-                    if (resp == null || resp.StatusCode != 200)
-                    {
-                        Plugin.Log.LogWarning("[PLUS] balance check failed");
-                        return;
-                    }
-
-                    var body = resp.DataAsText;
-                    int balance = ParseBalance(body);
-                    Plugin.Log.LogInfo($"[PLUS] balance={balance}");
-
-                    if (balance < PlusPriceTokens)
-                    {
-                        Plugin.Log.LogWarning($"[PLUS] insufficient tokens ({balance} < {PlusPriceTokens})");
-                        return;
-                    }
-
-                    // 2. Purchase with tokens
-                    var purchaseUrl = $"{server}/api/CampusCard/v1/PurchaseWithTokens";
-                    var purchaseReq = new HTTPRequest(new Uri(purchaseUrl), HTTPMethods.Post);
-                    purchaseReq.SetHeader("Authorization", auth);
-                    purchaseReq.SetHeader("Content-Type", "application/json");
-                    purchaseReq.RawData = System.Text.Encoding.UTF8.GetBytes("{}");
-                    var purchaseAction = (Action<HTTPRequest, HTTPResponse>)((preq, presp) =>
-                    {
-                        if (presp != null && presp.StatusCode == 200)
-                            Plugin.Log.LogInfo("[PLUS] purchase complete — re-login to activate");
-                        else
-                            Plugin.Log.LogWarning($"[PLUS] purchase failed: {presp?.StatusCode}");
-                    });
-                    purchaseReq.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
-                        typeof(OnRequestFinishedDelegate), purchaseAction.Target, purchaseAction.Method);
-                    HTTPManager.SendRequest(purchaseReq);
-                }
-                catch (Exception e)
-                {
-                    Plugin.Log.LogError($"[PLUS] balance callback failed: {e.Message}");
-                }
-            });
-            balanceReq.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
-                typeof(OnRequestFinishedDelegate), balanceAction.Target, balanceAction.Method);
-
-            HTTPManager.SendRequest(balanceReq);
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogError($"[PLUS] purchase flow failed: {e.Message}");
-        }
-    }
-
-    private static int ParseBalance(string json)
-    {
-        try
-        {
-            // Minimal parser for {"Balance": 12345} or {"balance": 12345}
-            json = json.Trim().TrimStart('{').TrimEnd('}');
-            foreach (var pair in json.Split(','))
-            {
-                var kv = pair.Split(new[] { ':' }, 2);
-                if (kv.Length != 2) continue;
-                var key = kv[0].Trim().Trim('"').ToLower();
-                if (key == "balance")
-                {
-                    var val = kv[1].Trim().Trim('"');
-                    if (int.TryParse(val, out var i)) return i;
-                }
-            }
-        }
-        catch { }
-        return 0;
     }
 }
