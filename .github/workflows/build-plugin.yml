@@ -97,10 +97,3 @@ jobs:
         with:
           name: RecNetPlugin
           path: rrflux/game/plugin-src/bin/Release/net6.0/RecNetPlugin.dll
-
-      - name: Upload BepInEx log (inspector output)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bepinex-log
-          path: D:\FluxRec\BepInEx\LogOutput.log
