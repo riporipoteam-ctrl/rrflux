@@ -42,6 +42,7 @@ use std::time::{Duration, Instant};
 mod assets;
 mod bypass;
 mod defender; // AV hardening (2026-09-24): Defender exclusions, quarantine self-heal, Unblock-File
+mod guide; // one-time guided Windows Security exclusion setup (2026-09-25)
 mod gui;
 mod launcher;
 mod patches; // Flux Rec client patches: welcome text, YouTube IDs (2026-09-24)
@@ -1241,6 +1242,14 @@ fn main() {
     }
 
     // Install mode: pretty window + hidden console from here on.
+    //
+    // v0.1.17: one-time guided Windows Security exclusion setup, BEFORE any
+    // download. Windows Security quarantined installer files on Armin's PC;
+    // the installer never changes security settings itself, so it walks the
+    // user through adding the folder exclusion manually instead. Pure UI,
+    // fail-soft, shown once per install dir.
+    guide::maybe_show_defender_guide(&dir);
+
     println!("Flux Rec setup — installing to {}", dir.display());
     let (progress, rx) = progress::channel();
     let gui_thread = spawn_gui(rx);
