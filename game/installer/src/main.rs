@@ -66,6 +66,10 @@ const BEPINEX_SIZE: u64 = 34_146_254;
 pub(crate) const PLUGIN_URL: &str =
     "https://github.com/recflare/patch/releases/download/20230414.2/RecNetPlugin.dll";
 pub(crate) const PLUGIN_SIZE: u64 = 45_056;
+/// v0.1.19: The Flux Rec 2023 plugin (Ultra graphics, forced new Watch UI,
+/// presence fix) embedded directly. The upstream 20230414.2 release lacks
+/// these patches, so we ship our own build instead of downloading.
+pub(crate) const EMBEDDED_PLUGIN: &[u8] = include_bytes!("../assets/RecNetPlugin.dll");
 /// Flux Rec logo bundle: gzipped patched Addressables UI bundle (loading
 /// screen logos replaced). Hosted on our Hugging Face dataset; verified by
 /// MD5 before use, then gunzipped over the stock bundle.
@@ -895,30 +899,24 @@ async fn run_install(
     extract_zip(&bepinex_zip, dir, "bepinex")?;
     let _ = std::fs::remove_file(&bepinex_zip);
 
-    // 3. Redirect plugin. Fail-soft: warn and continue so a transient
-    // download hiccup can never leave the game without its Steam bypass.
+    // 3. Redirect plugin. v0.1.19: embedded directly (no download) — the
+    // upstream release lacks Ultra/WatchUI/Presence patches. Fail-soft: warn
+    // and continue so a write hiccup can never leave the game without its
+    // Steam bypass.
     let plugins_dir = dir.join("BepInEx").join("plugins");
-    let plugin_res: Result<(), String> = async {
+    let plugin_path = plugins_dir.join("RecNetPlugin.dll");
+    let plugin_res: Result<(), String> = (|| {
         std::fs::create_dir_all(&plugins_dir).map_err(|e| e.to_string())?;
-        download(
-            &client,
-            PLUGIN_URL,
-            &plugins_dir.join("RecNetPlugin.dll"),
-            None,
-            Some(PLUGIN_SIZE),
-            "plugin",
-            Some((progress, "Installing Flux Rec plugin…")),
-        )
-        .await
-    }
-    .await;
+        std::fs::write(&plugin_path, EMBEDDED_PLUGIN).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
     if let Err(e) = plugin_res {
         eprintln!("[plugin] WARNING: plugin step failed ({}); continuing.", e);
     } else {
         // Unblock the plugin DLL (defender.rs): files that came from the
         // internet carry the Zone.Identifier "Mark of the Web", and .NET
         // can refuse to load them. Remove the flag so BepInEx loads the plugin.
-        defender::unblock_file(&plugins_dir.join("RecNetPlugin.dll"));
+        defender::unblock_file(&plugin_path);
     }
 
     // 4. Plugin config (ns host + Photon IDs baked at packaging time).
