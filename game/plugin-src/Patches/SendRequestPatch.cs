@@ -44,21 +44,8 @@ public class SendRequestPatch
     [HarmonyPatch(typeof(HTTPManager), "SendRequest", [typeof(HTTPRequest)])]
     public class ConnectToRecNetPatch
     {
-        // Last seen Authorization header value, captured for reuse by
-        // FluxPlusPatch when it needs to make authenticated backend calls.
-        public static string LastAuthHeader { get; private set; }
-
         private static void Prefix(ref HTTPRequest request)
         {
-            // Capture the auth header for reuse (FluxPlus token purchase flow).
-            try
-            {
-                var auth = request.GetFirstHeaderValue("Authorization");
-                if (!string.IsNullOrEmpty(auth))
-                    LastAuthHeader = auth;
-            }
-            catch { }
-
             var debug = Plugin.Debug.Value && !IsIgnoredForLogging(request.Uri.AbsoluteUri);
 
             if (debug)
