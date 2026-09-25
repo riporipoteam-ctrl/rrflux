@@ -455,7 +455,7 @@ fn write_plugin_config(dir: &Path, ns_host: &str, rt: &str, voice: &str, chat: &
          Force New Watch UI = true\n\
          \n\
          [Graphics]\n\
-         Enable Ultra Graphics = false\n\
+         Enable Ultra Graphics = true\n\
          \n\
          [Presence]\n\
          Fix Appear Online To Mapping = false\n\
