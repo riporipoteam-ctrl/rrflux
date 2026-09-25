@@ -214,9 +214,9 @@ internal static class FluxPlusPatch
             var server = Plugin.ServerHostname.Value.TrimEnd('/');
 
             // 1. Check balance via BestHTTP
+            // NOTE: this game's BestHTTP is IL2CPP-wrapped: the HTTPRequest ctor takes
+            // (Il2CppSystem.Uri, OnRequestFinishedDelegate); method is set via MethodType.
             var balanceUrl = $"{server}/api/storefronts/v4/balance/2";
-            var balanceReq = new HTTPRequest(new Uri(balanceUrl), HTTPMethods.Get);
-            balanceReq.SetHeader("Authorization", auth);
             var balanceAction = (Action<HTTPRequest, HTTPResponse>)((req, resp) =>
             {
                 try
@@ -239,10 +239,6 @@ internal static class FluxPlusPatch
 
                     // 2. Purchase with tokens
                     var purchaseUrl = $"{server}/api/CampusCard/v1/PurchaseWithTokens";
-                    var purchaseReq = new HTTPRequest(new Uri(purchaseUrl), HTTPMethods.Post);
-                    purchaseReq.SetHeader("Authorization", auth);
-                    purchaseReq.SetHeader("Content-Type", "application/json");
-                    purchaseReq.RawData = System.Text.Encoding.UTF8.GetBytes("{}");
                     var purchaseAction = (Action<HTTPRequest, HTTPResponse>)((preq, presp) =>
                     {
                         if (presp != null && presp.StatusCode == 200)
@@ -250,8 +246,13 @@ internal static class FluxPlusPatch
                         else
                             Plugin.Log.LogWarning($"[PLUS] purchase failed: {presp?.StatusCode}");
                     });
-                    purchaseReq.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
+                    var purchaseCallback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
                         typeof(OnRequestFinishedDelegate), purchaseAction.Target, purchaseAction.Method);
+                    var purchaseReq = new HTTPRequest(new Il2CppSystem.Uri(purchaseUrl), purchaseCallback);
+                    purchaseReq.MethodType = HTTPMethods.Post;
+                    purchaseReq.SetHeader("Authorization", auth);
+                    purchaseReq.SetHeader("Content-Type", "application/json");
+                    purchaseReq.RawData = System.Text.Encoding.UTF8.GetBytes("{}");
                     HTTPManager.SendRequest(purchaseReq);
                 }
                 catch (Exception e)
@@ -259,8 +260,11 @@ internal static class FluxPlusPatch
                     Plugin.Log.LogError($"[PLUS] balance callback failed: {e.Message}");
                 }
             });
-            balanceReq.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
+            var balanceCallback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
                 typeof(OnRequestFinishedDelegate), balanceAction.Target, balanceAction.Method);
+            var balanceReq = new HTTPRequest(new Il2CppSystem.Uri(balanceUrl), balanceCallback);
+            balanceReq.MethodType = HTTPMethods.Get;
+            balanceReq.SetHeader("Authorization", auth);
 
             HTTPManager.SendRequest(balanceReq);
         }
