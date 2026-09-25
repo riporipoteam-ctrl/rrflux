@@ -91,9 +91,9 @@ public class Plugin : BasePlugin
         // (precise, minimal — no broad method scanning).
         Patches.NametagBadgePatch.Apply();
 
-        // Store crash guard: suppresses Store page crashes and logs them
-        // (defensive — root cause still needs client logs).
-        Patches.StoreCrashGuardPatch.Apply();
+        // StoreCrashGuardPatch REMOVED 2026-09-25: the user explicitly rejected
+        // broad exception suppression. The Store blank page needs a real root-cause
+        // fix, not a guard that masks it.
 
         // Presence slider mapping fix (write+read inversion) and the Ultra
         // graphics hook: same retry-on-scene-load pattern as the watch gates.
@@ -125,8 +125,7 @@ public class Plugin : BasePlugin
         // Retry the nametag badge patch until patched (no-op once done).
         Patches.NametagBadgePatch.Apply();
 
-        // Retry the store crash guard until patched (no-op once done).
-        Patches.StoreCrashGuardPatch.Apply();
+        // StoreCrashGuardPatch REMOVED 2026-09-25 (see above) — not retried.
 
         // Retry the presence-mapping fix and the Ultra graphics button until
         // their target types / the settings page are available (no-op once done).
