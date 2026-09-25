@@ -1170,7 +1170,6 @@ fn main() {
     let mut chat_arg: Option<String> = None;
     let mut play_mode = false;
     let mut updated_mode = false;
-    let mut silent_mode = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -1185,10 +1184,6 @@ fn main() {
             "--photon-chat" => chat_arg = args.next(),
             "--play" => play_mode = true,
             "--updated" => updated_mode = true,
-            // v0.1.18: skip all interactive prompts (the Defender exclusion
-            // guide). For scripted/headless installs where no one can click
-            // a dialog — a modal prompt there hangs the install forever.
-            "--silent" => silent_mode = true,
             _ => {}
         }
     }
@@ -1252,11 +1247,8 @@ fn main() {
     // download. Windows Security quarantined installer files on Armin's PC;
     // the installer never changes security settings itself, so it walks the
     // user through adding the folder exclusion manually instead. Pure UI,
-    // fail-soft, shown once per install dir. Skipped with --silent (v0.1.18):
-    // a modal dialog in a headless/scripted install would hang it forever.
-    if !silent_mode {
-        guide::maybe_show_defender_guide(&dir);
-    }
+    // fail-soft, shown once per install dir.
+    guide::maybe_show_defender_guide(&dir);
 
     println!("Flux Rec setup — installing to {}", dir.display());
     let (progress, rx) = progress::channel();
