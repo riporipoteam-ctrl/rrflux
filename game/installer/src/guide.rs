@@ -27,7 +27,7 @@ pub(crate) fn maybe_show_defender_guide(dir: &Path) {
     // Best-effort marker so the guide only ever nags once. Creating the
     // dir here is harmless — run_install creates it anyway moments later.
     let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(dir.join(MARKER), b"v0.1.20\n");
+    let _ = std::fs::write(dir.join(MARKER), b"v0.1.21\n");
 }
 
 /// Windows implementation: OK/Cancel intro, optional settings page, then
