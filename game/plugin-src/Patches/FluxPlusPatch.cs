@@ -165,14 +165,15 @@ internal static class FluxPlusPatch
             var server = Plugin.ServerHostname.Value.TrimEnd('/');
             Plugin.Log.LogInfo("[PLUS] checking token balance...");
 
+            using var client = new System.Net.Http.HttpClient();
+            client.DefaultRequestHeaders.Add("Authorization", auth);
+
             // 1. Check balance
             var balanceUrl = $"{server}/api/storefronts/v4/balance/2";
-            var balanceReq = new BestHTTP.HTTPRequest(new System.Uri(balanceUrl), BestHTTP.HTTPMethods.Get);
-            balanceReq.SetHeader("Authorization", auth);
-            var balanceResp = SendSync(balanceReq);
-            if (balanceResp == null)
+            var balanceResp = client.GetStringAsync(balanceUrl).GetAwaiter().GetResult();
+            if (string.IsNullOrEmpty(balanceResp))
             {
-                Plugin.Log.LogWarning("[PLUS] balance check failed (no response)");
+                Plugin.Log.LogWarning("[PLUS] balance check failed (empty response)");
                 return;
             }
 
@@ -201,14 +202,12 @@ internal static class FluxPlusPatch
             // 2. Purchase with tokens
             Plugin.Log.LogInfo("[PLUS] purchasing Flux Rec Plus with tokens...");
             var purchaseUrl = $"{server}/api/CampusCard/v1/PurchaseWithTokens";
-            var purchaseReq = new BestHTTP.HTTPRequest(new System.Uri(purchaseUrl), BestHTTP.HTTPMethods.Post);
-            purchaseReq.SetHeader("Authorization", auth);
-            purchaseReq.SetHeader("Content-Type", "application/json");
-            purchaseReq.RawData = System.Text.Encoding.UTF8.GetBytes("{}");
-            var purchaseResp = SendSync(purchaseReq);
-            if (purchaseResp == null)
+            var content = new System.Net.Http.StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+            var purchaseRespMsg = client.PostAsync(purchaseUrl, content).GetAwaiter().GetResult();
+            var purchaseResp = purchaseRespMsg.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            if (string.IsNullOrEmpty(purchaseResp))
             {
-                Plugin.Log.LogWarning("[PLUS] purchase failed (no response)");
+                Plugin.Log.LogWarning("[PLUS] purchase failed (empty response)");
                 return;
             }
 
@@ -221,30 +220,6 @@ internal static class FluxPlusPatch
         {
             Plugin.Log.LogError($"[PLUS] purchase flow failed: {e.Message}");
         }
-    }
-
-    private static string SendSync(BestHTTP.HTTPRequest req)
-    {
-        string result = null;
-        var done = new System.Threading.ManualResetEventSlim(false);
-        req.Callback = (r, resp) =>
-        {
-            try
-            {
-                if (resp != null && resp.IsSuccess)
-                    result = resp.DataAsText;
-                else
-                    Plugin.Log.LogWarning($"[PLUS] HTTP {(resp?.StatusCode.ToString() ?? "no-response")}");
-            }
-            finally { done.Set(); }
-        };
-        BestHTTP.HTTPManager.SendRequest(req);
-        if (!done.Wait(System.TimeSpan.FromSeconds(15)))
-        {
-            Plugin.Log.LogWarning("[PLUS] HTTP timeout");
-            return null;
-        }
-        return result;
     }
 
     private static System.Collections.Generic.Dictionary<string, object> SimpleJsonParse(string json)
