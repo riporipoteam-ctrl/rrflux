@@ -91,6 +91,10 @@ public class Plugin : BasePlugin
         // for writing precise patches (diagnostic only).
         Patches.PlusInspectorPatch.Apply();
 
+        // Nametag inspector: captures nametag/badge selection flow
+        // (diagnostic only).
+        Patches.NametagInspectorPatch.Apply();
+
         // Presence slider mapping fix (write+read inversion) and the Ultra
         // graphics hook: same retry-on-scene-load pattern as the watch gates.
         Patches.PresenceMappingPatch.Apply();
