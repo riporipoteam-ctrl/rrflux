@@ -1,0 +1,99 @@
+name: Build plugin DLL on Windows
+
+# Builds RecNetPlugin.dll from the recflare/patch repo on a Windows runner.
+# The plugin needs ~300 interop assemblies that only exist after Rec Room
+# runs under BepInEx on Windows, so this cannot be built on Linux.
+#
+# Flow:
+# 1. Checkout recflare/patch repo
+# 2. Install dotnet 8 SDK
+# 3. Download + silently install FluxRec-Setup (gets 2023 client + BepInEx)
+# 4. Launch game briefly to generate BepInEx/interop assemblies
+# 5. Build plugin with GamePath=D:\FluxRec
+# 6. Upload RecNetPlugin.dll as artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      fluxrec_tag:
+        description: 'recflare-installer release tag for interop generation'
+        required: true
+        default: 'recflare-installer-v0.1.25'
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout installer repo (contains vendored plugin source)
+        uses: actions/checkout@v4
+        with:
+          repository: riporipoteam-ctrl/rrflux
+          ref: main
+          path: rrflux
+
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Prep dirs + hosts entry
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory D:\FluxRec -Force | Out-Null
+          try { Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 ns.rec.net" } catch { Write-Host "hosts edit skipped" }
+
+      - name: Download FluxRec-Setup
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.fluxrec_tag }}"
+          Invoke-WebRequest -Uri "https://github.com/riporipoteam-ctrl/rrflux/releases/download/$tag/FluxRec-Setup.exe" -OutFile D:\FluxRec-Setup.exe
+          Write-Host "downloaded:" (Get-Item D:\FluxRec-Setup.exe).Length "bytes"
+
+      - name: Install FluxRec (silent)
+        shell: pwsh
+        run: |
+          $p = Start-Process D:\FluxRec-Setup.exe -ArgumentList "--dir","D:\FluxRec","--silent" -PassThru
+          $deadline = (Get-Date).AddMinutes(50)
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 30
+            if ($p.HasExited) { break }
+            Write-Host "installing..."
+          }
+          if (-not $p.HasExited) { $p.Kill(); throw "install timed out" }
+          Write-Host "installer exit:" $p.ExitCode
+          if (-not (Test-Path "D:\FluxRec\RecRoom.exe")) { throw "RecRoom.exe missing after install" }
+
+      - name: Launch game to generate interop assemblies
+        shell: pwsh
+        run: |
+          # BepInEx generates BepInEx/interop/*.dll on first run. We just need
+          # the game to boot far enough for Il2CppInterop to run.
+          Start-Process D:\FluxRec\FluxRecLauncher.exe -ArgumentList "--play","--dir","D:\FluxRec"
+          Write-Host "waiting for interop generation..."
+          $deadline = (Get-Date).AddMinutes(15)
+          $interopReady = $false
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 30
+            $count = (Get-ChildItem "D:\FluxRec\BepInEx\interop\*.dll" -ErrorAction SilentlyContinue | Measure-Object).Count
+            Write-Host "interop DLLs so far: $count"
+            if ($count -gt 200) { $interopReady = $true; break }
+          }
+          Get-Process RecRoom -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $interopReady) { throw "interop assemblies not generated (only $count found)" }
+          Write-Host "interop ready"
+
+      - name: Build plugin
+        shell: pwsh
+        run: |
+          cd rrflux\game\plugin-src
+          dotnet build -c Release -p:GamePath="D:\FluxRec" 2>&1 | Select-Object -Last 30
+          if (-not (Test-Path "bin\Release\net6.0\RecNetPlugin.dll")) { throw "DLL not built" }
+          $dll = Get-Item "bin\Release\net6.0\RecNetPlugin.dll"
+          Write-Host "built:" $dll.Length "bytes"
+
+      - name: Upload DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: RecNetPlugin
+          path: rrflux/game/plugin-src/bin/Release/net6.0/RecNetPlugin.dll
