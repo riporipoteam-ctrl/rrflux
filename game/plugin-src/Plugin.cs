@@ -87,13 +87,13 @@ public class Plugin : BasePlugin
         // until patched, since the commerce types may not be loaded yet.
         Patches.FluxPlusPatch.Apply();
 
-        // Nametag badge patch: renders Dev/Community Mod badges above nametag
-        // (precise, minimal — no broad method scanning).
-        Patches.NametagBadgePatch.Apply();
+        // Plus page inspector: dumps Plus-related types and UI hierarchy
+        // for writing precise patches (diagnostic only).
+        Patches.PlusInspectorPatch.Apply();
 
-        // StoreCrashGuardPatch REMOVED 2026-09-25: the user explicitly rejected
-        // broad exception suppression. The Store blank page needs a real root-cause
-        // fix, not a guard that masks it.
+        // Nametag inspector: captures nametag/badge selection flow
+        // (diagnostic only).
+        Patches.NametagInspectorPatch.Apply();
 
         // Presence slider mapping fix (write+read inversion) and the Ultra
         // graphics hook: same retry-on-scene-load pattern as the watch gates.
@@ -121,11 +121,6 @@ public class Plugin : BasePlugin
 
         // Retry the Flux Rec Plus patch until patched (no-op once done).
         Patches.FluxPlusPatch.Apply();
-
-        // Retry the nametag badge patch until patched (no-op once done).
-        Patches.NametagBadgePatch.Apply();
-
-        // StoreCrashGuardPatch REMOVED 2026-09-25 (see above) — not retried.
 
         // Retry the presence-mapping fix and the Ultra graphics button until
         // their target types / the settings page are available (no-op once done).
