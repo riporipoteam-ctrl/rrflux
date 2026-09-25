@@ -126,30 +126,23 @@ internal static class FluxPlusPatch
 
             // Wrap the callback to inject our fake price
             var original = __instance.Callback;
-            __instance.Callback = (BestHTTP.OnRequestFinishedDelegate)Delegate.CreateDelegate(
-                typeof(BestHTTP.OnRequestFinishedDelegate),
-                new Action<HTTPRequest, HTTPResponse>((req, resp) =>
+            var wrapperAction = (Action<HTTPRequest, HTTPResponse>)((req, resp) =>
+            {
+                try
                 {
-                    try
+                    // If the request failed or returned empty, log it
+                    // The red error is from the UI layer, not HTTP —
+                    // we rely on the Buy interception for the actual fix.
+                    if (resp == null || resp.StatusCode != 200)
                     {
-                        // If the request failed or returned empty, inject our price
-                        if (resp == null || resp.StatusCode != 200 || string.IsNullOrEmpty(resp.DataAsText))
-                        {
-                            Plugin.Log.LogInfo("[PLUS] injecting 10,000 token price");
-                            // Create a fake successful response with the token price
-                            // The exact format depends on what the client expects;
-                            // we provide a minimal valid response
-                            var fakeJson = $"{{\"price\":{PlusPriceTokens},\"currency\":\"tokens\",\"displayPrice\":\"{PlusPriceTokens:N0} tokens\"}}";
-                            // We can't easily fake the HTTPResponse, so instead we
-                            // let the original callback handle it and rely on the
-                            // Buy interception. The red error is from the UI, not
-                            // the HTTP layer.
-                        }
+                        Plugin.Log.LogInfo($"[PLUS] price request failed: {resp?.StatusCode}");
                     }
-                    catch { }
-                    original?.Invoke(req, resp);
-                }).Target,
-                new Action<HTTPRequest, HTTPResponse>((req, resp) => { }).Method);
+                }
+                catch { }
+                original?.Invoke(req, resp);
+            });
+            __instance.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
+                typeof(OnRequestFinishedDelegate), wrapperAction.Target, wrapperAction.Method);
         }
         catch { }
     }
@@ -224,52 +217,50 @@ internal static class FluxPlusPatch
             var balanceUrl = $"{server}/api/storefronts/v4/balance/2";
             var balanceReq = new HTTPRequest(new Uri(balanceUrl), HTTPMethods.Get);
             balanceReq.SetHeader("Authorization", auth);
-            balanceReq.Callback = (BestHTTP.OnRequestFinishedDelegate)Delegate.CreateDelegate(
-                typeof(BestHTTP.OnRequestFinishedDelegate),
-                new Action<HTTPRequest, HTTPResponse>((req, resp) =>
+            var balanceAction = (Action<HTTPRequest, HTTPResponse>)((req, resp) =>
+            {
+                try
                 {
-                    try
+                    if (resp == null || resp.StatusCode != 200)
                     {
-                        if (resp == null || resp.StatusCode != 200)
-                        {
-                            Plugin.Log.LogWarning("[PLUS] balance check failed");
-                            return;
-                        }
-
-                        var body = resp.DataAsText;
-                        int balance = ParseBalance(body);
-                        Plugin.Log.LogInfo($"[PLUS] balance={balance}");
-
-                        if (balance < PlusPriceTokens)
-                        {
-                            Plugin.Log.LogWarning($"[PLUS] insufficient tokens ({balance} < {PlusPriceTokens})");
-                            return;
-                        }
-
-                        // 2. Purchase with tokens
-                        var purchaseUrl = $"{server}/api/CampusCard/v1/PurchaseWithTokens";
-                        var purchaseReq = new HTTPRequest(new Uri(purchaseUrl), HTTPMethods.Post);
-                        purchaseReq.SetHeader("Authorization", auth);
-                        purchaseReq.SetHeader("Content-Type", "application/json");
-                        purchaseReq.RawData = System.Text.Encoding.UTF8.GetBytes("{}");
-                        purchaseReq.Callback = (BestHTTP.OnRequestFinishedDelegate)Delegate.CreateDelegate(
-                            typeof(BestHTTP.OnRequestFinishedDelegate),
-                            new Action<HTTPRequest, HTTPResponse>((preq, presp) =>
-                            {
-                                if (presp != null && presp.StatusCode == 200)
-                                    Plugin.Log.LogInfo("[PLUS] purchase complete — re-login to activate");
-                                else
-                                    Plugin.Log.LogWarning($"[PLUS] purchase failed: {presp?.StatusCode}");
-                            }).Target,
-                            new Action<HTTPRequest, HTTPResponse>((a, b) => { }).Method);
-                        HTTPManager.SendRequest(purchaseReq);
+                        Plugin.Log.LogWarning("[PLUS] balance check failed");
+                        return;
                     }
-                    catch (Exception e)
+
+                    var body = resp.DataAsText;
+                    int balance = ParseBalance(body);
+                    Plugin.Log.LogInfo($"[PLUS] balance={balance}");
+
+                    if (balance < PlusPriceTokens)
                     {
-                        Plugin.Log.LogError($"[PLUS] balance callback failed: {e.Message}");
+                        Plugin.Log.LogWarning($"[PLUS] insufficient tokens ({balance} < {PlusPriceTokens})");
+                        return;
                     }
-                }).Target,
-                new Action<HTTPRequest, HTTPResponse>((a, b) => { }).Method);
+
+                    // 2. Purchase with tokens
+                    var purchaseUrl = $"{server}/api/CampusCard/v1/PurchaseWithTokens";
+                    var purchaseReq = new HTTPRequest(new Uri(purchaseUrl), HTTPMethods.Post);
+                    purchaseReq.SetHeader("Authorization", auth);
+                    purchaseReq.SetHeader("Content-Type", "application/json");
+                    purchaseReq.RawData = System.Text.Encoding.UTF8.GetBytes("{}");
+                    var purchaseAction = (Action<HTTPRequest, HTTPResponse>)((preq, presp) =>
+                    {
+                        if (presp != null && presp.StatusCode == 200)
+                            Plugin.Log.LogInfo("[PLUS] purchase complete — re-login to activate");
+                        else
+                            Plugin.Log.LogWarning($"[PLUS] purchase failed: {presp?.StatusCode}");
+                    });
+                    purchaseReq.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
+                        typeof(OnRequestFinishedDelegate), purchaseAction.Target, purchaseAction.Method);
+                    HTTPManager.SendRequest(purchaseReq);
+                }
+                catch (Exception e)
+                {
+                    Plugin.Log.LogError($"[PLUS] balance callback failed: {e.Message}");
+                }
+            });
+            balanceReq.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
+                typeof(OnRequestFinishedDelegate), balanceAction.Target, balanceAction.Method);
 
             HTTPManager.SendRequest(balanceReq);
         }
