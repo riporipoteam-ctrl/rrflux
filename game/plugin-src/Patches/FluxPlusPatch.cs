@@ -140,15 +140,18 @@ internal static class FluxPlusPatch
         {
             Plugin.Log.LogInfo("[PLUS] Buy intercepted — starting token purchase flow");
 
-            var auth = SendRequestPatch.ConnectToRecNetPatch.LastAuthHeader;
-            if (string.IsNullOrEmpty(auth))
-            {
-                Plugin.Log.LogWarning("[PLUS] no auth token captured yet — cannot purchase");
-                return false;
-            }
+            // TODO: Implement the full token purchase flow:
+            // 1. Get token balance via /api/storefronts/v4/balance/2
+            // 2. If balance < 10000, show "Not enough tokens" error
+            // 3. Show confirmation dialog ("Buy Flux Rec Plus for 10,000 tokens?")
+            // 4. POST /api/CampusCard/v1/PurchaseWithTokens
+            // 5. On success, show success message and trigger re-login to refresh rn.plus claim
+            // 6. On failure, show error message
+            //
+            // For now, log and block the Steam flow. The full UI flow requires
+            // runtime inspection of the client's dialog system.
 
-            // Run the purchase flow on a background thread (BestHTTP is async).
-            System.Threading.Tasks.Task.Run(() => DoTokenPurchase(auth));
+            Plugin.Log.LogWarning("[PLUS] Token purchase UI not yet implemented — purchase blocked to prevent Steam flow");
             return false; // Skip original (prevents Steam store from opening)
         }
         catch (Exception e)
@@ -156,87 +159,5 @@ internal static class FluxPlusPatch
             Plugin.Log.LogError($"[PLUS] intercept failed: {e.Message}");
             return false; // Still block Steam on error
         }
-    }
-
-    private static void DoTokenPurchase(string auth)
-    {
-        try
-        {
-            var server = Plugin.ServerHostname.Value.TrimEnd('/');
-            Plugin.Log.LogInfo("[PLUS] checking token balance...");
-
-            using var client = new System.Net.Http.HttpClient();
-            client.DefaultRequestHeaders.Add("Authorization", auth);
-
-            // 1. Check balance
-            var balanceUrl = $"{server}/api/storefronts/v4/balance/2";
-            var balanceResp = client.GetStringAsync(balanceUrl).GetAwaiter().GetResult();
-            if (string.IsNullOrEmpty(balanceResp))
-            {
-                Plugin.Log.LogWarning("[PLUS] balance check failed (empty response)");
-                return;
-            }
-
-            // Parse balance from JSON: {"Balance": 12345} or similar
-            int balance = 0;
-            try
-            {
-                var json = SimpleJsonParse(balanceResp);
-                if (json.TryGetValue("balance", out var b) || json.TryGetValue("Balance", out b))
-                    balance = Convert.ToInt32(b);
-            }
-            catch (Exception e)
-            {
-                Plugin.Log.LogWarning($"[PLUS] balance parse failed: {e.Message} body={balanceResp}");
-                return;
-            }
-
-            Plugin.Log.LogInfo($"[PLUS] balance={balance}, price={PlusPriceTokens}");
-            if (balance < PlusPriceTokens)
-            {
-                Plugin.Log.LogWarning($"[PLUS] insufficient tokens ({balance} < {PlusPriceTokens})");
-                // TODO: show "Not enough tokens" dialog once dialog API is known
-                return;
-            }
-
-            // 2. Purchase with tokens
-            Plugin.Log.LogInfo("[PLUS] purchasing Flux Rec Plus with tokens...");
-            var purchaseUrl = $"{server}/api/CampusCard/v1/PurchaseWithTokens";
-            var content = new System.Net.Http.StringContent("{}", System.Text.Encoding.UTF8, "application/json");
-            var purchaseRespMsg = client.PostAsync(purchaseUrl, content).GetAwaiter().GetResult();
-            var purchaseResp = purchaseRespMsg.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-            if (string.IsNullOrEmpty(purchaseResp))
-            {
-                Plugin.Log.LogWarning("[PLUS] purchase failed (empty response)");
-                return;
-            }
-
-            Plugin.Log.LogInfo($"[PLUS] purchase response: {purchaseResp}");
-            // TODO: check success field, show success dialog, trigger re-login
-            // for rn.plus claim refresh once dialog API is known.
-            Plugin.Log.LogInfo("[PLUS] purchase complete — re-login to activate Flux Rec Plus");
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogError($"[PLUS] purchase flow failed: {e.Message}");
-        }
-    }
-
-    private static System.Collections.Generic.Dictionary<string, object> SimpleJsonParse(string json)
-    {
-        // Minimal JSON parser for flat {"key": value} objects.
-        var dict = new System.Collections.Generic.Dictionary<string, object>(System.StringComparer.OrdinalIgnoreCase);
-        json = json.Trim().TrimStart('{').TrimEnd('}');
-        foreach (var pair in json.Split(','))
-        {
-            var kv = pair.Split(new[] { ':' }, 2);
-            if (kv.Length != 2) continue;
-            var key = kv[0].Trim().Trim('"');
-            var val = kv[1].Trim().Trim('"');
-            if (int.TryParse(val, out var i)) dict[key] = i;
-            else if (bool.TryParse(val, out var b)) dict[key] = b;
-            else dict[key] = val;
-        }
-        return dict;
     }
 }
