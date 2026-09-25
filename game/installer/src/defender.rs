@@ -398,10 +398,10 @@ pub fn verify_quarantine_targets(dir: &Path, _ns_host: &str) -> Vec<QuarantinePr
     problems
 }
 
-/// Re-download the redirect plugin DLL and unblock it. Returns true when
-/// the DLL is present and non-empty afterwards.
+/// Re-install the redirect plugin DLL from the embedded copy and unblock it.
+/// Returns true when the DLL is present and non-empty afterwards.
 async fn repair_plugin_dll(
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
     dir: &Path,
     progress: &crate::progress::Progress,
 ) -> bool {
@@ -410,21 +410,12 @@ async fn repair_plugin_dll(
         return false;
     }
     let dest = plugins_dir.join("RecNetPlugin.dll");
-    // Remove any quarantined remnant (e.g. a 0-byte stub) so the download
-    // below actually re-fetches instead of skipping as "already present".
+    // Remove any quarantined remnant (e.g. a 0-byte stub) so the write
+    // below actually replaces it instead of skipping as "already present".
     let _ = std::fs::remove_file(&dest);
     progress.set_stage("Repairing Flux Rec plugin…");
-    match crate::download(
-        client,
-        crate::PLUGIN_URL,
-        &dest,
-        None,
-        Some(crate::PLUGIN_SIZE),
-        "plugin-repair",
-        Some((progress, "Repairing Flux Rec plugin…")),
-    )
-    .await
-    {
+    // v0.1.19: use the embedded plugin (no download — upstream lacks our patches).
+    match std::fs::write(&dest, crate::EMBEDDED_PLUGIN) {
         Ok(()) => {
             unblock_file(&dest);
             std::fs::metadata(&dest)
@@ -432,7 +423,7 @@ async fn repair_plugin_dll(
                 .unwrap_or(false)
         }
         Err(e) => {
-            eprintln!("[av] plugin re-download failed: {e}");
+            eprintln!("[plugin-repair] failed: {}", e);
             false
         }
     }
@@ -440,7 +431,7 @@ async fn repair_plugin_dll(
 
 /// Repair every problem reported by [`verify_quarantine_targets`].
 ///
-/// - Plugin DLL → re-downloaded from the release URL and unblocked.
+/// - Plugin DLL → re-installed from the embedded copy and unblocked.
 /// - Hosts entry → re-applied via the existing hosts writer.
 /// - Steam bypass → the existing `bypass::repair_bypass` pipeline.
 /// - Afterwards the Defender exclusion is re-applied (the user may have
