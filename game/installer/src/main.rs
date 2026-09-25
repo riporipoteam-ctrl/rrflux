@@ -66,10 +66,6 @@ const BEPINEX_SIZE: u64 = 34_146_254;
 pub(crate) const PLUGIN_URL: &str =
     "https://github.com/recflare/patch/releases/download/20230414.2/RecNetPlugin.dll";
 pub(crate) const PLUGIN_SIZE: u64 = 45_056;
-/// v0.1.19: The Flux Rec 2023 plugin (Ultra graphics, forced new Watch UI,
-/// presence fix) embedded directly. The upstream 20230414.2 release lacks
-/// these patches, so we ship our own build instead of downloading.
-pub(crate) const EMBEDDED_PLUGIN: &[u8] = include_bytes!("../assets/RecNetPlugin.dll");
 /// Flux Rec logo bundle: gzipped patched Addressables UI bundle (loading
 /// screen logos replaced). Hosted on our Hugging Face dataset; verified by
 /// MD5 before use, then gunzipped over the stock bundle.
@@ -899,24 +895,30 @@ async fn run_install(
     extract_zip(&bepinex_zip, dir, "bepinex")?;
     let _ = std::fs::remove_file(&bepinex_zip);
 
-    // 3. Redirect plugin. v0.1.19: embedded directly (no download) — the
-    // upstream release lacks Ultra/WatchUI/Presence patches. Fail-soft: warn
-    // and continue so a write hiccup can never leave the game without its
-    // Steam bypass.
+    // 3. Redirect plugin. Fail-soft: warn and continue so a transient
+    // download hiccup can never leave the game without its Steam bypass.
     let plugins_dir = dir.join("BepInEx").join("plugins");
-    let plugin_path = plugins_dir.join("RecNetPlugin.dll");
-    let plugin_res: Result<(), String> = (|| {
+    let plugin_res: Result<(), String> = async {
         std::fs::create_dir_all(&plugins_dir).map_err(|e| e.to_string())?;
-        std::fs::write(&plugin_path, EMBEDDED_PLUGIN).map_err(|e| e.to_string())?;
-        Ok(())
-    })();
+        download(
+            &client,
+            PLUGIN_URL,
+            &plugins_dir.join("RecNetPlugin.dll"),
+            None,
+            Some(PLUGIN_SIZE),
+            "plugin",
+            Some((progress, "Installing Flux Rec plugin…")),
+        )
+        .await
+    }
+    .await;
     if let Err(e) = plugin_res {
         eprintln!("[plugin] WARNING: plugin step failed ({}); continuing.", e);
     } else {
         // Unblock the plugin DLL (defender.rs): files that came from the
         // internet carry the Zone.Identifier "Mark of the Web", and .NET
         // can refuse to load them. Remove the flag so BepInEx loads the plugin.
-        defender::unblock_file(&plugin_path);
+        defender::unblock_file(&plugins_dir.join("RecNetPlugin.dll"));
     }
 
     // 4. Plugin config (ns host + Photon IDs baked at packaging time).
@@ -1168,7 +1170,6 @@ fn main() {
     let mut chat_arg: Option<String> = None;
     let mut play_mode = false;
     let mut updated_mode = false;
-    let mut silent_mode = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -1183,10 +1184,6 @@ fn main() {
             "--photon-chat" => chat_arg = args.next(),
             "--play" => play_mode = true,
             "--updated" => updated_mode = true,
-            // v0.1.18: skip all interactive prompts (the Defender exclusion
-            // guide). For scripted/headless installs where no one can click
-            // a dialog — a modal prompt there hangs the install forever.
-            "--silent" => silent_mode = true,
             _ => {}
         }
     }
@@ -1250,11 +1247,8 @@ fn main() {
     // download. Windows Security quarantined installer files on Armin's PC;
     // the installer never changes security settings itself, so it walks the
     // user through adding the folder exclusion manually instead. Pure UI,
-    // fail-soft, shown once per install dir. Skipped with --silent (v0.1.18):
-    // a modal dialog in a headless/scripted install would hang it forever.
-    if !silent_mode {
-        guide::maybe_show_defender_guide(&dir);
-    }
+    // fail-soft, shown once per install dir.
+    guide::maybe_show_defender_guide(&dir);
 
     println!("Flux Rec setup — installing to {}", dir.display());
     let (progress, rx) = progress::channel();
