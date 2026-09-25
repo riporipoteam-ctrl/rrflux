@@ -119,7 +119,7 @@ jobs:
       - name: Run installer (hidden console + GUI progress window)
         shell: pwsh
         run: |
-          $p = Start-Process D:\FluxRec-Setup.exe -ArgumentList "--dir","D:\FluxRec" -PassThru
+          $p = Start-Process D:\FluxRec-Setup.exe -ArgumentList "--dir","D:\FluxRec","--silent" -PassThru
           $deadline = (Get-Date).AddMinutes(55)
           while ((Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 30
