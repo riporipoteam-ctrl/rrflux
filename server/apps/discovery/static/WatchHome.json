@@ -1,42 +1,42 @@
 [
   {
-    "id": "Rooms_ForYou_WatchHome",
-    "sectionType": 0,
-    "sectionSubType": "Rooms_ForYou",
-    "source": "CarouselEndpoint",
-    "sourceMetadata": "foryou",
-    "displayMetadata": "{\"DisplayTitle\":\"Recommended For You\",\"supportsDedupe\":\"false\",\"numRows\":\"2\",\"sizePerPlatform\":\"\",\"backgroundColor\":\"#F3DDCE\",\"horizontalScrollEnabled\":\"false\"}"
+    "Id": "Rooms_ForYou_WatchHome",
+    "SectionType": 0,
+    "SectionSubType": "Rooms_ForYou",
+    "Source": "CarouselEndpoint",
+    "SourceMetadata": "foryou",
+    "DisplayMetadata": "{\"DisplayTitle\":\"Recommended For You\",\"supportsDedupe\":\"false\",\"numRows\":\"2\",\"sizePerPlatform\":\"\",\"backgroundColor\":\"#F3DDCE\",\"horizontalScrollEnabled\":\"false\"}"
   },
   {
-    "id": "Accounts_OnlineFriends_WatchHome",
-    "sectionType": 1,
-    "sectionSubType": "Accounts_OnlineFriends",
-    "source": "OnlineFriends",
-    "sourceMetadata": null,
-    "displayMetadata": "{\"DisplayTitle\":\"Online Friends\",\"itemCount\":3,\"cardStyle\":\"Horizontal\"}"
+    "Id": "Accounts_OnlineFriends_WatchHome",
+    "SectionType": 1,
+    "SectionSubType": "Accounts_OnlineFriends",
+    "Source": "OnlineFriends",
+    "SourceMetadata": null,
+    "DisplayMetadata": "{\"DisplayTitle\":\"Online Friends\",\"itemCount\":3,\"cardStyle\":\"Horizontal\"}"
   },
   {
-    "id": "Rooms_ContinuePlaying_WatchHome",
-    "sectionType": 0,
-    "sectionSubType": "Rooms_ContinuePlaying",
-    "source": "Recent",
-    "sourceMetadata": null,
-    "displayMetadata": "{\"DisplayTitle\":\"Continue Playing\",\"supportsDedupe\":\"false\",\"numRows\":\"1\",\"sizePerPlatform\":\"\",\"backgroundColor\":\"\",\"horizontalScrollEnabled\":\"false\"}"
+    "Id": "Rooms_ContinuePlaying_WatchHome",
+    "SectionType": 0,
+    "SectionSubType": "Rooms_ContinuePlaying",
+    "Source": "Recent",
+    "SourceMetadata": null,
+    "DisplayMetadata": "{\"DisplayTitle\":\"Continue Playing\",\"supportsDedupe\":\"false\",\"numRows\":\"1\",\"sizePerPlatform\":\"\",\"backgroundColor\":\"\",\"horizontalScrollEnabled\":\"false\"}"
   },
   {
-    "id": "Rooms_MostPopular",
-    "sectionType": 0,
-    "sectionSubType": "Rooms_MostPopular",
-    "source": "Hot",
-    "sourceMetadata": null,
-    "displayMetadata": "{\"DisplayTitle\":\"Trending\",\"supportsDedupe\":\"true\",\"numRows\":\"1\"}"
+    "Id": "Rooms_MostPopular",
+    "SectionType": 0,
+    "SectionSubType": "Rooms_MostPopular",
+    "Source": "Hot",
+    "SourceMetadata": null,
+    "DisplayMetadata": "{\"DisplayTitle\":\"Trending\",\"supportsDedupe\":\"true\",\"numRows\":\"1\"}"
   },
   {
-    "id": "Rooms_RRO_WatchHome",
-    "sectionType": 0,
-    "sectionSubType": "Rooms_RRO",
-    "source": "Hot",
-    "sourceMetadata": "rro",
-    "displayMetadata": "{\"DisplayTitle\":\"Rec Room Originals\",\"supportsDedupe\":\"false\",\"numRows\":\"1\",\"sizePerPlatform\":\"\",\"backgroundColor\":\"\",\"horizontalScrollEnabled\":\"false\"}"
+    "Id": "Rooms_RRO_WatchHome",
+    "SectionType": 0,
+    "SectionSubType": "Rooms_RRO",
+    "Source": "Hot",
+    "SourceMetadata": "rro",
+    "DisplayMetadata": "{\"DisplayTitle\":\"Rec Room Originals\",\"supportsDedupe\":\"false\",\"numRows\":\"1\",\"sizePerPlatform\":\"\",\"backgroundColor\":\"\",\"horizontalScrollEnabled\":\"false\"}"
   }
 ]
