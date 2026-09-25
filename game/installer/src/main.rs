@@ -452,7 +452,13 @@ fn write_plugin_config(dir: &Path, ns_host: &str, rt: &str, voice: &str, chat: &
          Debug = false\n\
          \n\
          [Watch]\n\
-         Force New Watch UI = false\n\
+         Force New Watch UI = true\n\
+         \n\
+         [Graphics]\n\
+         Enable Ultra Graphics = false\n\
+         \n\
+         [Presence]\n\
+         Fix Appear Online To Mapping = false\n\
          \n\
          [Signing]\n\
          Disable Signature Verification = true\n\
