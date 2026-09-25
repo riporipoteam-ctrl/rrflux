@@ -111,11 +111,11 @@ internal static class FluxPlusPatch
         }
     }
 
-    private static void OnRequestSent(HTTPRequest __instance)
+    private static void OnRequestSent(HTTPRequest request)
     {
         try
         {
-            var url = __instance.Uri?.AbsoluteUri ?? "";
+            var url = request.Uri?.AbsoluteUri ?? "";
             // Intercept Plus/subscription price requests
             if (!url.Contains("CampusCard") && !url.Contains("subscription") && !url.Contains("Subscription"))
                 return;
@@ -125,7 +125,7 @@ internal static class FluxPlusPatch
             Plugin.Log.LogInfo($"[PLUS] intercepting price request: {url}");
 
             // Wrap the callback to inject our fake price
-            var original = __instance.Callback;
+            var original = request.Callback;
             var wrapperAction = (Action<HTTPRequest, HTTPResponse>)((req, resp) =>
             {
                 try
@@ -141,7 +141,7 @@ internal static class FluxPlusPatch
                 catch { }
                 original?.Invoke(req, resp);
             });
-            __instance.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
+            request.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
                 typeof(OnRequestFinishedDelegate), wrapperAction.Target, wrapperAction.Method);
         }
         catch { }
