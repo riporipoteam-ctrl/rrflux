@@ -87,13 +87,9 @@ public class Plugin : BasePlugin
         // until patched, since the commerce types may not be loaded yet.
         Patches.FluxPlusPatch.Apply();
 
-        // Nametag badge patch: renders Dev/Community Mod badges above nametag
-        // (precise, minimal — no broad method scanning).
-        Patches.NametagBadgePatch.Apply();
-
-        // Store crash guard: suppresses Store page crashes and logs them
-        // (defensive — root cause still needs client logs).
-        Patches.StoreCrashGuardPatch.Apply();
+        // Plus page inspector: dumps Plus-related types and UI hierarchy
+        // for writing precise patches (diagnostic only).
+        Patches.PlusInspectorPatch.Apply();
 
         // Presence slider mapping fix (write+read inversion) and the Ultra
         // graphics hook: same retry-on-scene-load pattern as the watch gates.
@@ -121,12 +117,6 @@ public class Plugin : BasePlugin
 
         // Retry the Flux Rec Plus patch until patched (no-op once done).
         Patches.FluxPlusPatch.Apply();
-
-        // Retry the nametag badge patch until patched (no-op once done).
-        Patches.NametagBadgePatch.Apply();
-
-        // Retry the store crash guard until patched (no-op once done).
-        Patches.StoreCrashGuardPatch.Apply();
 
         // Retry the presence-mapping fix and the Ultra graphics button until
         // their target types / the settings page are available (no-op once done).

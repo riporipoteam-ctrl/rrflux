@@ -91,43 +91,9 @@ jobs:
           if (-not (Test-Path "bin\Release\net6.0\RecNetPlugin.dll")) { throw "DLL not built" }
           $dll = Get-Item "bin\Release\net6.0\RecNetPlugin.dll"
           Write-Host "built:" $dll.Length "bytes"
-          # Install the fresh DLL so the inspector run below uses it
-          Copy-Item "bin\Release\net6.0\RecNetPlugin.dll" "D:\FluxRec\BepInEx\plugins\RecNetPlugin.dll" -Force
-          Write-Host "installed fresh DLL to plugins"
-
-      - name: Run game with fresh plugin (inspector capture)
-        shell: pwsh
-        run: |
-          # Let the game boot with the newly built plugin so the
-          # Plus/Nametag inspectors dump their output to LogOutput.log.
-          # No login happens here; we just need plugin Load() to run.
-          Start-Process D:\FluxRec\FluxRecLauncher.exe -ArgumentList "--play","--dir","D:\FluxRec"
-          Write-Host "waiting for plugin load + inspector output..."
-          $deadline = (Get-Date).AddMinutes(10)
-          $sawInspector = $false
-          while ((Get-Date) -lt $deadline) {
-            Start-Sleep -Seconds 30
-            $log = Get-Content "D:\FluxRec\BepInEx\LogOutput.log" -Raw -ErrorAction SilentlyContinue
-            if ($log -and ($log.Contains("[PLUS-INSPECT]") -or $log.Contains("[NAMETAG-INSPECT]"))) {
-              Write-Host "inspector output detected"
-              $sawInspector = $true
-              break
-            }
-            Write-Host "waiting for inspector..."
-          }
-          Get-Process RecRoom -ErrorAction SilentlyContinue | Stop-Process -Force
-          if (-not $sawInspector) { Write-Host "WARN: no inspector output in log" }
-          else { Write-Host "inspector capture done" }
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
           name: RecNetPlugin
           path: rrflux/game/plugin-src/bin/Release/net6.0/RecNetPlugin.dll
-
-      - name: Upload BepInEx log (inspector output)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bepinex-log
-          path: D:\FluxRec\BepInEx\LogOutput.log
