@@ -100,7 +100,7 @@ internal static class FluxPlusPatch
             }
 
             var go = new GameObject("FluxPlusToastOverlay");
-            go.hideFlags = HideFlags.HideAndDontDestroy;
+            go.hideFlags = HideFlags.HideAndDontSave;
             UnityEngine.Object.DontDestroyOnLoad(go);
             go.AddComponent<PlusToastOverlay>();
             _overlayCreated = true;
@@ -362,9 +362,12 @@ internal static class FluxPlusPatch
             // (Il2CppSystem.Uri, OnRequestFinishedDelegate); method is set via MethodType.
             var flow = new TokenPurchaseFlow { Auth = auth, Server = server };
             var balanceUrl = $"{server}/api/storefronts/v4/balance/2";
+            Action<HTTPRequest, HTTPResponse> balanceAction = flow.OnBalanceFinished;
+            var balanceCb = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
+                typeof(OnRequestFinishedDelegate), balanceAction.Target, balanceAction.Method);
             var balanceReq = new HTTPRequest(
                 new Il2CppSystem.Uri(balanceUrl),
-                new OnRequestFinishedDelegate(flow.OnBalanceFinished));
+                balanceCb);
             balanceReq.MethodType = HTTPMethods.Get;
             balanceReq.SetHeader("Authorization", auth);
 
@@ -408,9 +411,12 @@ internal static class FluxPlusPatch
 
                 // 2. Purchase with tokens.
                 var purchaseUrl = $"{Server}/api/CampusCard/v1/PurchaseWithTokens";
+                Action<HTTPRequest, HTTPResponse> purchaseAction = OnPurchaseFinished;
+                var purchaseCb = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
+                    typeof(OnRequestFinishedDelegate), purchaseAction.Target, purchaseAction.Method);
                 var purchaseReq = new HTTPRequest(
                     new Il2CppSystem.Uri(purchaseUrl),
-                    new OnRequestFinishedDelegate(OnPurchaseFinished));
+                    purchaseCb);
                 purchaseReq.MethodType = HTTPMethods.Post;
                 purchaseReq.SetHeader("Authorization", Auth);
                 purchaseReq.SetHeader("Content-Type", "application/json");
