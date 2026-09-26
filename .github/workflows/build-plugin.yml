@@ -125,6 +125,21 @@ jobs:
           name: RecNetPlugin
           path: rrflux/game/plugin-src/bin/Release/net6.0/RecNetPlugin.dll
 
+      - name: Commit DLL to installer assets
+        shell: pwsh
+        run: |
+          $dll = "rrflux/game/plugin-src/bin/Release/net6.0/RecNetPlugin.dll"
+          $dest = "rrflux/game/installer/assets/RecNetPlugin.dll"
+          Copy-Item $dll $dest -Force
+          cd rrflux
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add game/installer/assets/RecNetPlugin.dll
+          $msg = "Update RecNetPlugin.dll from CI build $env:GITHUB_RUN_ID"
+          git commit -m $msg
+          git push origin main
+          Write-Host "DLL committed and pushed"
+
       - name: Upload BepInEx log (inspector output)
         if: always()
         uses: actions/upload-artifact@v4
