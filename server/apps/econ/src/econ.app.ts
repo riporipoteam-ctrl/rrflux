@@ -40,7 +40,6 @@ import { censorSwears } from '../../api/src/sanitize'
 // wrong or renamed key (see the `Platform`/`BalanceType` trap) fails the build here.
 import { BalanceAddType } from '../../notify/src/notification-payloads'
 import { NotificationType } from '../../notify/src/notification-types'
-import adCarouselItems from '../static/ad-carousel-items.json'
 import avatarItemCatalog from '../static/db/avatar-items.json'
 import defaultAvatarItems from '../static/default-avatar-items.json'
 import defaultAvatar from '../static/default-avatar.json'
@@ -5699,12 +5698,43 @@ const app = new Hono<App>({ strict: false })
 		}
 	)
 
-	// Storefront ad-carousel items. Served from the bundled static JSON — one
-	// placeholder banner with no purchasable items until real promo data exists.
+	// Storefront ad-carousel items. Stubbed to `[]`: the bundled placeholder banner
+	// references a missing AdCarouselItem.png, and the client pairs this fetch with
+	// `/api/storefronts/v1/toptoday` and `/api/storefronts/v1/objectives` on its
+	// Store page — an empty non-null list parses to "nothing to show" instead of the
+	// null item list that crashes the page's UI tick. Real promo data can replace
+	// the stubs once the carousel assets exist.
 	.get(
 		'/api/storefronts/v1/adcarouselitems',
-		listRoute('Storefront ad-carousel items', 'The bundled carousel (one placeholder banner)'),
-		(c) => c.json(adCarouselItems)
+		listRoute('Storefront ad-carousel items', 'Empty stub so the Store page does not 404/crash'),
+		(c) => c.json([])
+	)
+	// Storefront "top today" items — currently unstocked, served as an empty list.
+	.get(
+		'/api/storefronts/v1/toptoday',
+		listRoute('Storefront top-today items', 'Empty stub so the Store page does not 404/crash'),
+		(c) => c.json([])
+	)
+	// Storefront daily objectives — currently none published, served as an empty list.
+	.get(
+		'/api/storefronts/v1/objectives',
+		listRoute('Storefront objectives', 'Empty stub so the Store page does not 404/crash'),
+		(c) => c.json([])
+	)
+	// The 2023 client's Store page pairs `adcarouselitems` with this route in a
+	// WhenAll; a 404 faults the pair, so it is stubbed to an empty list like the
+	// other storefront sources (the commerce worker already answers `[]` for
+	// tokenBundles, but the client never reaches it).
+	.get(
+		'/reminder/currentTokenBundles/v2',
+		listRoute('Current token bundles', 'Empty stub so the Store page does not 404/crash'),
+		(c) => c.json([])
+	)
+	// Fired per carousel card by the Store page; no campaigns exist, so an empty list.
+	.get(
+		'/purchasecampaign/allcurrent/v2',
+		listRoute('Current purchase campaigns', 'Empty stub so the Store page does not 404/crash'),
+		(c) => c.json([])
 	)
 
 	// Current weekly challenge. The rotation is GENERATED from the calendar week (see

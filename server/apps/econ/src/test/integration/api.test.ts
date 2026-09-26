@@ -4714,13 +4714,27 @@ describe('econ endpoints', () => {
 		return scenes
 	}
 
-	test('GET /api/storefronts/v1/adcarouselitems returns the carousel items', async () => {
-		const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v1/adcarouselitems`)
-		expect(res.status).toBe(200)
-		const body = (await res.json()) as Array<{ AdCarouselItemId: number }>
-		expect(Array.isArray(body)).toBe(true)
-		expect(body[0]).toHaveProperty('AdCarouselItemId')
-	})
+	// The 2023 client's Store page pairs these fetches (adcarouselitems +
+	// currentTokenBundles in a WhenAll, purchasecampaign per carousel card); each
+	// must be a bare 200 + `[]` — the old 404/error-envelope or stale-placeholder
+	// answers crash the page's UI tick a few seconds after load.
+	for (const path of [
+		'/api/storefronts/v1/adcarouselitems',
+		'/api/storefronts/v1/toptoday',
+		'/api/storefronts/v1/objectives',
+		'/reminder/currentTokenBundles/v2',
+		'/purchasecampaign/allcurrent/v2',
+	]) {
+		test(`GET ${path} returns exact [] with JSON content type`, async () => {
+			const res = await exports.default.fetch(`${ORIGIN}${path}`)
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toContain('application/json')
+			const raw = await res.text()
+			expect(raw).not.toBe('')
+			expect(raw.trim()).toBe('[]')
+			expect(JSON.parse(raw)).toEqual([])
+		})
+	}
 
 	test('GET /api/gamerewards/v1/pending returns []', async () => {
 		const res = await exports.default.fetch(`${ORIGIN}/api/gamerewards/v1/pending`)
@@ -5758,6 +5772,8 @@ describe('econ endpoints', () => {
 			'GET /api/roomkeys/v1/mine',
 			'GET /api/roomkeys/v1/room',
 			'GET /api/storefronts/v1/adcarouselitems',
+			'GET /api/storefronts/v1/objectives',
+			'GET /api/storefronts/v1/toptoday',
 			'GET /api/storefronts/v2/buyInvention',
 			'GET /api/storefronts/v3/giftdropstore/{id}',
 			'GET /api/storefronts/v4/balance/{currencyType}',
@@ -5772,6 +5788,8 @@ describe('econ endpoints', () => {
 			'GET /econ/roomInventoryItemTags/room/{roomId}',
 			'GET /econ/roomOffer/room/{roomId}',
 			'GET /econ/roomOffer/room/{roomId}/purchaseCounts',
+			'GET /purchasecampaign/allcurrent/v2',
+			'GET /reminder/currentTokenBundles/v2',
 			'POST /api/CampusCard/v1/PurchaseWithTokens',
 			'POST /api/CampusCard/v1/UpdateAndGetSubscription',
 			'POST /api/avatar/v1/lockeditems/bulk',
