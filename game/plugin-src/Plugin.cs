@@ -155,6 +155,16 @@ public class Plugin : BasePlugin
         // the Play clone ("_Play" suffix).
         Patches.HomeLabelsPatch.Apply();
 
+        // Persistent time-based retry driver for the UI-discovery patches
+        // above (Play button, Connect tab, Ultra): their targets all build
+        // asynchronously INSIDE a scene (home tab row post-login, Settings
+        // page on first open), long after sceneLoaded fires, so scene-load
+        // retries alone never coincide with the UI existing. The driver
+        // re-ticks each patch every 2s until it reports IsSettled, then
+        // destroys itself. Idempotent — also re-armed from OnSceneLoaded in
+        // case plugin-load-time creation failed.
+        Patches.UiDiscoveryRetry.Ensure();
+
         Harmony.CreateAndPatchAll(typeof(Plugin).Assembly);
 
         // be.788: UnityAction<T0,T1> ctor no longer accepts a managed method group;
@@ -165,6 +175,11 @@ public class Plugin : BasePlugin
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
+        // Keep the UI-discovery retry driver alive (idempotent): covers the
+        // case where plugin-load-time creation failed, and re-arms it if it
+        // ever stopped while a patch still needs discovery.
+        Patches.UiDiscoveryRetry.Ensure();
+
         // No-op once the switches have stuck; must run before the early return below.
         Patches.UnityTelemetryPatch.Apply();
 

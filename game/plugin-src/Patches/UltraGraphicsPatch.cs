@@ -1,40 +1,48 @@
-// Adds an "Ultra" graphics preset next to Low / Medium / High in
-// Game Settings -> Visuals -> Graphics Quality, and applies it through
-// Unity's QualitySettings API.
+// Ultra-via-High: selecting "High" in Game Settings -> Visuals -> Graphics
+// Quality makes the game render with Ultra quality — but the UI still shows
+// the stock "Low / Medium / High" labels. No extra "Ultra" button is added.
 //
-// Why this shape:
-//  - The game's own quality enum (GHCCKFEJDOA) already contains Ultra = 3 and
-//    the game's quality applier handles it, but the settings page only ships
-//    three radio buttons (Low/Medium/High).
-//  - The plugin finds the "High" button BY ITS VISIBLE LABEL ("High") — never
-//    by GameObject or type name, which are obfuscated and re-roll per build.
-//    The Graphics Quality row is the lowest ancestor of a "High" label whose
-//    children also carry "Low" and "Medium" labels; the child carrying "High"
-//    (and not Low/Medium) is the clone source.
-//  - The plugin clones that button as its next sibling in the same row and
-//    relabels the clone "Ultra". The clone keeps the game's own wiring (same
-//    prefab, same click path, same radio-group behavior); the plugin only
-//    re-points its serialized defaultQualityMapping at Ultra. Clicking it
-//    therefore flows through the game's own SettingsModel.set_QualitySetting,
-//    and the game's own page-open refresh highlights the button exactly when
-//    the current quality is Ultra — so no manual refresh call is needed (the
-//    old obfuscated refresh-method name was build-fragile anyway).
-//  - On top of the game's Ultra level, the plugin boosts what this Unity
-//    build's QualitySettings API exposes at runtime (see UltraQuality):
-//    antiAliasing = 8, pixelLightCount = 4, shadowDistance = 150,
-//    lodBias = 2.0. (masterTextureLimit has no runtime setter in this Unity
-//    version — texture resolution stays driven by the game's Ultra level.)
+// How it works:
+//  - The plugin hooks the concrete SettingsModel's set_QualitySetting (the
+//    real method name in this build's C# layer; the parameter is the game's
+//    quality enum, which contains Ultra = 3 — re-read from the live enum at
+//    hook time, never trusted blindly from the spec).
+//  - At startup it locates the Graphics Quality row BY VISIBLE LABEL
+//    ("High"/"Medium"/"Low" — never by GameObject or type name, which are
+//    obfuscated) and reads which enum value the "High" toggle is wired to
+//    (its QualitySettingForPlatform / defaultQualityMapping).
+//  - Postfix: when the incoming value is High's mapped value, the plugin
+//    re-invokes the setter with the game's Ultra value (recursion-guarded),
+//    so the game's OWN quality system (RecRoom.Core.Quality listeners, the
+//    game's Ultra applier) drives every subsystem at Ultra — this is what
+//    makes "the High option BE Ultra". On top of that it boosts the Unity
+//    QualitySettings knobs that this Unity build exposes at runtime
+//    (see UltraQuality): antiAliasing = 8, pixelLightCount = 4,
+//    shadowDistance = 150, lodBias = 2.0.
+//  - If High already maps to Ultra (mapping == 3), no redirect is needed —
+//    the postfix just applies the boost.
+//  - Scene changes can restore the game's own level without calling the
+//    setter, so each Apply() re-checks the LIVE model and re-applies the
+//    boost/redirect when High (or Ultra) is currently selected.
+//
+// Why not just the QualitySettings boost (the old approach)?
+//  - This Unity build only exposes FOUR settable QualitySettings at runtime
+//    (verified against the 2023-04-14 dump: pixelLightCount, shadowDistance,
+//    lodBias, antiAliasing; everything else — shadowCascades,
+//    shadowResolution, anisotropicFiltering, masterTextureLimit — is
+//    get-only). Redirecting to the game's own Ultra level additionally
+//    drives all of the game's per-subsystem quality controllers at Ultra,
+//    which is where the real "better lighting / realistic" difference comes
+//    from.
 //
 // Hard rules honored:
 //  - Medium stays the default: the plugin never touches default-quality logic.
-//  - Low/Medium/High are untouched: the plugin only ADDS a button and only
-//    overrides QualitySettings when the selected quality IS Ultra.
-//
-// Resolution is by visible label at runtime (never by obfuscated type or
-// GameObject name). The Ultra enum int is re-read from the game's real enum
-// at hook time (never trusted blindly from the spec). Harmony parameters are
-// bound by the special __instance name or positionally (__0), never by
-// obfuscated name.
+//  - Low/Medium are untouched: only High's mapped value is ever redirected.
+//  - Resolution is by visible label at runtime (never by obfuscated type or
+//    GameObject name). Harmony parameters are bound by the special
+//    __instance name or positionally (__0), never by obfuscated name.
+//  - IL2CPP rules: no direct delegate construction (not needed here),
+//    downcasts via .TryCast<T>(), GetComponent via Il2CppSystem.Type.
 //
 // One knob, see [Graphics] in the .cfg:
 //   Enable Ultra Graphics -> THE FEATURE (default true).
@@ -52,33 +60,74 @@ namespace RecNetPlugin.Patches;
 internal static class UltraGraphicsPatch
 {
     private const string MappingFieldName = "defaultQualityMapping";
-    private const string NestedImplTypeName = "GraphicsQualityToggleImpl"; // last-resort fallback only
-    private const string CloneNameSuffix = "_Ultra";
-    private const int MaxAttempts = 10;
+    private const string PlatformMappingPropertyName = "QualitySettingForPlatform";
     private const int MaxClimbLevels = 12;
+
+    // Retry budget is TIME-based, not attempt-based. The Settings page is
+    // built lazily the first time the user opens it — long after
+    // SceneManager.sceneLoaded has fired — so a fixed attempt count burns
+    // out before the page exists. Apply() is re-invoked on a 2-second timer
+    // by UiDiscoveryRetry (plus every scene load) until IsSettled.
+    private static readonly TimeSpan MaxRetryTime = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ProgressLogInterval = TimeSpan.FromSeconds(60);
 
     // Visible labels. Compared case-insensitively, so "HIGH" / "high" match
     // too. Kept to the stock labels on purpose — no guessing spree.
     private const string HighLabel = "High";
     private const string MediumLabel = "Medium";
     private const string LowLabel = "Low";
-    private const string UltraLabel = "Ultra";
 
     private static int _attempts;
-    private static bool _buttonDone;
     private static bool _hookDone;
-    private static bool _ultraActive;
-    private static object _settingsModel; // cached from the set_QualitySetting postfix
+    private static bool _highResolved;
+    private static bool _gaveUp;
+    private static DateTime _firstAttemptUtc = DateTime.MinValue;
+    private static DateTime _lastProgressLogUtc = DateTime.MinValue;
+    private static DateTime _lastHookLogUtc = DateTime.MinValue;
+    private static int _highEnumValue = -1;
     private static int _ultraEnumValue = UltraQuality.UltraEnumValue; // corrected from the live enum at hook time
+    private static Type _qualityEnumType;
+    private static MethodInfo _qualitySetter;
+    private static object _settingsModel; // cached from the set_QualitySetting postfix
+    private static bool _redirecting; // recursion guard for the High -> Ultra re-invoke
     private static readonly Harmony _harmony = new Harmony("net.rec.plugin.ultra");
 
-    // Called from Plugin.Load and again on each scene load: installs the
-    // set_QualitySetting hook once, and retries the button clone until the
-    // settings page exists.
+    // Discovery complete: hook installed AND the High toggle's mapped
+    // value resolved. True once there is nothing left to do: feature
+    // disabled in config, discovery complete, or the retry budget ran out.
+    // The UiDiscoveryRetry driver stops ticking this patch once settled.
+    internal static bool IsSettled =>
+        !Plugin.EnableUltraGraphics.Value || _gaveUp || (_hookDone && _highResolved);
+
+    // Called from Plugin.Load, on each scene load, and on a 2-second timer
+    // by UiDiscoveryRetry: installs the set_QualitySetting hook once,
+    // resolves which enum value the "High" toggle is wired to (retried until
+    // the settings page exists), and re-applies the boost when High/Ultra is
+    // the live selection.
     public static void Apply()
     {
         if (!Plugin.EnableUltraGraphics.Value)
             return;
+
+        if (_gaveUp)
+        {
+            ReapplyIfNeeded();
+            return;
+        }
+
+        if (_firstAttemptUtc == DateTime.MinValue)
+        {
+            _firstAttemptUtc = DateTime.UtcNow;
+            Plugin.Log.LogInfo("[ULTRA] Ultra-via-High discovery started " +
+                $"(retry budget {MaxRetryTime.TotalMinutes:F0} minutes)");
+        }
+
+        if (DateTime.UtcNow - _firstAttemptUtc >= MaxRetryTime && !(_hookDone && _highResolved))
+        {
+            _gaveUp = true;
+            LogGiveUp();
+            return;
+        }
 
         if (!_hookDone)
         {
@@ -89,39 +138,105 @@ internal static class UltraGraphicsPatch
             }
         }
 
-        if (_buttonDone || _attempts >= MaxAttempts)
+        if (!_highResolved)
         {
-            ReapplyIfNeeded();
-            return;
-        }
-
-        _attempts++;
-        try { EnsureUltraButton(); }
-        catch (Exception e)
-        {
-            Plugin.Log.LogWarning($"[ULTRA] attempt {_attempts} failed: {e.Message}");
+            _attempts++;
+            try { ResolveHighMapping(); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"[ULTRA] High-mapping resolution attempt {_attempts} failed: {e.Message}");
+            }
         }
 
         ReapplyIfNeeded();
+        MaybeLogProgress();
+    }
 
-        if (_attempts >= MaxAttempts && !_buttonDone)
-            Plugin.Log.LogWarning("[ULTRA] gave up adding the Ultra button — " +
-                "the Graphics Quality row was never found. QualitySettings boost still applies when Ultra is selected.");
+    // Throttled progress report: the per-attempt "not found yet" notes stay
+    // at Debug, but every 60 seconds a Warning summarizes what the search is
+    // (not) finding so a user reading the log can see the patch is alive and
+    // what the scene actually contains.
+    private static void MaybeLogProgress()
+    {
+        if (IsSettled)
+            return;
+        var now = DateTime.UtcNow;
+        if (now - _lastProgressLogUtc < ProgressLogInterval)
+            return;
+        _lastProgressLogUtc = now;
+        var elapsed = now - _firstAttemptUtc;
+        Plugin.Log.LogWarning("[ULTRA] Ultra-via-High not ready yet " +
+            $"(attempt {_attempts}, {elapsed.TotalSeconds:F0}s elapsed; " +
+            $"hook installed: {_hookDone}, High mapping resolved: {_highResolved}). " +
+            DescribeSettings());
+    }
+
+    // Final give-up: Warning level, states exactly what was searched for,
+    // how many attempts ran, and what the scene actually contained.
+    private static void LogGiveUp()
+    {
+        var elapsed = DateTime.UtcNow - _firstAttemptUtc;
+        Plugin.Log.LogWarning("[ULTRA] GAVE UP Ultra-via-High discovery after " +
+            $"{_attempts} attempts over {elapsed.TotalMinutes:F1} minutes " +
+            $"(hook installed: {_hookDone}, High mapping resolved: {_highResolved}). " +
+            "Searched: (1) SettingsModel.set_QualitySetting — the concrete method with a " +
+            "single enum parameter containing 'Ultra' — for the Harmony hook; " +
+            "(2) the Settings -> Visuals -> Graphics Quality row BY VISIBLE LABEL: the lowest " +
+            "ancestor of a 'High' label whose direct children also carry 'Low' and 'Medium' " +
+            "labels, then read the High toggle's defaultQualityMapping/QualitySettingForPlatform. " +
+            "Scene contents at give-up: " + DescribeSettings());
+    }
+
+    // Diagnostic snapshot: how many Low/Medium/High labels exist at all, and
+    // whether anything looking like the Settings page is present. Zeros
+    // across the board means the Settings page hasn't been built yet (it is
+    // built lazily on first open) — not a code bug.
+    private static string DescribeSettings()
+    {
+        try
+        {
+            int high = FindLabelObjects(HighLabel).Count;
+            int low = FindLabelObjects(LowLabel).Count;
+            int medium = FindLabelObjects(MediumLabel).Count;
+            int gfx = FindLabelObjects("Graphics Quality").Count + FindLabelObjects("Graphics").Count;
+            int visuals = FindLabelObjects("Visuals").Count;
+            return $"'High' labels: {high}, 'Low': {low}, 'Medium': {medium}, " +
+                $"'Graphics (Quality)' labels: {gfx}, 'Visuals' labels: {visuals}.";
+        }
+        catch (Exception e)
+        {
+            return $"settings scan failed: {e.Message}";
+        }
     }
 
     // Postfix on SettingsModel.set_QualitySetting (concrete class only — never
-    // the abstract settings interface): when Ultra is selected, boost the
-    // runtime QualitySettings on top of the game's own Ultra level.
+    // the abstract settings interface): when High is selected, redirect to
+    // the game's own Ultra level and boost the runtime QualitySettings on top.
     private static void PatchQualitySetter()
     {
         var target = FindQualitySetter();
         if (target == null)
         {
-            Plugin.Log.LogWarning("[ULTRA] set_QualitySetting not found — will retry");
+            // Throttled: Apply() now ticks every 2s via UiDiscoveryRetry, so
+            // an unthrottled Warning here would spam the log until the
+            // declaring assembly loads.
+            var now = DateTime.UtcNow;
+            if (now - _lastHookLogUtc >= ProgressLogInterval)
+            {
+                _lastHookLogUtc = now;
+                Plugin.Log.LogWarning("[ULTRA] set_QualitySetting not found yet — will keep retrying " +
+                    "(the declaring type may live in an assembly that isn't loaded yet)");
+            }
+            else
+            {
+                Plugin.Log.LogDebug("[ULTRA] set_QualitySetting not found yet");
+            }
             return;
         }
 
-        ResolveUltraEnumValue(target.GetParameters()[0].ParameterType);
+        _qualitySetter = target;
+        _qualityEnumType = target.GetParameters()[0].ParameterType;
+        ResolveUltraEnumValue(_qualityEnumType);
 
         _harmony.Patch(target, postfix: new HarmonyMethod(
             typeof(UltraGraphicsPatch).GetMethod(nameof(SetQualityPostfix),
@@ -163,7 +278,7 @@ internal static class UltraGraphicsPatch
 
     // Read the REAL Ultra int out of the game's quality enum instead of
     // trusting the spec constant blindly. If the enum ever moves Ultra, the
-    // clone mapping and the postfix both follow automatically.
+    // redirect and the postfix both follow automatically.
     private static void ResolveUltraEnumValue(Type enumType)
     {
         try
@@ -195,20 +310,52 @@ internal static class UltraGraphicsPatch
         {
             if (__instance != null)
                 _settingsModel = __instance;
+            if (_redirecting)
+                return; // our own High -> Ultra re-invoke: don't loop
             int value = Convert.ToInt32(__0);
-            if (value == _ultraEnumValue)
+            if (_highResolved && value == _highEnumValue && value != _ultraEnumValue)
             {
-                _ultraActive = true;
+                RedirectHighToUltra(__instance);
                 ApplyUltraQualitySettings();
             }
-            else
+            else if (value == _ultraEnumValue)
             {
-                _ultraActive = false;
+                ApplyUltraQualitySettings();
             }
         }
         catch (Exception e)
         {
             Plugin.Log.LogWarning($"[ULTRA] postfix failed: {e.Message}");
+        }
+    }
+
+    // Makes "the High option BE Ultra": re-invokes the game's own quality
+    // setter with the Ultra enum value so every quality listener (lighting,
+    // shadows, LOD, particles, terrain, …) applies the game's Ultra level.
+    // The nested postfix call is skipped via _redirecting, so this cannot
+    // recurse.
+    private static void RedirectHighToUltra(object settingsModel)
+    {
+        if (_qualitySetter == null || _qualityEnumType == null || settingsModel == null)
+        {
+            Plugin.Log.LogWarning("[ULTRA] cannot redirect High -> Ultra: setter not available");
+            return;
+        }
+
+        _redirecting = true;
+        try
+        {
+            _qualitySetter.Invoke(settingsModel,
+                new object[] { Enum.ToObject(_qualityEnumType, _ultraEnumValue) });
+            Plugin.Log.LogInfo($"[ULTRA] High selected -> applied the game's Ultra level ({_ultraEnumValue}) under the High label");
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogWarning($"[ULTRA] High -> Ultra redirect failed: {e.Message}");
+        }
+        finally
+        {
+            _redirecting = false;
         }
     }
 
@@ -218,92 +365,148 @@ internal static class UltraGraphicsPatch
         QualitySettings.pixelLightCount = UltraQuality.PixelLightCount;
         QualitySettings.shadowDistance = UltraQuality.ShadowDistance;
         QualitySettings.lodBias = UltraQuality.LodBias;
-        Plugin.Log.LogInfo("[ULTRA] Ultra preset applied " +
+        Plugin.Log.LogInfo("[ULTRA] Ultra boost applied on top " +
             $"(AA={UltraQuality.AntiAliasing}, lights={UltraQuality.PixelLightCount}, " +
             $"shadowDist={UltraQuality.ShadowDistance}, lodBias={UltraQuality.LodBias})");
     }
 
-    // Keeps the Ultra setting stuck across scene loads: re-checks the LIVE
-    // model (not just the postfix flag), so a scene change that restores the
-    // game's own Ultra level without calling the setter still gets our boost
-    // re-applied on top of it.
+    // Keeps Ultra-via-High stuck across scene loads: re-checks the LIVE model
+    // (not just the postfix), because a scene change can restore the game's
+    // own level without calling the setter.
     private static void ReapplyIfNeeded()
     {
         try
         {
-            if (IsUltraCurrentlySelected())
-                _ultraActive = true;
+            int? current = GetCurrentQualitySetting();
+            if (!current.HasValue)
+                return;
+            if (current.Value == _ultraEnumValue)
+            {
+                ApplyUltraQualitySettings();
+            }
+            else if (_highResolved && current.Value == _highEnumValue && current.Value != _ultraEnumValue)
+            {
+                // High is the live selection but the redirect never fired
+                // (e.g. High was set before the mapping resolved): fix it now.
+                RedirectHighToUltra(_settingsModel);
+                ApplyUltraQualitySettings();
+            }
         }
         catch (Exception e)
         {
-            Plugin.Log.LogDebug($"[ULTRA] selection check failed: {e.Message}");
-        }
-
-        if (_ultraActive)
-        {
-            try { ApplyUltraQualitySettings(); }
-            catch (Exception e) { Plugin.Log.LogWarning($"[ULTRA] reapply failed: {e.Message}"); }
+            Plugin.Log.LogDebug($"[ULTRA] reapply check failed: {e.Message}");
         }
     }
 
-    private static bool IsUltraCurrentlySelected()
+    private static int? GetCurrentQualitySetting()
     {
         if (_settingsModel == null)
-            return false;
+            return null;
         var getter = _settingsModel.GetType().GetMethod("get_QualitySetting",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         if (getter == null)
-            return false;
-        var current = getter.Invoke(_settingsModel, null);
-        return Convert.ToInt32(current) == _ultraEnumValue;
+            return null;
+        return Convert.ToInt32(getter.Invoke(_settingsModel, null));
     }
 
-    // Clone the "High" radio button into an "Ultra" button in the same row.
-    private static void EnsureUltraButton()
+    // Find the Graphics Quality row BY VISIBLE LABEL and read which quality
+    // enum value the "High" toggle is wired to (its platform mapping). No
+    // cloning, no UI changes — pure read.
+    private static void ResolveHighMapping()
     {
-        if (!FindHighButton(out var row, out var sourceGo, out bool confident))
+        if (!FindHighButton(out var sourceGo, out bool confident))
         {
             Plugin.Log.LogDebug("[ULTRA] High graphics-quality toggle not found yet");
             return;
         }
 
-        // Already added? (a sibling already carrying our suffix)
-        for (int i = 0; i < row.childCount; i++)
+        if (!TryReadHighMapping(sourceGo, out int value))
         {
-            var child = row.GetChild(i);
-            if (child != null && child.name.EndsWith(CloneNameSuffix, StringComparison.Ordinal))
-            {
-                _buttonDone = true;
-                Plugin.Log.LogDebug("[ULTRA] Ultra button already present");
-                return;
-            }
-        }
-
-        var mappingField = FindMappingField(sourceGo);
-        if (mappingField == null)
-        {
-            Plugin.Log.LogWarning("[ULTRA] defaultQualityMapping field not found — cannot aim the clone at Ultra");
-            if (confident)
-                _attempts = MaxAttempts; // structural mismatch on the real row — stop retrying
-            // (low-confidence fallback: keep retrying, the real row may appear later)
+            // Structural mismatch on the real row: loud, but keep retrying
+            // within the time budget — a settings-page rebuild can fix it.
+            Plugin.Log.LogWarning("[ULTRA] defaultQualityMapping not found on the High toggle " +
+                $"'{sourceGo.name}' — cannot resolve its quality value yet");
             return;
         }
 
-        if (CloneAsUltra(sourceGo, row, mappingField))
-            _buttonDone = true;
+        _highEnumValue = value;
+        _highResolved = true;
+        if (_highEnumValue == _ultraEnumValue)
+            Plugin.Log.LogInfo($"[ULTRA] High already maps to the game's Ultra level ({_highEnumValue}) — no redirect needed, boost applies on top");
+        else
+            Plugin.Log.LogInfo($"[ULTRA] High maps to quality value {_highEnumValue} — selecting High will redirect to Ultra ({_ultraEnumValue})");
+    }
+
+    // Read the High toggle's mapped quality value: prefer the platform-aware
+    // QualitySettingForPlatform property, fall back to defaultQualityMapping.
+    private static bool TryReadHighMapping(GameObject sourceGo, out int value)
+    {
+        value = -1;
+        try
+        {
+            foreach (var o in GetAllComponents(sourceGo))
+            {
+                // Il2Cpp downcasts must go through TryCast, never a direct cast.
+                var comp = ((UnityEngine.Object)o).TryCast<Component>();
+                if (comp == null)
+                    continue;
+                var type = comp.GetType();
+                var field = FindFieldInHierarchy(type, MappingFieldName);
+                if (field == null || !field.FieldType.IsEnum)
+                    continue;
+
+                object raw = null;
+                try
+                {
+                    var prop = type.GetProperty(PlatformMappingPropertyName,
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    raw = prop?.GetValue(comp, null);
+                }
+                catch
+                {
+                    // fall back to the serialized field below
+                }
+                raw ??= field.GetValue(comp);
+
+                value = Convert.ToInt32(raw);
+                return true;
+            }
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogDebug($"[ULTRA] High mapping read failed: {e.Message}");
+        }
+        return false;
+    }
+
+    private static FieldInfo FindFieldInHierarchy(Type type, string name)
+    {
+        for (var t = type; t != null; t = t.BaseType)
+        {
+            var f = t.GetField(name,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+            if (f != null)
+                return f;
+        }
+        return null;
+    }
+
+    private static IEnumerable GetAllComponents(GameObject go)
+    {
+        var compType = Il2CppSystem.Type.GetType(typeof(Component).AssemblyQualifiedName);
+        return (IEnumerable)go.GetComponents(compType);
     }
 
     // Locate the "High" quality button by its VISIBLE LABEL (never by
     // GameObject/type name). Primary: the lowest ancestor of a "High" label
     // whose direct children also carry "Low" and "Medium" labels — that
     // ancestor IS the Graphics Quality row, and the child carrying "High"
-    // (but not Low/Medium) is the button to clone. Fallback: the nearest
-    // clickable (Button/Toggle) ancestor of a "High" label, for label sources
-    // the sibling check can't see. `confident` is true only for the primary
+    // (but not Low/Medium) is the button. Fallback: the nearest clickable
+    // (Button/Toggle) ancestor of a "High" label, for label sources the
+    // sibling check can't see. `confident` is true only for the primary
     // path; the fallback must never burn the retry budget on a wrong button.
-    private static bool FindHighButton(out Transform row, out GameObject sourceGo, out bool confident)
+    private static bool FindHighButton(out GameObject sourceGo, out bool confident)
     {
-        row = null;
         sourceGo = null;
         confident = false;
 
@@ -316,7 +519,6 @@ internal static class UltraGraphicsPatch
             {
                 if (RowHasQualityLabels(t, out var highChild) && highChild != null)
                 {
-                    row = t;
                     sourceGo = highChild;
                     confident = true;
                     Plugin.Log.LogInfo($"[ULTRA] found Graphics Quality row '{t.name}', High button '{highChild.name}'");
@@ -328,9 +530,8 @@ internal static class UltraGraphicsPatch
 
         foreach (var labelGo in labelObjects)
         {
-            if (FindClickableAncestor(labelGo, out var buttonGo) && buttonGo.transform.parent != null)
+            if (FindClickableAncestor(labelGo, out var buttonGo))
             {
-                row = buttonGo.transform.parent;
                 sourceGo = buttonGo;
                 Plugin.Log.LogInfo($"[ULTRA] found High button by clickable-ancestor fallback: '{buttonGo.name}'");
                 return true;
@@ -413,206 +614,6 @@ internal static class UltraGraphicsPatch
         }
         return false;
     }
-
-    // Find the field that aims a quality button at its preset. Primary: scan
-    // the source button's own components for an instance field named
-    // defaultQualityMapping (no type names involved). Fallback: the private
-    // nested impl type on SettingsModelController.
-    private static FieldInfo FindMappingField(GameObject sourceGo)
-    {
-        try
-        {
-            foreach (var o in GetAllComponents(sourceGo))
-            {
-                // Il2Cpp downcasts must go through TryCast, never a direct cast.
-                var comp = ((UnityEngine.Object)o).TryCast<Component>();
-                if (comp == null)
-                    continue;
-                var field = FindFieldInHierarchy(comp.GetType(), MappingFieldName);
-                if (field != null && field.FieldType.IsEnum)
-                    return field;
-            }
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogDebug($"[ULTRA] component scan failed: {e.Message}");
-        }
-
-        try
-        {
-            var toggleType = typeof(SettingsModelController)
-                .GetNestedType(NestedImplTypeName, BindingFlags.NonPublic);
-            var field = toggleType?.GetField(MappingFieldName,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (field != null)
-                Plugin.Log.LogDebug("[ULTRA] mapping field resolved via nested impl type fallback");
-            return field;
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogDebug($"[ULTRA] nested-type fallback failed: {e.Message}");
-            return null;
-        }
-    }
-
-    private static FieldInfo FindFieldInHierarchy(Type type, string name)
-    {
-        for (var t = type; t != null; t = t.BaseType)
-        {
-            var f = t.GetField(name,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-            if (f != null)
-                return f;
-        }
-        return null;
-    }
-
-    private static IEnumerable GetAllComponents(GameObject go)
-    {
-        var compType = Il2CppSystem.Type.GetType(typeof(Component).AssemblyQualifiedName);
-        return (IEnumerable)go.GetComponents(compType);
-    }
-
-    // Clone the High button as its next sibling, aim it at Ultra, relabel it.
-    // Returns false when the clone had to be discarded (caller retries).
-    private static bool CloneAsUltra(GameObject sourceGo, Transform row, FieldInfo mappingField)
-    {
-        var cloneObj = UnityEngine.Object.Instantiate(sourceGo);
-        var cloneGo = cloneObj.TryCast<GameObject>();
-        if (cloneGo == null)
-        {
-            Plugin.Log.LogWarning("[ULTRA] clone failed (not a GameObject)");
-            return false;
-        }
-
-        cloneGo.transform.SetParent(row, false);
-        cloneGo.transform.SetSiblingIndex(sourceGo.transform.GetSiblingIndex() + 1);
-        cloneGo.name = sourceGo.name + CloneNameSuffix;
-
-        // Aim the clone at Ultra instead of High. The Ultra int was read from
-        // the game's own quality enum at hook time — never a blind constant.
-        // be.788: GetComponent requires Il2CppSystem.Type, not System.Type.
-        var implIl2CppType = Il2CppSystem.Type.GetType(mappingField.DeclaringType.AssemblyQualifiedName);
-        Component cloneImpl = cloneGo.GetComponent(implIl2CppType);
-        Component sourceImpl = sourceGo.GetComponent(implIl2CppType);
-        if (cloneImpl == null || sourceImpl == null)
-        {
-            Plugin.Log.LogWarning("[ULTRA] clone lost its toggle component — discarding clone");
-            UnityEngine.Object.Destroy(cloneGo);
-            return false;
-        }
-        mappingField.SetValue(cloneImpl,
-            Enum.ToObject(mappingField.FieldType, _ultraEnumValue));
-
-        // Relabel "High" -> "Ultra" (uGUI Text; TMPro fallback via reflection).
-        RelabelClone(cloneGo);
-
-        // Wire the runtime model (set by the binding system, not serialized)
-        // so the game's own click path writes Ultra into SettingsModel.
-        // The game's own page-open refresh highlights the clone exactly when
-        // the current quality is Ultra, so no manual refresh call is needed.
-        CopyProperty(sourceImpl, cloneImpl, "Model");
-        CopyProperty(sourceImpl, cloneImpl, "Controller");
-        WarnIfModelMissing(cloneImpl);
-
-        Plugin.Log.LogInfo($"[ULTRA] added Ultra button next to '{sourceGo.name}' (Ultra={_ultraEnumValue})");
-        return true;
-    }
-
-    private static void CopyProperty(Component source, Component cloneImpl, string name)
-    {
-        try
-        {
-            var prop = source.GetType().GetProperty(name,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            var setter = prop?.GetSetMethod(true);
-            if (setter == null)
-                return;
-            setter.Invoke(cloneImpl, new[] { prop.GetValue(source, null) });
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogDebug($"[ULTRA] could not copy {name}: {e.Message}");
-        }
-    }
-
-    // A null Model means the clone's clicks can't reach SettingsModel until
-    // the settings page is rebuilt — worth a loud warning, not a silent bug.
-    private static void WarnIfModelMissing(Component cloneImpl)
-    {
-        try
-        {
-            var prop = cloneImpl.GetType().GetProperty("Model",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (prop != null && prop.GetValue(cloneImpl, null) == null)
-                Plugin.Log.LogWarning("[ULTRA] clone has no Model yet — its clicks may not register until the settings page is reopened");
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogDebug($"[ULTRA] Model check failed: {e.Message}");
-        }
-    }
-
-    // Relabel the clone: the first label reading "High" becomes "Ultra".
-    private static void RelabelClone(GameObject cloneGo)
-    {
-        // uGUI path
-        // be.788: GetComponentsInChildren requires Il2CppSystem.Type, not System.Type.
-        var textType = Il2CppSystem.Type.GetType(typeof(Text).AssemblyQualifiedName);
-        var getTexts = typeof(GameObject).GetMethod("GetComponentsInChildren",
-            new[] { typeof(Type), typeof(bool) });
-        if (getTexts != null)
-        {
-            var dstTexts = (IEnumerable)getTexts.Invoke(cloneGo, new object[] { textType, true });
-            if (dstTexts != null)
-            {
-                foreach (var c in dstTexts)
-                {
-                    var label = ((UnityEngine.Object)c).TryCast<Text>();
-                    if (label == null)
-                        continue;
-                    if (IsLabelMatch(label.text, HighLabel))
-                    {
-                        label.text = UltraLabel;
-                        return;
-                    }
-                }
-            }
-        }
-
-        // TMPro fallback (no compile-time dependency)
-        try
-        {
-            var tmproAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
-            var tmproType = tmproAsm?.GetType("TMPro.TextMeshProUGUI");
-            if (tmproType == null || getTexts == null)
-            {
-                Plugin.Log.LogWarning("[ULTRA] no label Text found on the High button — Ultra button keeps its label");
-                return;
-            }
-            var dst = (IEnumerable)getTexts.Invoke(cloneGo, new object[] { tmproType, true });
-            var textProp = tmproType.GetProperty("text");
-            foreach (var c in dst)
-            {
-                var txt = (string)textProp.GetValue(c, null);
-                if (IsLabelMatch(txt, HighLabel))
-                {
-                    textProp.SetValue(c, UltraLabel, null);
-                    return;
-                }
-            }
-            Plugin.Log.LogWarning("[ULTRA] no matching label found on the clone — Ultra button keeps its label");
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogWarning($"[ULTRA] TMPro relabel failed: {e.Message}");
-        }
-    }
-
-    private static bool IsLabelMatch(string text, string label) =>
-        !string.IsNullOrWhiteSpace(text) &&
-        text.Trim().Equals(label, StringComparison.OrdinalIgnoreCase);
 
     // Every GameObject in the scene carrying a visible label `label`
     // (uGUI Text, then TMPro). Case-insensitive: matches "High"/"HIGH"/"high".
@@ -739,4 +740,8 @@ internal static class UltraGraphicsPatch
 
         return false;
     }
+
+    private static bool IsLabelMatch(string text, string label) =>
+        !string.IsNullOrWhiteSpace(text) &&
+        text.Trim().Equals(label, StringComparison.OrdinalIgnoreCase);
 }

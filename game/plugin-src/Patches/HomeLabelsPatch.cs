@@ -59,6 +59,7 @@ namespace RecNetPlugin.Patches;
 internal static class HomeLabelsPatch
 {
     private const string PlayCloneSuffix = "_Play";
+    private const string ConnectCloneSuffix = "_FluxConnectTab";
     private const int MaxAttempts = 20;
 
     private static int _attempts;
@@ -109,9 +110,11 @@ internal static class HomeLabelsPatch
             if (go == null)
                 continue;
 
-            // Never touch the Play button clone (or the logo, which isn't a
-            // button anyway).
+            // Never touch the Play button clone or the Connect tab clone (or
+            // the logo, which isn't a button anyway).
             if (go.name.EndsWith(PlayCloneSuffix, StringComparison.Ordinal))
+                continue;
+            if (go.name.EndsWith(ConnectCloneSuffix, StringComparison.Ordinal))
                 continue;
             if (!HasButton(go))
                 continue;
@@ -417,6 +420,8 @@ internal static class HomeLabelsPatch
             if (child == null || child.gameObject == null)
                 continue;
             if (child.gameObject.name.EndsWith(PlayCloneSuffix, StringComparison.Ordinal))
+                continue;
+            if (child.gameObject.name.EndsWith(ConnectCloneSuffix, StringComparison.Ordinal))
                 continue;
             if (HasButton(child.gameObject))
                 buttons++;

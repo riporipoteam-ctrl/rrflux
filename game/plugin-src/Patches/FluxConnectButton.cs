@@ -38,6 +38,7 @@
 //   Enable Flux Pairing -> THE FEATURE (default true).
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
@@ -50,7 +51,27 @@ internal static class FluxConnectButton
 {
     private const string CloneNameSuffix = "_FluxConnectTab";
     private const string CloneLabel = "Connect";
-    private const int MaxAttempts = 20;
+
+    // Retry budget is TIME-based, not attempt-based. The Watch home tab row
+    // finishes building asynchronously inside the menu scene (post-login),
+    // long after SceneManager.sceneLoaded has fired, so a fixed attempt
+    // count burns out before the UI exists. Apply() is re-invoked on a
+    // 2-second timer by UiDiscoveryRetry (plus every scene load) until
+    // IsSettled.
+    private static readonly TimeSpan MaxRetryTime = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ProgressLogInterval = TimeSpan.FromSeconds(60);
+
+    private static int _attempts;
+    private static bool _buttonDone;
+    private static bool _gaveUp;
+    private static DateTime _firstAttemptUtc = DateTime.MinValue;
+    private static DateTime _lastProgressLogUtc = DateTime.MinValue;
+
+    // True once there is nothing left to do: feature disabled in config, the
+    // Connect tab was added, or the retry budget ran out. The
+    // UiDiscoveryRetry driver stops ticking this patch once settled.
+    internal static bool IsSettled =>
+        !Plugin.EnableFluxPairing.Value || _buttonDone || _gaveUp;
 
     // Visible labels to try as the clone source, in preference order: the
     // Watch home tab row first, then the legacy home screen's Create button.
@@ -59,21 +80,30 @@ internal static class FluxConnectButton
         "Rooms", "Clubs", "Items", "Inventions", "Creators", "Create"
     };
 
-    private static int _attempts;
-    private static bool _buttonDone;
-
-    // Called from Plugin.Load and again on each scene load: retries the
-    // tab clone until the home screen / Watch tab row exists.
+    // Called from Plugin.Load, on each scene load, and on a 2-second timer
+    // by UiDiscoveryRetry: retries the tab clone until the home tab row
+    // exists (or the 10-minute time budget runs out).
     public static void Apply()
     {
         if (!Plugin.EnableFluxPairing.Value)
             return;
 
-        if (_buttonDone)
+        if (_buttonDone || _gaveUp)
             return;
 
-        if (_attempts >= MaxAttempts)
+        if (_firstAttemptUtc == DateTime.MinValue)
+        {
+            _firstAttemptUtc = DateTime.UtcNow;
+            Plugin.Log.LogInfo("[CONNECT] looking for the Watch home tab row " +
+                $"(retry budget {MaxRetryTime.TotalMinutes:F0} minutes)");
+        }
+
+        if (DateTime.UtcNow - _firstAttemptUtc >= MaxRetryTime)
+        {
+            _gaveUp = true;
+            LogGiveUp();
             return;
+        }
 
         _attempts++;
         try
@@ -85,9 +115,110 @@ internal static class FluxConnectButton
             Plugin.Log.LogWarning($"[CONNECT] attempt {_attempts} failed: {e.Message}");
         }
 
-        if (_attempts >= MaxAttempts && !_buttonDone)
-            Plugin.Log.LogWarning("[CONNECT] gave up adding the Connect tab — " +
-                "the Watch home tab row was never found after " + MaxAttempts + " attempts.");
+        MaybeLogProgress();
+    }
+
+    // Throttled progress report: the per-attempt "not found yet" notes stay
+    // at Debug, but every 60 seconds a Warning summarizes what the search is
+    // (not) finding so a user reading the log can see the patch is alive and
+    // what the scene actually contains.
+    private static void MaybeLogProgress()
+    {
+        if (_buttonDone || _gaveUp)
+            return;
+        var now = DateTime.UtcNow;
+        if (now - _lastProgressLogUtc < ProgressLogInterval)
+            return;
+        _lastProgressLogUtc = now;
+        var elapsed = now - _firstAttemptUtc;
+        Plugin.Log.LogWarning($"[CONNECT] still looking for the Watch home tab row " +
+            $"(attempt {_attempts}, {elapsed.TotalSeconds:F0}s elapsed). {DescribeTabs()}");
+    }
+
+    // Final give-up: Warning level, states exactly what was searched for,
+    // how many attempts ran, and what the scene actually contained.
+    private static void LogGiveUp()
+    {
+        var elapsed = DateTime.UtcNow - _firstAttemptUtc;
+        Plugin.Log.LogWarning("[CONNECT] GAVE UP adding the Connect tab after " +
+            $"{_attempts} attempts over {elapsed.TotalMinutes:F1} minutes. " +
+            "Searched: (1) the Watch home tab row via the unobfuscated HomeTop5TabsModel " +
+            "type (first child carrying a uGUI Button becomes the clone source); " +
+            "(2) every active uGUI Button for a child label matching one of " +
+            "'Rooms'/'Clubs'/'Items'/'Inventions'/'Creators'/'Create' (case-insensitive). " +
+            "Scene contents at give-up: " + DescribeTabs());
+    }
+
+    // Diagnostic snapshot: is the HomeTop5TabsModel type/instance present,
+    // what does the tab row contain, and which button labels exist at all.
+    private static string DescribeTabs()
+    {
+        try
+        {
+            var modelType = FindTypeByName("HomeTop5TabsModel");
+            if (modelType == null)
+                return "HomeTop5TabsModel type not found in loaded assemblies; " + DescribeSceneLabels();
+
+            var row = FirstGameObjectOfType(modelType)?.transform;
+            if (row == null)
+                return "HomeTop5TabsModel type present but no live instance in the scene; " + DescribeSceneLabels();
+
+            var children = new List<string>();
+            int buttons = 0;
+            for (int i = 0; i < row.childCount && children.Count < 25; i++)
+            {
+                var child = row.GetChild(i);
+                if (child == null)
+                    continue;
+                var go = child.gameObject;
+                if (go == null)
+                    continue;
+                var label = ReadFirstLabel(go);
+                children.Add($"'{go.name}' label='{label ?? "<none>"}' active={go.activeInHierarchy}");
+                if (HasButton(go))
+                    buttons++;
+            }
+            return $"HomeTop5TabsModel row '{row.name}' found with {row.childCount} children " +
+                $"({buttons} carrying uGUI Buttons): [{string.Join(", ", children)}]; " + DescribeSceneLabels();
+        }
+        catch (Exception e)
+        {
+            return $"tab scan failed: {e.Message}";
+        }
+    }
+
+    // How many uGUI Buttons exist at all, and which distinct text labels were
+    // seen — tells us whether label-based discovery ever had a chance.
+    private static string DescribeSceneLabels()
+    {
+        try
+        {
+            var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
+                new[] { typeof(Type) });
+            if (find == null)
+                return "FindObjectsOfType(Type) not available via reflection.";
+            var all = (IEnumerable)find.Invoke(null, new object[] { typeof(Button) });
+            if (all == null)
+                return "button scan returned null.";
+
+            int total = 0;
+            var labels = new HashSet<string>();
+            foreach (var o in all)
+            {
+                var button = ((UnityEngine.Object)o).TryCast<Button>();
+                if (button == null || button.gameObject == null)
+                    continue;
+                total++;
+                var label = ReadFirstLabel(button.gameObject);
+                if (!string.IsNullOrEmpty(label) && labels.Count < 25)
+                    labels.Add(label);
+            }
+            return $"scene has {total} uGUI Buttons; distinct labels seen: [{string.Join(", ", labels)}].";
+        }
+        catch (Exception e)
+        {
+            return $"label scan failed: {e.Message}";
+        }
     }
 
     // Find a source tab button by its visible label and clone it into a
@@ -104,8 +235,11 @@ internal static class FluxConnectButton
         var parent = source.transform.parent;
         if (parent == null)
         {
-            Plugin.Log.LogWarning("[CONNECT] source tab has no parent row — skipping");
-            _attempts = MaxAttempts; // structural mismatch — stop retrying
+            // Structural mismatch: the tab was found but has no row to clone
+            // into. Retrying won't fix this — give up loudly with the full
+            // diagnostic snapshot so the log shows what went wrong.
+            _gaveUp = true;
+            LogGiveUp();
             return;
         }
 
@@ -125,12 +259,17 @@ internal static class FluxConnectButton
         _buttonDone = true;
     }
 
-    // Locate a source tab button: any active uGUI Button whose child label
-    // text matches one of SourceLabels (checked in preference order).
-    // Prefers candidates living under a Home/Watch-named ancestor (the RRUI
-    // home screen / Watch UI) over identically-labeled buttons elsewhere.
+    // Locate a source tab button. PRIMARY: the Watch home tab row resolved
+    // via the unobfuscated HomeTop5TabsModel type (same anchor
+    // HomeLabelsPatch uses) — label-independent, so it works when the tabs
+    // are icon-only or when HomeLabelsPatch has already renamed the tab
+    // labels to the configured values. FALLBACK: the visible-label search.
     private static GameObject FindSourceTab()
     {
+        var byModel = FindSourceTabByModel();
+        if (byModel != null)
+            return byModel;
+
         var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
             new[] { typeof(Type) });
         if (find == null)
@@ -174,6 +313,135 @@ internal static class FluxConnectButton
         if (best != null)
             Plugin.Log.LogInfo($"[CONNECT] found source tab '{bestLabel}': '{best.name}'");
         return best;
+    }
+
+    // Model-based tab discovery: find the Watch home tab row through the
+    // unobfuscated HomeTop5TabsModel type and take the first child carrying
+    // a uGUI Button as the clone source. Works regardless of what the tab
+    // labels currently read (icon-only tabs, or labels already rewritten by
+    // HomeLabelsPatch).
+    private static GameObject FindSourceTabByModel()
+    {
+        var modelType = FindTypeByName("HomeTop5TabsModel");
+        if (modelType == null)
+            return null;
+        var row = FirstGameObjectOfType(modelType)?.transform;
+        if (row == null)
+            return null;
+
+        for (int i = 0; i < row.childCount; i++)
+        {
+            var child = row.GetChild(i);
+            if (child == null)
+                continue;
+            var go = child.gameObject;
+            if (go == null || !go.activeInHierarchy)
+                continue;
+            // Skip our own clone if it somehow exists without the suffix check.
+            if (go.name.EndsWith(CloneNameSuffix, StringComparison.Ordinal))
+                continue;
+            if (!HasButton(go))
+                continue;
+            Plugin.Log.LogInfo($"[CONNECT] found source tab via HomeTop5TabsModel: '{go.name}' " +
+                $"(label='{ReadFirstLabel(go) ?? "<none>"}')");
+            return go;
+        }
+        return null;
+    }
+
+    private static bool HasButton(GameObject go)
+    {
+        // be.788: GetComponent requires Il2CppSystem.Type, not System.Type.
+        var btnType = Il2CppSystem.Type.GetType(typeof(Button).AssemblyQualifiedName);
+        try { return go.GetComponent(btnType) != null; }
+        catch { return false; }
+    }
+
+    private static Type FindTypeByName(string name)
+    {
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type[] types;
+            try { types = asm.GetTypes(); }
+            catch (ReflectionTypeLoadException e) { types = e.Types.Where(t => t != null).ToArray(); }
+            catch { continue; }
+
+            foreach (var t in types)
+            {
+                if (t != null && t.Name == name)
+                    return t;
+            }
+        }
+        return null;
+    }
+
+    private static GameObject FirstGameObjectOfType(Type type)
+    {
+        var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
+            new[] { typeof(Type) });
+        if (find == null)
+            return null;
+
+        var all = find.Invoke(null, new object[] { type }) as IEnumerable;
+        if (all == null)
+            return null;
+
+        foreach (var o in all)
+        {
+            var comp = ((UnityEngine.Object)o).TryCast<Component>();
+            var go = comp != null ? comp.gameObject : null;
+            if (go != null)
+                return go;
+        }
+        return null;
+    }
+
+    // First non-empty visible label under go (uGUI Text, then TMPro via
+    // reflection), or null. Shared by the diagnostics and the clone log.
+    private static string ReadFirstLabel(GameObject go)
+    {
+        try
+        {
+            var textType = Il2CppSystem.Type.GetType(typeof(Text).AssemblyQualifiedName);
+            var texts = go.GetComponentsInChildren(textType, true);
+            if (texts != null)
+            {
+                foreach (var c in texts)
+                {
+                    var txt = ((UnityEngine.Object)c).TryCast<Text>()?.text;
+                    if (!string.IsNullOrWhiteSpace(txt))
+                        return txt.Trim();
+                }
+            }
+        }
+        catch
+        {
+            // fall through to TMPro
+        }
+
+        try
+        {
+            var tmproAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
+            var tmproType = tmproAsm?.GetType("TMPro.TextMeshProUGUI");
+            if (tmproType == null)
+                return null;
+            var getTexts = typeof(GameObject).GetMethod("GetComponentsInChildren",
+                new[] { typeof(Type), typeof(bool) });
+            var list = (IEnumerable)getTexts.Invoke(go, new object[] { tmproType, true });
+            var textProp = tmproType.GetProperty("text");
+            foreach (var c in list)
+            {
+                var txt = (string)textProp.GetValue(c, null);
+                if (!string.IsNullOrWhiteSpace(txt))
+                    return txt.Trim();
+            }
+        }
+        catch
+        {
+            // no label readable
+        }
+        return null;
     }
 
     // Returns the matching source label for go's child label, or null.
@@ -272,7 +540,9 @@ internal static class FluxConnectButton
         // Replace the tab-switch click handler with the pairing overlay.
         ReplaceClickHandler(cloneGo);
 
-        Plugin.Log.LogInfo($"[CONNECT] added Connect tab next to '{sourceGo.name}'");
+        Plugin.Log.LogInfo($"[CONNECT] added Connect tab '{cloneGo.name}' next to '{sourceGo.name}' " +
+            $"(parent '{sourceGo.transform.parent?.name}', sibling index {cloneGo.transform.GetSiblingIndex()}, " +
+            $"active={cloneGo.activeInHierarchy}, source label='{sourceLabel ?? "<none>"}')");
     }
 
     private static void RelabelClone(GameObject cloneGo, string from, string to)

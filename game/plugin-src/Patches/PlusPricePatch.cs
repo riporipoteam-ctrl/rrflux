@@ -13,25 +13,36 @@ namespace RecNetPlugin.Patches;
 
 // Fixes the red "Error loading membership prices" on the Flux Rec+ membership page.
 //
-// Root cause: the 2023 client queries Steam for localized subscription prices.
-// With the Goldberg emulator (no real Steam client), the price query fails and
-// the page shows a red error instead of a price.
+// Root cause: the 2023 client does NOT call any backend endpoint for membership
+// prices — it reads the localized price of the RR+ subscription SKU from the
+// platform store (PlayerCommerceModel.get_RRPMembershipSKUPrice(), verified in
+// the 20230414 dump). On PC that means Steam; with the Goldberg emulator (no
+// real Steam client), the price query fails and the page shows a red error
+// instead of a price.
 //
 // What this does:
-// 1. Discovers price-loading methods at runtime (types with Plus/Membership/
-//    Subscription/CampusCard in the name, methods with "Price" in the name)
-//    and Harmony-patches them: a prefix warms the price cache, a postfix
-//    replaces the red error text with the Flux Rec+ token price.
+// 1. PRECISE FIX: Harmony-prefixes PlayerCommerceModel.get_RRPMembershipSKUPrice
+//    (exact signature verified in the dump: public string, zero parameters) to
+//    skip the Steam query and return the Flux Rec+ token price directly
+//    (10,000 tokens, 3,500 on Saturdays UTC — matches the backend's
+//    currentPlusPrice() and the token purchase flow). No DTO shape is guessed.
+// 2. FALLBACK: the original UI-text sweep is kept — it discovers price-loading
+//    methods at runtime (types with Plus/Membership/CampusCard/Subscription in
+//    the name, methods with "Price" in the name) and Harmony-patches them: a
+//    prefix warms the price cache, a postfix replaces the red error text with
+//    the Flux Rec+ token price.
 //    (Postfix, not skip-prefix: we don't know the methods' return types, so
 //    skipping them could break callers. Replacing the text after the fact is
 //    behavior-preserving and safe.)
-// 2. The token price comes from GET /api/subscriptionseasons/v1/seasons/current
+// 3. The token price comes from GET /api/subscriptionseasons/v1/seasons/current
 //    (the TokenPrice field, which already accounts for the Saturday discount).
 //    Falls back to local Saturday logic (3,500 on Saturday UTC, 10,000 otherwise)
 //    if the backend is unreachable.
-// 3. A page watcher (GameObject.SetActive hook, the PlusInspectorPatch pattern)
+// 4. A page watcher (GameObject.SetActive hook, the PlusInspectorPatch pattern)
 //    detects when the Plus page opens and re-scans for the error text for ~15s,
 //    catching async Steam failures that land after the load method returns.
+// 5. PlusTitlePatch (wired from Apply() below) repairs the page title strings
+//    broken by the installer's RRPLUS_TITLE_PATCH ("Rec Flux Rec+ Member").
 //
 // IL2CPP safety (see UltraGraphicsPatch / FluxPairingPatch):
 // - TryCast<T>() for downcasts, never direct casts.
@@ -62,6 +73,7 @@ internal static class PlusPricePatch
     private static int _attempts;
     private static bool _methodsPatched;
     private static bool _watcherPatched;
+    private static bool _getterPatched;
     private static bool _pumpCreated;
     private static bool _typeRegistered;
 
@@ -86,7 +98,17 @@ internal static class PlusPricePatch
     {
         if (!Plugin.EnableFluxPlus.Value)
             return;
-        if ((_methodsPatched && _watcherPatched) || _attempts >= MaxAttempts)
+
+        // Title repair (double-brand fix) rides along: Plugin.cs already calls
+        // this Apply() from Load() and OnSceneLoaded(), so no Plugin.cs change
+        // is needed to wire PlusTitlePatch.
+        try { PlusTitlePatch.Apply(); }
+        catch (Exception e)
+        {
+            Plugin.Log.LogWarning($"[PLUS-PRICE] title patch apply failed: {e.Message}");
+        }
+
+        if ((_methodsPatched && _watcherPatched && _getterPatched) || _attempts >= MaxAttempts)
             return;
 
         _attempts++;
@@ -98,6 +120,8 @@ internal static class PlusPricePatch
                 PatchPriceMethods();
             if (!_watcherPatched)
                 PatchPageWatcher();
+            if (!_getterPatched)
+                PatchSkuPriceGetter();
             if (!_priceFetched)
                 EnsurePriceFetched();
         }
@@ -107,7 +131,7 @@ internal static class PlusPricePatch
             return;
         }
 
-        if (_methodsPatched && _watcherPatched)
+        if (_methodsPatched && _watcherPatched && _getterPatched)
             Plugin.Log.LogInfo("[PLUS-PRICE] price display patch applied");
         else if (_attempts >= MaxAttempts)
             Plugin.Log.LogWarning("[PLUS-PRICE] gave up after max attempts");
@@ -275,6 +299,81 @@ internal static class PlusPricePatch
         harmony.Patch(setActive, prefix: prefix);
         _watcherPatched = true;
         Plugin.Log.LogInfo("[PLUS-PRICE] page watcher installed");
+    }
+
+    // ------------------------------------------------------------------
+    // Precise price intercept: PlayerCommerceModel.get_RRPMembershipSKUPrice
+    // ------------------------------------------------------------------
+    //
+    // What the client actually calls to load membership prices: there is NO
+    // backend "membership prices" endpoint. The Plus page reads the localized
+    // price of the RR+ subscription SKU from the platform store
+    // (PlayerCommerceModel.get_RRPMembershipSKUPrice(), verified in the
+    // 20230414 dump: "public string get_RRPMembershipSKUPrice()" on
+    // RRUI.Data.PlayerCommerceModel, zero parameters). On PC that means Steam;
+    // with the Goldberg emulator and no Steam client the query fails and the
+    // page shows the red "Error loading membership prices" bar instead.
+    //
+    // This Harmony prefix skips the Steam query entirely and returns the Flux
+    // Rec+ token price directly (10,000 tokens, 3,500 on Saturdays UTC —
+    // matching the backend's currentPlusPrice() and the token purchase flow).
+    // Signature verified from the dump, so no DTO shape is guessed.
+    private static void PatchSkuPriceGetter()
+    {
+        try
+        {
+            var modelType = AppDomain.CurrentDomain.GetAssemblies()
+                .SelectMany(a => {
+                    try { return a.GetTypes(); }
+                    catch { return Array.Empty<Type>(); }
+                })
+                .FirstOrDefault(t => t.FullName == "RRUI.Data.PlayerCommerceModel"
+                    || t.Name == "PlayerCommerceModel");
+
+            if (modelType == null)
+            {
+                Plugin.Log.LogWarning("[PLUS-PRICE] PlayerCommerceModel not found yet — will retry");
+                return;
+            }
+
+            var getter = modelType.GetMethod("get_RRPMembershipSKUPrice",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, Type.EmptyTypes, null);
+
+            if (getter == null)
+            {
+                Plugin.Log.LogWarning("[PLUS-PRICE] get_RRPMembershipSKUPrice not found — will retry");
+                return;
+            }
+
+            var harmony = new Harmony("com.fluxrec.plusskuprice");
+            var prefix = new HarmonyMethod(typeof(PlusPricePatch).GetMethod(nameof(PrefixSkuPrice),
+                BindingFlags.Static | BindingFlags.NonPublic));
+            harmony.Patch(getter, prefix: prefix);
+            _getterPatched = true;
+            Plugin.Log.LogInfo("[PLUS-PRICE] get_RRPMembershipSKUPrice intercepted — Steam price query bypassed");
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogWarning($"[PLUS-PRICE] SKU price intercept failed: {e.Message}");
+        }
+    }
+
+    // Returns false: skips the original Steam-backed getter entirely.
+    private static bool PrefixSkuPrice(ref string __result)
+    {
+        try
+        {
+            int price = DateTime.UtcNow.DayOfWeek == DayOfWeek.Saturday
+                ? FallbackSaturdayPrice
+                : FallbackPrice;
+            __result = string.Format("{0:N0} Flux Rec Tokens", price);
+        }
+        catch
+        {
+            __result = "10,000 Flux Rec Tokens";
+        }
+        return false;
     }
 
     private static void OnSetActive(GameObject __instance, bool value)

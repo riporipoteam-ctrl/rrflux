@@ -33,6 +33,7 @@
 //   Enable Play Button -> THE FEATURE (default true).
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using HarmonyLib;
@@ -47,23 +48,57 @@ internal static class PlayButtonPatch
     private const string CloneNameSuffix = "_Play";
     private const string SourceLabel = "Create";
     private const string CloneLabel = "Play";
-    private const int MaxAttempts = 20;
+
+    // Retry budget is TIME-based, not attempt-based. The Watch home screen
+    // finishes building asynchronously inside the menu scene (post-login),
+    // long after SceneManager.sceneLoaded has fired, so a fixed attempt
+    // count burns out before the UI exists. Apply() is re-invoked on a
+    // 2-second timer by UiDiscoveryRetry (plus every scene load) until
+    // IsSettled.
+    private static readonly TimeSpan MaxRetryTime = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ProgressLogInterval = TimeSpan.FromSeconds(60);
+    // The assembly type scan (FindByCreateButtonType) is the expensive
+    // discovery step — throttle it so the 2-second retry driver can't hitch
+    // the game with repeated GetTypes() walks.
+    private static readonly TimeSpan DeepScanInterval = TimeSpan.FromSeconds(30);
 
     private static int _attempts;
     private static bool _buttonDone;
+    private static bool _gaveUp;
+    private static DateTime _firstAttemptUtc = DateTime.MinValue;
+    private static DateTime _lastProgressLogUtc = DateTime.MinValue;
+    private static DateTime _lastDeepScanUtc = DateTime.MinValue;
 
-    // Called from Plugin.Load and again on each scene load: retries the
-    // button clone until the home screen exists.
+    // True once there is nothing left to do: feature disabled in config, the
+    // Play button was added, or the retry budget ran out. The
+    // UiDiscoveryRetry driver stops ticking this patch once settled.
+    internal static bool IsSettled =>
+        !Plugin.EnablePlayButton.Value || _buttonDone || _gaveUp;
+
+    // Called from Plugin.Load, on each scene load, and on a 2-second timer
+    // by UiDiscoveryRetry: retries the button clone until the home screen
+    // exists (or the 10-minute time budget runs out).
     public static void Apply()
     {
         if (!Plugin.EnablePlayButton.Value)
             return;
 
-        if (_buttonDone)
+        if (_buttonDone || _gaveUp)
             return;
 
-        if (_attempts >= MaxAttempts)
+        if (_firstAttemptUtc == DateTime.MinValue)
+        {
+            _firstAttemptUtc = DateTime.UtcNow;
+            Plugin.Log.LogInfo("[PLAY] looking for the Create button on the home screen " +
+                $"(retry budget {MaxRetryTime.TotalMinutes:F0} minutes)");
+        }
+
+        if (DateTime.UtcNow - _firstAttemptUtc >= MaxRetryTime)
+        {
+            _gaveUp = true;
+            LogGiveUp();
             return;
+        }
 
         _attempts++;
         try
@@ -75,9 +110,90 @@ internal static class PlayButtonPatch
             Plugin.Log.LogWarning($"[PLAY] attempt {_attempts} failed: {e.Message}");
         }
 
-        if (_attempts >= MaxAttempts && !_buttonDone)
-            Plugin.Log.LogWarning("[PLAY] gave up adding the Play button — " +
-                "the Create button on the home screen was never found.");
+        MaybeLogProgress();
+    }
+
+    // Throttled progress report: the per-attempt "not found yet" notes stay
+    // at Debug, but every 60 seconds a Warning summarizes what the search is
+    // (not) finding so a user reading the log can see the patch is alive and
+    // what the scene actually contains.
+    private static void MaybeLogProgress()
+    {
+        if (_buttonDone || _gaveUp)
+            return;
+        var now = DateTime.UtcNow;
+        if (now - _lastProgressLogUtc < ProgressLogInterval)
+            return;
+        _lastProgressLogUtc = now;
+        var elapsed = now - _firstAttemptUtc;
+        Plugin.Log.LogWarning($"[PLAY] still looking for the Create button " +
+            $"(attempt {_attempts}, {elapsed.TotalSeconds:F0}s elapsed). {DescribeSceneButtons()}");
+    }
+
+    // Final give-up: Warning level, states exactly what was searched for,
+    // how many attempts ran, and what the scene actually contained.
+    private static void LogGiveUp()
+    {
+        var elapsed = DateTime.UtcNow - _firstAttemptUtc;
+        Plugin.Log.LogWarning("[PLAY] GAVE UP adding the Play button after " +
+            $"{_attempts} attempts over {elapsed.TotalMinutes:F1} minutes. " +
+            "Searched: (1) every active uGUI Button for a child label exactly 'Create' " +
+            "(case-insensitive), preferring buttons under a 'Home'-named ancestor; " +
+            "(2) the Watch home hierarchy (anchored on the HomeTop5TabsModel type) for a " +
+            "button with 'create' in its GameObject name (the home icon row is icon-only); " +
+            "(3) GameObject name hints (create/button_create/createbutton/...); " +
+            "(4) component types named *Create*Button*/*Create*Tab*. " +
+            "Scene contents at give-up: " + DescribeSceneButtons());
+    }
+
+    // Diagnostic snapshot of the scene's buttons: how many exist, how many
+    // carry text, which distinct labels were seen, whether the home model
+    // type is present, and which buttons live under a Home ancestor.
+    private static string DescribeSceneButtons()
+    {
+        try
+        {
+            var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
+                new[] { typeof(Type) });
+            if (find == null)
+                return "FindObjectsOfType(Type) not available via reflection.";
+            var all = (IEnumerable)find.Invoke(null, new object[] { typeof(Button) });
+            if (all == null)
+                return "button scan returned null.";
+
+            int total = 0, withLabels = 0;
+            var labels = new HashSet<string>();
+            var homeButtons = new List<string>();
+            foreach (var o in all)
+            {
+                var button = ((UnityEngine.Object)o).TryCast<Button>();
+                if (button == null)
+                    continue;
+                var go = button.gameObject;
+                if (go == null)
+                    continue;
+                total++;
+                var label = ReadFirstLabel(go);
+                if (!string.IsNullOrEmpty(label))
+                {
+                    withLabels++;
+                    if (labels.Count < 25)
+                        labels.Add(label);
+                }
+                if (IsUnderHome(go) && homeButtons.Count < 25)
+                    homeButtons.Add($"'{go.name}' label='{label ?? "<none>"}'");
+            }
+
+            var modelFound = FindTypeByName("HomeTop5TabsModel") != null;
+            return $"scanned {total} uGUI Buttons ({withLabels} with a text label); " +
+                $"distinct labels: [{string.Join(", ", labels)}]; " +
+                $"HomeTop5TabsModel type present: {modelFound}; " +
+                $"buttons under a Home-named ancestor: [{string.Join(", ", homeButtons)}].";
+        }
+        catch (Exception e)
+        {
+            return $"button scan failed: {e.Message}";
+        }
     }
 
     // Find the Create button by its visible label and clone it into a Play
@@ -94,8 +210,11 @@ internal static class PlayButtonPatch
         var parent = source.transform.parent;
         if (parent == null)
         {
-            Plugin.Log.LogWarning("[PLAY] Create button has no parent row — skipping");
-            _attempts = MaxAttempts; // structural mismatch — stop retrying
+            // Structural mismatch: the button was found but has no row to
+            // clone into. Retrying won't fix this — give up loudly with the
+            // full diagnostic snapshot so the log shows what went wrong.
+            _gaveUp = true;
+            LogGiveUp();
             return;
         }
 
@@ -123,7 +242,32 @@ internal static class PlayButtonPatch
         var byLabel = FindByVisibleLabel();
         if (byLabel != null)
             return byLabel;
-        return FindByNameOrType();
+        // The Watch home's Create entry is an ICON in the home icon row
+        // (Create, Store, Events, …) and may carry no text label at all —
+        // find it by position in the home hierarchy instead of by label.
+        var inHome = FindCreateInHomeHierarchy();
+        if (inHome != null)
+            return inHome;
+        var byName = FindByNameHints();
+        if (byName != null)
+            return byName;
+        // Deepest fallback (assembly type scan) is throttled: the cheap
+        // label/hierarchy/name searches run every tick, this one at most
+        // every DeepScanInterval.
+        if (DeepScanDue())
+            return FindByCreateButtonType();
+        return null;
+    }
+
+    // True at most once per DeepScanInterval — gates the expensive
+    // assembly-wide type scan so the 2-second retry driver can't hitch.
+    private static bool DeepScanDue()
+    {
+        var now = DateTime.UtcNow;
+        if (now - _lastDeepScanUtc < DeepScanInterval)
+            return false;
+        _lastDeepScanUtc = now;
+        return true;
     }
 
     // Locate the Create button: any uGUI Button in the active scene whose
@@ -171,10 +315,187 @@ internal static class PlayButtonPatch
         return best;
     }
 
+    // Home-hierarchy discovery: the Watch home's Create entry is an ICON in
+    // the home icon row (Create, Store, Events, …) and may carry no text
+    // label at all, so neither the label search nor the name-hint fallback
+    // can see it. Anchor on the unobfuscated HomeTop5TabsModel type (the same
+    // anchor HomeLabelsPatch uses), walk up to the home-screen root, then
+    // scan its descendants for an active uGUI Button whose GameObject name
+    // contains "create".
+    private static GameObject FindCreateInHomeHierarchy()
+    {
+        var homeRoot = FindHomeRoot();
+        if (homeRoot == null)
+            return null;
+
+        // be.788: GetComponent requires Il2CppSystem.Type, not System.Type.
+        var buttonType = Il2CppSystem.Type.GetType(typeof(Button).AssemblyQualifiedName);
+        var stack = new Stack<Transform>();
+        stack.Push(homeRoot);
+        while (stack.Count > 0)
+        {
+            var t = stack.Pop();
+            if (t == null)
+                continue;
+            var go = t.gameObject;
+            if (go != null && go.activeInHierarchy &&
+                !go.name.EndsWith(CloneNameSuffix, StringComparison.Ordinal))
+            {
+                var lower = (go.name ?? string.Empty).ToLowerInvariant();
+                if (lower.Contains("create") &&
+                    !lower.Contains("invention") &&
+                    !lower.Contains("subroom") &&
+                    !lower.Contains("sub_room") &&
+                    !lower.Contains("choose"))
+                {
+                    try
+                    {
+                        if (go.GetComponent(buttonType) != null)
+                        {
+                            Plugin.Log.LogInfo($"[PLAY] found Create button in the home hierarchy: '{go.name}'");
+                            return go;
+                        }
+                    }
+                    catch
+                    {
+                        // keep scanning
+                    }
+                }
+            }
+            for (int i = 0; i < t.childCount; i++)
+            {
+                try { stack.Push(t.GetChild(i)); }
+                catch
+                {
+                    // keep scanning
+                }
+            }
+        }
+        return null;
+    }
+
+    // Anchor the home UI without relying on labels: the unobfuscated
+    // HomeTop5TabsModel instance's highest Home/Watch/Title-named ancestor,
+    // else any active Transform with Home/Watch/Title in its name.
+    private static Transform FindHomeRoot()
+    {
+        var modelType = FindTypeByName("HomeTop5TabsModel");
+        if (modelType != null)
+        {
+            var modelGo = FirstGameObjectOfType(modelType);
+            if (modelGo != null)
+            {
+                var top = modelGo.transform;
+                var t = top.parent;
+                while (t != null)
+                {
+                    var pn = t.name ?? string.Empty;
+                    if (pn.IndexOf("Home", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        pn.IndexOf("Watch", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        pn.IndexOf("Title", StringComparison.OrdinalIgnoreCase) >= 0)
+                        top = t;
+                    t = t.parent;
+                }
+                return top;
+            }
+        }
+
+        var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
+            new[] { typeof(Type) });
+        if (find == null)
+            return null;
+        var all = (IEnumerable)find.Invoke(null, new object[] { typeof(Transform) });
+        if (all == null)
+            return null;
+        foreach (var o in all)
+        {
+            var t = ((UnityEngine.Object)o).TryCast<Transform>();
+            if (t == null)
+                continue;
+            var go = t.gameObject;
+            if (go == null || !go.activeInHierarchy)
+                continue;
+            var n = t.name ?? string.Empty;
+            if (n.IndexOf("Home", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Watch", StringComparison.OrdinalIgnoreCase) >= 0)
+                return t;
+        }
+        return null;
+    }
+
+    private static GameObject FirstGameObjectOfType(Type type)
+    {
+        var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
+            new[] { typeof(Type) });
+        if (find == null)
+            return null;
+
+        var all = find.Invoke(null, new object[] { type }) as IEnumerable;
+        if (all == null)
+            return null;
+
+        foreach (var o in all)
+        {
+            var comp = ((UnityEngine.Object)o).TryCast<Component>();
+            var go = comp != null ? comp.gameObject : null;
+            if (go != null)
+                return go;
+        }
+        return null;
+    }
+
+    // First non-empty visible label under go (uGUI Text, then TMPro via
+    // reflection), or null. Shared by the diagnostics and the clone log.
+    private static string ReadFirstLabel(GameObject go)
+    {
+        try
+        {
+            var textType = Il2CppSystem.Type.GetType(typeof(Text).AssemblyQualifiedName);
+            var texts = go.GetComponentsInChildren(textType, true);
+            if (texts != null)
+            {
+                foreach (var c in texts)
+                {
+                    var txt = ((UnityEngine.Object)c).TryCast<Text>()?.text;
+                    if (!string.IsNullOrWhiteSpace(txt))
+                        return txt.Trim();
+                }
+            }
+        }
+        catch
+        {
+            // fall through to TMPro
+        }
+
+        try
+        {
+            var tmproAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
+            var tmproType = tmproAsm?.GetType("TMPro.TextMeshProUGUI");
+            if (tmproType == null)
+                return null;
+            var getTexts = typeof(GameObject).GetMethod("GetComponentsInChildren",
+                new[] { typeof(Type), typeof(bool) });
+            var list = (IEnumerable)getTexts.Invoke(go, new object[] { tmproType, true });
+            var textProp = tmproType.GetProperty("text");
+            foreach (var c in list)
+            {
+                var txt = (string)textProp.GetValue(c, null);
+                if (!string.IsNullOrWhiteSpace(txt))
+                    return txt.Trim();
+            }
+        }
+        catch
+        {
+            // no label readable
+        }
+        return null;
+    }
+
     // Fallback when the visible-label search finds nothing (e.g. labels fed
-    // from obfuscated or localized sources): match by GameObject name hints,
-    // then by component type name.
-    private static GameObject FindByNameOrType()
+    // from obfuscated or localized sources): match by GameObject name hints
+    // on uGUI Buttons. Cheap (scene-object walk only) — runs every tick.
+    private static GameObject FindByNameHints()
     {
         var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
             new[] { typeof(Type) });
@@ -227,8 +548,7 @@ internal static class PlayButtonPatch
             return best;
         }
 
-        // 2) Component type name fallback.
-        return FindByCreateButtonType();
+        return null;
     }
 
     // Last resort: resolve by component type name. Mirrors the FindQualitySetter
@@ -375,7 +695,9 @@ internal static class PlayButtonPatch
         // Replace the room-creation click handler with Quick Play.
         ReplaceClickHandler(cloneGo);
 
-        Plugin.Log.LogInfo($"[PLAY] added Play button next to '{sourceGo.name}'");
+        Plugin.Log.LogInfo($"[PLAY] added Play button '{cloneGo.name}' next to '{sourceGo.name}' " +
+            $"(parent '{sourceGo.transform.parent?.name}', sibling index {cloneGo.transform.GetSiblingIndex()}, " +
+            $"active={cloneGo.activeInHierarchy}, label='{ReadFirstLabel(cloneGo) ?? "<none>"}')");
     }
 
     private static void RelabelClone(GameObject cloneGo, string from, string to)

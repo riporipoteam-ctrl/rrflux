@@ -97,37 +97,51 @@ public class SendRequestPatch
     }
 
     // ------------------------------------------------------------------
-    // Storefront endpoint compatibility (comprehensive, 2026-09-26).
+    // Storefront endpoint compatibility (comprehensive, 2026-09-26,
+    // re-verified live 2026-09-26 ~19:00 CEST against the deployed econ
+    // worker at econ.recflare.net).
     //
     // Complete enumeration of the storefront endpoints baked into the 2023
-    // client, extracted from GameAssembly's global-metadata.dat (2026-09-26),
-    // with the live backend status of each (probed 2026-09-26 against the
-    // deployed econ worker, the host the client's service discovery resolves
-    // for storefront traffic):
+    // client, extracted from GameAssembly's global-metadata.dat (2026-09-26).
+    // The string table holds ONLY v1/v2 storefront routes (no v3/v4/v5/v6),
+    // and the base const is literally "api/storefronts/" concatenated with
+    // the versioned paths below — so this list is exhaustive, not sampled.
     //
-    //   SERVED — no rewrite needed:
-    //     GET /api/storefronts/v1/adcarouselitems -> 200 `[]`
-    //     GET /api/storefronts/v1/toptoday        -> 200 `[]`
-    //     GET /api/storefronts/v1/objectives     -> 200 `[]`
-    //     v2/buyItem, v2/buyInvention             -> implemented (purchases)
+    //   SERVED — no rewrite needed (live-verified):
+    //     GET  /api/storefronts/v1/adcarouselitems -> 200, bare JSON array of
+    //            StorefrontAdCarouselItem {AdCarouselItemId, ImageName, Title,
+    //            Description, PurchasableItemIds, PurchaseReminderId?} — shape
+    //            matches the client's DTO field-for-field.
+    //     POST /api/storefronts/v2/buyItem      -> implemented (purchase)
+    //     GET  /api/storefronts/v2/buyInvention  -> implemented (purchase)
     //     POST /api/ugcPurchasables/v1/items/bulk -> implemented (item resolve)
-    //     POST /api/items/purchaseInfos           -> implemented (price tags)
     //   REWRITTEN — see StorefrontRewrites:
     //     v2/balance -> v4/balance/2
     //   NO BACKEND EQUIVALENT — see UnmappedStorefrontPaths (telemetry only):
     //     v1/PurchaseRoomKeyWithCurrency, v1/buyForFreeGiftButton,
     //     v1/buyProgressionEventXpBoost, v1/buyPurchaseReminder, v1/buyRoomKey,
-    //     v1/trialInvention, v1/trialInvention/duration, v2/buyElite, v2/buyTier
+    //     v1/trialInvention, v1/trialInvention/duration, v2/buyElite, v2/buyTier,
+    //     v1/toptoday, v1/objectives
     //
     // Notes:
-    // - The 2023 client only ever calls v1/v2 storefront routes (no v3/v4/v5/v6
-    //   strings exist in its metadata), so v2/balance is the ONLY version
-    //   mismatch with a working backend equivalent.
-    // - The deployed backend ALSO has a native v2/balance now (added
-    //   2026-09-25), but its response shape is not in any local tree, while
-    //   v4/balance/2's shape ([{CurrencyType, Platform, Balance}], the
-    //   backend's BalanceEntry = the client's BalanceResponseDTO) is verified
-    //   — so the rewrite stays, unconditionally.
+    // - v1/toptoday and v1/objectives are PAGE-OPEN fetches (the Store page's
+    //   item-list sources are Store/AdCarousel/Wishlist/TopToday, and the
+    //   client fires adcarouselitems + toptoday as a paired async fetch).
+    //   Both 404 live with `{"success":false,"error":{"message":"not found"}}`.
+    //   They are the prime suspects for "Store opens EMPTY then crashes":
+    //   the page renders with no items, and the faulted fetch pair ("Received
+    //   null response from Storefront!") leaves the screen in a state the
+    //   ~3s-later UI tick doesn't survive. No safe rewrite exists — their
+    //   response DTO shapes are not recoverable from the dump, so per the
+    //   no-synthesis rule they stay telemetry-only. The real fix is backend
+    //   stubs returning `[]` (empty list reads as "nothing to show", a 404
+    //   stalls the load) — same treatment adcarouselitems already got.
+    // - v2/balance has NO native backend route (404 live); the v4/balance/2
+    //   rewrite is load-bearing, not optional. v4/balance/:currencyType
+    //   answers `[{CurrencyType, Platform, Balance}]` (single-entry array);
+    //   the client wants List<BalanceResponseDTO> {Balance, CurrencyType,
+    //   BalanceType} — BalanceType is absent and deserializes to default 0,
+    //   which the balance-summing code tolerates.
     // - Response synthesis was considered for the 404 set and REJECTED:
     //   their shapes are not recoverable from any parsing code in the plugin
     //   or backend, and inventing one risks a worse crash than the 404.
@@ -135,6 +149,9 @@ public class SendRequestPatch
     //   verifiable constructor contract; the v0.1.30 hang came from touching
     //   game callbacks). Balance is the one shape we CAN verify, and its
     //   rewrite target is a real, working endpoint, so no synthesis is needed.
+    // - /api/items/purchaseInfos exists on the backend but the 2023 client
+    //   NEVER calls it (zero occurrences in the client's string table) —
+    //   not a crash factor.
     // ------------------------------------------------------------------
     private static readonly (string From, string To)[] StorefrontRewrites =
     {
@@ -147,11 +164,13 @@ public class SendRequestPatch
         ("/api/storefronts/v2/balance", "/api/storefronts/v4/balance/2"),
     };
 
-    // Client-called storefront paths with no backend equivalent. These are
-    // all purchase/action endpoints (room keys, try-on, elite tiers, gift
-    // button, …), never page-open fetches. The 404 passes through untouched;
-    // each is logged ONCE per session so the next Store crash report names
-    // the exact endpoint the client tried.
+    // Client-called storefront paths with no backend equivalent. The buy*/trial*
+    // entries are all purchase/action endpoints (room keys, try-on, elite
+    // tiers, gift button, …), never page-open fetches — EXCEPT v1/toptoday and
+    // v1/objectives, which ARE page-open fetches (paired with adcarouselitems)
+    // and the prime suspects for the empty-then-crash Store page. The 404
+    // passes through untouched; each is logged ONCE per session so the next
+    // Store crash report names the exact endpoint the client tried.
     private static readonly string[] UnmappedStorefrontPaths =
     {
         "/api/storefronts/v1/PurchaseRoomKeyWithCurrency",
@@ -161,6 +180,8 @@ public class SendRequestPatch
         "/api/storefronts/v1/buyRoomKey",
         "/api/storefronts/v1/trialInvention",
         "/api/storefronts/v1/trialInvention/duration",
+        "/api/storefronts/v1/toptoday",
+        "/api/storefronts/v1/objectives",
         "/api/storefronts/v2/buyElite",
         "/api/storefronts/v2/buyTier",
     };
