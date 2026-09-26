@@ -86,7 +86,7 @@ public static class PlusBuyDialog
             if (_dialogObject == null)
             {
                 _dialogObject = new GameObject("FluxPlusBuyDialog");
-                _dialogObject.hideFlags = HideFlags.HideAndDontSave;
+                _dialogObject.hideFlags = HideFlags.HideAndDontDestroy;
                 UnityEngine.Object.DontDestroyOnLoad(_dialogObject);
                 _overlay = _dialogObject.AddComponent<PlusBuyDialogOverlay>();
             }
@@ -145,7 +145,7 @@ public static class PlusBuyDialog
             if (!_showWindow) return;
             try
             {
-                _windowRect = GUI.Window(WindowId, _windowRect, new GUI.WindowFunction(WindowFunc), "Flux Rec +");
+                _windowRect = GUI.Window(WindowId, _windowRect, WindowFunc, "Flux Rec +");
             }
             catch (Exception e)
             {
