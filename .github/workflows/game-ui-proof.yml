@@ -74,7 +74,7 @@ jobs:
           function Shot($name) {
             $bmp = New-Object System.Drawing.Bitmap(1280, 720)
             $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720)
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
             $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
             $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
           }
@@ -88,7 +88,7 @@ jobs:
           function Shot($name) {
             $bmp = New-Object System.Drawing.Bitmap(1280, 720)
             $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720)
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
             $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
             $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
           }
@@ -141,7 +141,7 @@ jobs:
           function Shot($name) {
             $bmp = New-Object System.Drawing.Bitmap(1280, 720)
             $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720)
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
             $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
             $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
           }
