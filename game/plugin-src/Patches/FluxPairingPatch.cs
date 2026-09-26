@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
 using BestHTTP;
 using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.UI;
 
 namespace RecNetPlugin.Patches;
 
@@ -18,28 +21,31 @@ namespace RecNetPlugin.Patches;
 //
 // How it works:
 // 1. Press F8 in-game (or click the Flux Connect button, which calls
-//    FluxPairingPatch.ShowOverlay()) -> a draggable "Flux Connect" IMGUI
-//    overlay opens.
-//    (Standalone overlay on purpose: the Edit Profile page types are
-//    obfuscated and re-rolled per game build, so hooking it would silently
-//    break on every client update. This overlay touches zero game types.)
+//    FluxPairingPatch.ShowOverlay()) -> the "Flux Connect" uGUI panel opens
+//    as a child of the real Rec Room Watch root (resolved via
+//    WatchUI.get_Local(); the build is retried until the Watch exists).
+//    (v2: the panel is part of the Watch now, not a standalone popup — the
+//    player asked for UI that lives inside the real Watch.)
 // 2. "Get pairing code" -> POST {auth}/connect/deviceauthorization
 //    (form-encoded client_id=fluxrec-game&scope=openid) with the game's own
 //    Authorization header, so the backend links the code to that account.
-// 3. The overlay shows the 6-digit user_code big + the verification_uri.
+// 3. The panel shows the 6-digit user_code big + the verification_uri.
 // 4. The game polls POST /connect/token
 //    (grant_type=urn:ietf:params:oauth:grant-type:device_code) every few
 //    seconds, honoring the server's interval / slow_down, until the flow is
-//    approved, denied, or expired. Polling continues even if the window is
-//    closed.
+//    approved, denied, or expired. Polling continues even if the panel is
+//    hidden.
 // 5. On approval the linked Flux username is shown and persisted to the
 //    [Pairing] config section. "Forget this pairing" clears it.
 //
 // Safety: BestHTTP only (never System.Net.Http); Delegate.CreateDelegate is
 // used ONLY for our own fresh requests (the working FluxPlusPatch pattern) —
 // we never wrap the game's callbacks, so the v0.1.30 hang cannot recur.
-// Everything is fail-soft behind [Pairing] Enable Flux Pairing (default
-// true). The F8 keybind is hardcoded and logged at startup.
+// UI click handlers are OUR OWN fresh Actions converted through
+// DelegateSupport.ConvertDelegate<UnityAction> (never `new UnityAction(...)`
+// — that fails the build on be.788). Everything is fail-soft behind
+// [Pairing] Enable Flux Pairing (default true). The F8 keybind is hardcoded
+// and logged at startup.
 //
 // One knob, see [Pairing] in the .cfg:
 //   Enable Flux Pairing -> THE FIX (default true).
@@ -47,8 +53,8 @@ internal static class FluxPairingPatch
 {
     private static bool _overlayCreated;
     private static bool _typeRegistered;
-    // Held so the visible Flux Connect button can open the overlay on demand.
-    private static FluxPairingOverlay _overlayInstance;
+    // Held so the visible Flux Connect button can open the panel on demand.
+    private static FluxPairingPanel _panelInstance;
 
     public static void Apply()
     {
@@ -59,38 +65,38 @@ internal static class FluxPairingPatch
         {
             if (!_typeRegistered)
             {
-                ClassInjector.RegisterTypeInIl2Cpp<FluxPairingOverlay>();
+                ClassInjector.RegisterTypeInIl2Cpp<FluxPairingPanel>();
                 _typeRegistered = true;
             }
 
-            var go = new GameObject("FluxPairingOverlay");
+            var go = new GameObject("FluxPairingPanel");
             go.hideFlags = HideFlags.HideAndDontSave;
             UnityEngine.Object.DontDestroyOnLoad(go);
-            _overlayInstance = go.AddComponent<FluxPairingOverlay>();
+            _panelInstance = go.AddComponent<FluxPairingPanel>();
             _overlayCreated = true;
-            Plugin.Log.LogInfo("[PAIRING] Flux Connect overlay ready — press F8 in-game");
+            Plugin.Log.LogInfo("[PAIRING] Flux Connect panel host ready — press F8 in-game");
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"[PAIRING] overlay setup failed: {e.Message}");
+            Plugin.Log.LogWarning($"[PAIRING] panel setup failed: {e.Message}");
         }
     }
 
     // Called by the visible Flux Connect button (or any other UI entry point)
-    // to open the pairing overlay. Creates the overlay on demand if Apply()
+    // to open the pairing panel. Creates the host on demand if Apply()
     // never ran (e.g. plugin loaded before login). F8 still toggles it as a
-    // fallback — see FluxPairingOverlay.Update.
+    // fallback — see FluxPairingPanel.Update.
     public static void ShowOverlay()
     {
         try
         {
-            if (_overlayInstance == null)
+            if (_panelInstance == null)
             {
                 // Not created yet (or was lost) — build it now.
                 _overlayCreated = false;
                 Apply();
             }
-            _overlayInstance?.Show();
+            _panelInstance?.ShowWindow();
         }
         catch (Exception e)
         {
@@ -165,13 +171,14 @@ internal static class FluxPairingPatch
         return int.TryParse(s, out var v) ? v : fallback;
     }
 
-    // The standalone overlay. Unity callbacks (Update/OnGUI) run on the main
+    // The pairing panel host. Unity callbacks (Update) run on the main
     // thread; BestHTTP callbacks are marshalled here through a small queue.
-    private class FluxPairingOverlay : MonoBehaviour
+    // The visible UI is a real uGUI panel built as a child of the Watch
+    // root — no IMGUI anywhere in this file.
+    private class FluxPairingPanel : MonoBehaviour
     {
         private enum PairState { Idle, RequestingCode, WaitingApproval, Paired, Error }
 
-        private const int WindowId = 424242;
         private const string DeviceGrantType = "urn:ietf:params:oauth:grant-type:device_code";
         // Pre-encoded for application/x-www-form-urlencoded.
         private const string DeviceGrantTypeEncoded = "urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code";
@@ -179,8 +186,10 @@ internal static class FluxPairingPatch
         private static readonly TimeSpan HttpConnectTimeout = TimeSpan.FromSeconds(15);
         private static readonly TimeSpan HttpReadWriteTimeout = TimeSpan.FromSeconds(30);
 
-        private bool _showWindow;
-        private Rect _windowRect = new Rect(24, 24, 400, 320);
+        // Watch-root resolution: retried (throttled) until the Watch exists.
+        private const int MaxBuildAttempts = 20;
+        private const float BuildRetryIntervalSec = 2f;
+
         private PairState _state = PairState.Idle;
         private string _status = "";
         private string _deviceCode = "";
@@ -191,10 +200,25 @@ internal static class FluxPairingPatch
         private int _pollIntervalSec = 5;
         private DateTime _deadlineUtc;
         private DateTime _nextPollUtc;
-        private GUIStyle _bigCodeStyle;
 
         private readonly object _queueLock = new object();
         private readonly Queue<Action> _pending = new Queue<Action>();
+
+        // uGUI panel pieces (built once under the Watch root).
+        private GameObject _panelRoot;
+        private Text _titleText;
+        private Text _codeText;
+        private Text _statusText;
+        private Button _primaryButton;
+        private Text _primaryLabel;
+        private Button _secondaryButton;
+        private Text _secondaryLabel;
+        private bool _panelBuilt;
+        private bool _buildGaveUp;
+        private int _buildAttempts;
+        private float _nextBuildAttemptTime;
+        private float _nextCountdownRefresh;
+        private bool _uiDirty = true;
 
         private void Start()
         {
@@ -208,6 +232,7 @@ internal static class FluxPairingPatch
                 }
             }
             catch { }
+            _uiDirty = true;
         }
 
         private void Update()
@@ -216,8 +241,8 @@ internal static class FluxPairingPatch
             {
                 if (Input.GetKeyDown(KeyCode.F8))
                 {
-                    _showWindow = !_showWindow;
-                    // v1: cursor visibility while the window is open depends on
+                    TogglePanel();
+                    // Cursor visibility while the panel is open depends on
                     // game state; force it visible on toggle and let the game
                     // restore its own behavior afterwards.
                     Cursor.visible = true;
@@ -233,6 +258,42 @@ internal static class FluxPairingPatch
                         a = _pending.Dequeue();
                     }
                     try { a(); } catch { }
+                }
+
+                // The panel dies with the Watch root on scene changes —
+                // rebuild it when that happens.
+                if (_panelBuilt && _panelRoot == null)
+                {
+                    _panelBuilt = false;
+                    _buildAttempts = 0;
+                    _buildGaveUp = false;
+                    _nextBuildAttemptTime = 0f;
+                    Plugin.Log.LogInfo("[PAIRING] panel root lost — will rebuild under the Watch UI");
+                }
+
+                // Build the panel under the Watch root (throttled retries).
+                if (!_panelBuilt && !_buildGaveUp && Time.realtimeSinceStartup >= _nextBuildAttemptTime)
+                {
+                    _nextBuildAttemptTime = Time.realtimeSinceStartup + BuildRetryIntervalSec;
+                    TryBuildPanel();
+                }
+
+                // Re-render once per second while waiting, so the expiry
+                // countdown ticks.
+                if (_panelBuilt && _panelRoot != null && _panelRoot.activeSelf &&
+                    _state == PairState.WaitingApproval &&
+                    Time.realtimeSinceStartup >= _nextCountdownRefresh)
+                {
+                    _nextCountdownRefresh = Time.realtimeSinceStartup + 1f;
+                    _uiDirty = true;
+                }
+
+                // Refresh visible content when the state machine changed it.
+                if (_uiDirty)
+                {
+                    _uiDirty = false;
+                    if (_panelBuilt && _panelRoot != null)
+                        RefreshUI();
                 }
 
                 if (_state == PairState.WaitingApproval)
@@ -255,144 +316,417 @@ internal static class FluxPairingPatch
             }
         }
 
-        // Opens the overlay — entry point for the Flux Connect button.
-        // (F8 still toggles _showWindow in Update(); this only opens, never
-        // closes, so a button click can never accidentally hide it.)
-        public void Show()
+        // Opens the panel — entry point for the Flux Connect button.
+        // (F8 still toggles in Update(); this only opens, never closes, so
+        // a button click can never accidentally hide it.)
+        public void ShowWindow()
         {
-            _showWindow = true;
-            Cursor.visible = true;
-        }
-
-        private void OnGUI()
-        {
-            if (!_showWindow) return;
             try
             {
-                Action<int> windowAction = WindowFunc;
-                var windowFunc = (GUI.WindowFunction)Delegate.CreateDelegate(
-                    typeof(GUI.WindowFunction), windowAction.Target, windowAction.Method);
-                _windowRect = GUI.Window(WindowId, _windowRect, windowFunc, "Flux Connect");
+                if (!_panelBuilt || _panelRoot == null)
+                {
+                    // Try once immediately — the Watch may have appeared
+                    // since the last throttled tick.
+                    _nextBuildAttemptTime = 0f;
+                    TryBuildPanel();
+                }
+
+                if (_panelRoot != null)
+                {
+                    _panelRoot.SetActive(true);
+                    _uiDirty = true;
+                    Cursor.visible = true;
+                }
+                else
+                {
+                    Plugin.Log.LogWarning("[PAIRING] cannot show the Flux Connect panel — Watch UI not found yet");
+                }
             }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning($"[PAIRING] window failed: {e.Message}");
-                _showWindow = false;
+                Plugin.Log.LogWarning($"[PAIRING] show panel failed: {e.Message}");
             }
         }
 
-        private void WindowFunc(int id)
+        public void Hide()
+        {
+            try
+            {
+                if (_panelRoot != null)
+                    _panelRoot.SetActive(false);
+            }
+            catch { }
+        }
+
+        private void TogglePanel()
+        {
+            if (!_panelBuilt || _panelRoot == null)
+            {
+                Plugin.Log.LogWarning("[PAIRING] Flux Connect panel not ready yet (Watch UI not found)");
+                return;
+            }
+            if (_panelRoot.activeSelf)
+                Hide();
+            else
+                ShowWindow();
+        }
+
+        // --- Panel construction (uGUI, child of the Watch root) ---
+
+        private void TryBuildPanel()
+        {
+            if (_panelBuilt)
+                return;
+
+            _buildAttempts++;
+            GameObject watchRoot = null;
+            try
+            {
+                watchRoot = ResolveWatchRoot();
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogDebug($"[PAIRING] watch resolve failed: {e.Message}");
+            }
+
+            if (watchRoot == null)
+            {
+                if (_buildAttempts >= MaxBuildAttempts)
+                {
+                    _buildGaveUp = true;
+                    Plugin.Log.LogWarning("[PAIRING] gave up building the Flux Connect panel — " +
+                        "WatchUI.get_Local() never resolved after 20 attempts.");
+                }
+                return;
+            }
+
+            try
+            {
+                BuildPanel(watchRoot);
+                _panelBuilt = true;
+                Plugin.Log.LogInfo("[PAIRING] Flux Connect panel built under the Watch UI");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"[PAIRING] panel build failed: {e.Message}");
+                if (_buildAttempts >= MaxBuildAttempts)
+                {
+                    _buildGaveUp = true;
+                    Plugin.Log.LogWarning("[PAIRING] gave up building the Flux Connect panel after 20 attempts.");
+                }
+            }
+        }
+
+        // WatchUI is unobfuscated, but resolve it by name at runtime anyway:
+        // a compile-time reference would break the build if the interop ever
+        // regenerates without it.
+        private static GameObject ResolveWatchRoot()
+        {
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type t;
+                try { t = asm.GetType("WatchUI"); }
+                catch { continue; }
+                if (t == null)
+                    continue;
+
+                var m = t.GetMethod("get_Local",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                if (m == null || m.GetParameters().Length != 0)
+                    continue;
+
+                object local;
+                try { local = m.Invoke(null, null); }
+                catch { return null; }
+                if (local == null)
+                    return null;
+
+                try
+                {
+                    var comp = ((UnityEngine.Object)local).TryCast<Component>();
+                    return comp?.gameObject;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+            return null;
+        }
+
+        // Builds a minimal dialog: dark panel + vertical stack of
+        // title / big code / status / button row. No new Canvas — the Watch
+        // already provides one; this is a plain child of the Watch root.
+        private void BuildPanel(GameObject watchRoot)
+        {
+            var root = new GameObject("FluxConnectPanel");
+            root.transform.SetParent(watchRoot.transform, false);
+
+            var rootRt = root.AddComponent<RectTransform>();
+            rootRt.anchorMin = new Vector2(0.5f, 0.5f);
+            rootRt.anchorMax = new Vector2(0.5f, 0.5f);
+            rootRt.pivot = new Vector2(0.5f, 0.5f);
+            rootRt.sizeDelta = new Vector2(520f, 470f);
+            rootRt.anchoredPosition = Vector2.zero;
+
+            var bg = root.AddComponent<Image>();
+            bg.color = new Color(0.03f, 0.03f, 0.06f, 0.97f);
+
+            var layout = root.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(28, 28, 24, 24);
+            layout.spacing = 12f;
+            layout.childAlignment = TextAnchor.UpperCenter;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = false;
+
+            // Steal the Watch's own font so the text matches the game.
+            var font = ResolveFont(watchRoot);
+
+            _titleText = MakeText(root.transform, "Title", font, 30, FontStyle.Bold,
+                TextAnchor.MiddleCenter, Color.white);
+            _titleText.text = "Flux Connect";
+
+            _codeText = MakeText(root.transform, "Code", font, 52, FontStyle.Bold,
+                TextAnchor.MiddleCenter, new Color(0.45f, 0.95f, 0.55f));
+            _codeText.gameObject.SetActive(false);
+
+            _statusText = MakeText(root.transform, "Status", font, 18, FontStyle.Normal,
+                TextAnchor.UpperCenter, Color.white);
+
+            var row = new GameObject("ButtonRow");
+            row.transform.SetParent(root.transform, false);
+            row.AddComponent<RectTransform>();
+            var hlg = row.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 12f;
+            hlg.childAlignment = TextAnchor.MiddleCenter;
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = true;
+            hlg.childForceExpandHeight = false;
+            var rowLe = row.AddComponent<LayoutElement>();
+            rowLe.preferredHeight = 52f;
+
+            (_primaryButton, _primaryLabel) = MakeButton(row.transform, "Primary", font);
+            _primaryButton.onClick.AddListener(
+                Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UnityAction>(
+                    new Action(OnPrimaryClicked)));
+            (_secondaryButton, _secondaryLabel) = MakeButton(row.transform, "Secondary", font);
+            _secondaryButton.onClick.AddListener(
+                Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UnityAction>(
+                    new Action(OnSecondaryClicked)));
+            var (closeButton, closeLabel) = MakeButton(row.transform, "Close", font);
+            closeLabel.text = "Close (F8)";
+            closeButton.onClick.AddListener(
+                Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UnityAction>(
+                    new Action(OnCloseClicked)));
+
+            root.transform.SetAsLastSibling();
+            root.SetActive(false);
+            _panelRoot = root;
+            _uiDirty = true;
+        }
+
+        private static Text MakeText(Transform parent, string name, Font font, int size,
+            FontStyle style, TextAnchor align, Color color)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            var txt = go.AddComponent<Text>();
+            if (font != null)
+                txt.font = font;
+            txt.fontSize = size;
+            txt.fontStyle = style;
+            txt.alignment = align;
+            txt.color = color;
+            txt.raycastTarget = false;
+            var le = go.AddComponent<LayoutElement>();
+            le.flexibleWidth = 1f;
+            return txt;
+        }
+
+        private static (Button, Text) MakeButton(Transform parent, string name, Font font)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.AddComponent<RectTransform>();
+            var img = go.AddComponent<Image>();
+            img.color = new Color(0.16f, 0.38f, 0.78f, 1f);
+            var btn = go.AddComponent<Button>();
+            var colors = btn.colors;
+            colors.normalColor = new Color(0.16f, 0.38f, 0.78f, 1f);
+            colors.highlightedColor = new Color(0.22f, 0.48f, 0.9f, 1f);
+            colors.pressedColor = new Color(0.1f, 0.28f, 0.6f, 1f);
+            colors.disabledColor = new Color(0.25f, 0.25f, 0.3f, 0.6f);
+            btn.colors = colors;
+            var le = go.AddComponent<LayoutElement>();
+            le.preferredHeight = 52f;
+            le.flexibleWidth = 1f;
+            var label = MakeText(go.transform, "Label", font, 20, FontStyle.Bold,
+                TextAnchor.MiddleCenter, Color.white);
+            return (btn, label);
+        }
+
+        // Borrow the Watch's own Text font so our labels match the game.
+        // Falls back to the built-in Arial if the Watch has no Text yet.
+        private static Font ResolveFont(GameObject watchRoot)
+        {
+            try
+            {
+                // be.788: GetComponentsInChildren requires Il2CppSystem.Type.
+                var textType = Il2CppSystem.Type.GetType(typeof(Text).AssemblyQualifiedName);
+                var texts = watchRoot.GetComponentsInChildren(textType, true);
+                if (texts != null)
+                {
+                    foreach (var o in texts)
+                    {
+                        var t = ((UnityEngine.Object)o).TryCast<Text>();
+                        if (t != null && t.font != null)
+                            return t.font;
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                var fontType = Il2CppSystem.Type.GetType(typeof(Font).AssemblyQualifiedName);
+                var builtin = Resources.GetBuiltinResource(fontType, "Arial.ttf");
+                return builtin?.TryCast<Font>();
+            }
+            catch { }
+
+            return null;
+        }
+
+        // --- Panel content (mirrors the old overlay's status strings) ---
+
+        private void RefreshUI()
+        {
+            try
+            {
+                _codeText.gameObject.SetActive(false);
+                _primaryButton.gameObject.SetActive(true);
+                _primaryButton.interactable = true;
+                _secondaryButton.gameObject.SetActive(false);
+
+                switch (_state)
+                {
+                    case PairState.Idle:
+                    {
+                        var auth = SendRequestPatch.ConnectToRecNetPatch.LastAuthHeader;
+                        var hasAuth = !string.IsNullOrEmpty(auth);
+                        _statusText.text = hasAuth
+                            ? "Link this game to your Flux account."
+                            : "Log in to the game first, then press F8.";
+                        _primaryLabel.text = "Get pairing code";
+                        _primaryButton.interactable = hasAuth;
+                        break;
+                    }
+                    case PairState.RequestingCode:
+                        _statusText.text = "Contacting pairing server…";
+                        _primaryButton.gameObject.SetActive(false);
+                        break;
+                    case PairState.WaitingApproval:
+                    {
+                        _codeText.gameObject.SetActive(true);
+                        _codeText.text = _userCode;
+                        var line = !string.IsNullOrEmpty(_verifyUriComplete)
+                            ? "Or open: " + _verifyUriComplete
+                            : (!string.IsNullOrEmpty(_verifyUri) ? "At: " + _verifyUri : "");
+                        var remaining = _deadlineUtc - DateTime.UtcNow;
+                        if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
+                        _statusText.text = "Enter this code on the website:\n" + line +
+                            $"\n\nWaiting for approval… (expires in {remaining:mm\\:ss})";
+                        _primaryLabel.text = "Copy code";
+                        _secondaryLabel.text = "Cancel";
+                        _secondaryButton.gameObject.SetActive(true);
+                        break;
+                    }
+                    case PairState.Paired:
+                        _statusText.text = "Paired as: " + _pairedName +
+                            "\nYour game and Flux accounts are linked.";
+                        _primaryLabel.text = "Forget this pairing";
+                        break;
+                    case PairState.Error:
+                        _statusText.text = "Pairing failed:\n" + _status;
+                        _primaryLabel.text = "Back";
+                        break;
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"[PAIRING] panel refresh failed: {e.Message}");
+            }
+        }
+
+        // --- Button handlers (wired via DelegateSupport, never IMGUI) ---
+
+        private void OnPrimaryClicked()
         {
             try
             {
                 switch (_state)
                 {
-                    case PairState.Idle: DrawIdle(); break;
-                    case PairState.RequestingCode: DrawBusy("Contacting pairing server…"); break;
-                    case PairState.WaitingApproval: DrawWaiting(); break;
-                    case PairState.Paired: DrawPaired(); break;
-                    case PairState.Error: DrawError(); break;
-                }
-                GUILayout.Space(4);
-                if (GUILayout.Button("Close (F8)")) _showWindow = false;
-                GUI.DragWindow();
-            }
-            catch { }
-        }
-
-        private void DrawIdle()
-        {
-            GUILayout.Label("Link this game to your Flux account.");
-            GUILayout.Space(4);
-            var auth = SendRequestPatch.ConnectToRecNetPatch.LastAuthHeader;
-            if (string.IsNullOrEmpty(auth))
-            {
-                GUILayout.Label("Log in to the game first, then press F8.");
-            }
-            else if (GUILayout.Button("Get pairing code", GUILayout.Height(36)))
-            {
-                RequestCode(auth);
-            }
-        }
-
-        private void DrawBusy(string text)
-        {
-            GUILayout.Space(12);
-            GUILayout.Label(text);
-        }
-
-        private void DrawWaiting()
-        {
-            try
-            {
-                if (_bigCodeStyle == null)
-                {
-                    _bigCodeStyle = new GUIStyle(GUI.skin.label);
-                    _bigCodeStyle.fontSize = 34;
-                    _bigCodeStyle.fontStyle = FontStyle.Bold;
-                    _bigCodeStyle.alignment = TextAnchor.MiddleCenter;
-                }
-                GUILayout.Label("Enter this code on the website:", _bigCodeStyle);
-                GUILayout.Label(_userCode, _bigCodeStyle);
-                GUILayout.Space(4);
-                if (!string.IsNullOrEmpty(_verifyUriComplete))
-                    GUILayout.Label("Or open: " + _verifyUriComplete);
-                else if (!string.IsNullOrEmpty(_verifyUri))
-                    GUILayout.Label("At: " + _verifyUri);
-                GUILayout.Space(4);
-                if (GUILayout.Button("Copy code"))
-                {
-                    try { GUIUtility.systemCopyBuffer = _userCode; } catch { }
-                }
-                GUILayout.Space(4);
-                var remaining = _deadlineUtc - DateTime.UtcNow;
-                if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
-                GUILayout.Label($"Waiting for approval… (expires in {remaining:mm\\:ss})");
-                GUILayout.Space(4);
-                if (GUILayout.Button("Cancel"))
-                {
-                    _state = PairState.Idle;
-                    _status = "";
+                    case PairState.Idle:
+                    {
+                        var auth = SendRequestPatch.ConnectToRecNetPatch.LastAuthHeader;
+                        if (string.IsNullOrEmpty(auth))
+                        {
+                            Plugin.Log.LogWarning("[PAIRING] Get pairing code pressed with no auth token");
+                            return;
+                        }
+                        RequestCode(auth);
+                        break;
+                    }
+                    case PairState.WaitingApproval:
+                        try { GUIUtility.systemCopyBuffer = _userCode; } catch { }
+                        Plugin.Log.LogInfo("[PAIRING] pairing code copied to clipboard");
+                        break;
+                    case PairState.Paired:
+                        try
+                        {
+                            Plugin.PairedFluxAccount.Value = "";
+                            Plugin.Log.LogInfo("[PAIRING] pairing forgotten");
+                        }
+                        catch { }
+                        _pairedName = "";
+                        _state = PairState.Idle;
+                        _uiDirty = true;
+                        break;
+                    case PairState.Error:
+                        _state = PairState.Idle;
+                        _status = "";
+                        _uiDirty = true;
+                        break;
+                    case PairState.RequestingCode:
+                        break;
                 }
             }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning($"[PAIRING] draw waiting failed: {e.Message}");
+                Plugin.Log.LogWarning($"[PAIRING] button click failed: {e.Message}");
             }
         }
 
-        private void DrawPaired()
+        private void OnSecondaryClicked()
         {
-            GUILayout.Space(8);
-            GUILayout.Label("Paired as: " + _pairedName);
-            GUILayout.Space(4);
-            GUILayout.Label("Your game and Flux accounts are linked.");
-            GUILayout.Space(8);
-            if (GUILayout.Button("Forget this pairing"))
-            {
-                try
-                {
-                    Plugin.PairedFluxAccount.Value = "";
-                    Plugin.Log.LogInfo("[PAIRING] pairing forgotten");
-                }
-                catch { }
-                _pairedName = "";
-                _state = PairState.Idle;
-            }
-        }
-
-        private void DrawError()
-        {
-            GUILayout.Space(8);
-            GUILayout.Label("Pairing failed:");
-            GUILayout.Label(_status);
-            GUILayout.Space(8);
-            if (GUILayout.Button("Back"))
+            // WaitingApproval -> Cancel.
+            if (_state == PairState.WaitingApproval)
             {
                 _state = PairState.Idle;
                 _status = "";
+                _uiDirty = true;
             }
         }
+
+        private void OnCloseClicked()
+        {
+            Hide();
+        }
+
+        // --- State machine (unchanged behavior) ---
 
         private void Fail(string message)
         {
@@ -400,6 +734,7 @@ internal static class FluxPairingPatch
             _state = PairState.Error;
             _deviceCode = "";
             _userCode = "";
+            _uiDirty = true;
             Plugin.Log.LogWarning("[PAIRING] " + message);
         }
 
@@ -414,6 +749,7 @@ internal static class FluxPairingPatch
 
             _state = PairState.RequestingCode;
             _status = "";
+            _uiDirty = true;
             var url = host + "/connect/deviceauthorization";
             var body = "client_id=fluxrec-game&scope=openid";
             Plugin.Log.LogInfo("[PAIRING] requesting device code");
@@ -445,6 +781,7 @@ internal static class FluxPairingPatch
                     _deadlineUtc = now.AddSeconds(Math.Max(30, expiresIn));
                     _nextPollUtc = now.AddSeconds(_pollIntervalSec);
                     _state = PairState.WaitingApproval;
+                    _uiDirty = true;
                     Plugin.Log.LogInfo($"[PAIRING] code issued, waiting for approval (expires in {expiresIn}s)");
                 }
                 catch (Exception e)
@@ -493,6 +830,7 @@ internal static class FluxPairingPatch
                         _deviceCode = "";
                         _userCode = "";
                         _state = PairState.Paired;
+                        _uiDirty = true;
                         Plugin.Log.LogInfo("[PAIRING] paired as " + name);
                         return;
                     }
