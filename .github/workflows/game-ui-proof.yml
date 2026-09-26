@@ -100,12 +100,16 @@ jobs:
           $wshell.AppActivate($p.Id)
           Start-Sleep -Seconds 2
           
-          Write-Host "Clicking SWITCH ACCOUNT via Tab+Enter..."
-          [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
-          Start-Sleep -Seconds 2
-          Shot "02-after-tab"
-          
-          [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+          Write-Host "Clicking SWITCH ACCOUNT with mouse at (770, 550)..."
+          # Move mouse using .NET (YAML-safe, no here-string)
+          [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(770, 550)
+          Start-Sleep -Milliseconds 500
+          # Click via SendMessage is complex; try the simple .NET mouse click via reflection
+          $sig = '[DllImport("user32.dll")] public static extern void mouse_event(int f, int x, int y, int d, int e);'
+          $t = Add-Type -MemberDefinition $sig -Name "MClick" -Namespace "Win32" -PassThru
+          $t::mouse_event(0x02, 770, 550, 0, 0)
+          Start-Sleep -Milliseconds 100
+          $t::mouse_event(0x04, 770, 550, 0, 0)
           Start-Sleep -Seconds 8
           Shot "03-after-switch-account-click"
           
