@@ -16,25 +16,29 @@
 //    the tabs actually are and the config list can be corrected without a
 //    rebuild. If the configured label count doesn't match the tab count, the
 //    patch warns and changes no text (never mislabels a tab).
-//  - PlayButtonPatch's "_Play" clone is explicitly skipped, so the "Play"
-//    label is never clobbered regardless of Apply() ordering between the
-//    two patches.
+//  - The Play button clone ("_FluxPlayTab") and the Connect tab clone
+//    ("_FluxConnectTab") are explicitly skipped, so their labels are never
+//    clobbered regardless of Apply() ordering between the patches.
 //
 // Hard rules honored (see PlayButtonPatch / HomeLogoPatch):
 //  - Resolve by unobfuscated type name ("HomeTop5TabsModel") or by
 //    name-substring on Transforms, never by obfuscated member names.
 //  - TryCast for downcasts; FindObjectsOfType via the proven reflection
 //    pattern; GetComponentsInChildren needs Il2CppSystem.Type.
-//  - Idempotent: one full verification pass sets _labelsDone; scene reloads
-//    never duplicate work. Text is only rewritten when it differs.
-//  - Fail-soft: every step is wrapped, retries stop after MaxAttempts.
-//  - TMPro is resolved by reflection (no compile-time dependency).
+//  - Idempotent: one full verification pass sets IsSettled; Apply() becomes
+//    a no-op afterwards, and scene reloads never duplicate work. Text is
+//    only rewritten when it differs.
+//  - Fail-soft: every step is wrapped. There is no attempt budget — Apply()
+//    retries until the home tab row exists (driven by Plugin.Load / scene
+//    loads); each retry is a cheap no-op until it does.
+//  - TMPro is resolved by reflection (no compile-time dependency), via the
+//    TMP_Text base class so both TextMeshProUGUI and TextMeshPro are covered.
 //
 // Coexistence (checked against the other home-screen patches):
 //  - HomeLogoPatch: inserts a "FluxHomeLogo" Image ABOVE the tab row. It is
 //    not a tab button, so this patch never touches it (and the logo patch
 //    never touches tab buttons).
-//  - PlayButtonPatch: inserts a "_Play"-suffixed sibling of Create INSIDE
+//  - PlayButtonPatch: inserts a "_FluxPlayTab" sibling of Create INSIDE
 //    the tab row. Skipped by name here — different feature, no overlap.
 //  - FluxConnectButton: inserts a "_FluxConnectTab"-suffixed sibling of a
 //    source tab INSIDE the tab row and relabels it "Connect". Touches the
@@ -58,45 +62,61 @@ namespace RecNetPlugin.Patches;
 
 internal static class HomeLabelsPatch
 {
-    private const string PlayCloneSuffix = "_Play";
-    private const string ConnectCloneSuffix = "_FluxConnectTab";
-    private const int MaxAttempts = 20;
+    // Clone exclusions: tabs other patches insert INTO the tab row.
+    // Matched with Contains (the clones may carry extra prefixes), not just
+    // by suffix — so a stock tab merely ending in "Play" can never be caught.
+    private const string PlayCloneName = "_FluxPlayTab";
+    private const string ConnectCloneName = "_FluxConnectTab";
+    // Legacy Play clone suffix from before the "_FluxPlayTab" rename; kept so
+    // older inserts are still skipped.
+    private const string LegacyPlayCloneSuffix = "_Play";
 
-    private static int _attempts;
-    private static bool _labelsDone;
+    // Set once the full verification pass completes (or the feature is
+    // disabled in config): Apply() becomes a no-op afterwards.
+    public static bool IsSettled { get; private set; }
+
     private static bool _loggedLabels;
 
     // Called from Plugin.Load and again on each scene load: retries until the
-    // home tab row exists.
+    // home tab row exists, then runs the single verification pass.
     public static void Apply()
     {
+        if (IsSettled)
+            return;
+
         if (!Plugin.EnableFluxHomeBranding.Value)
+        {
+            IsSettled = true;
             return;
+        }
 
-        if (_labelsDone || _attempts >= MaxAttempts)
-            return;
-
-        _attempts++;
+        int? renamed;
         try
         {
-            EnsureLabels();
+            renamed = EnsureLabels();
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"[HOMELABELS] attempt {_attempts} failed: {e.Message}");
+            Plugin.Log.LogWarning($"[HOME] HomeLabelsPatch pass failed: {e.Message}");
+            return;
         }
 
-        if (_attempts >= MaxAttempts && !_labelsDone)
-            Plugin.Log.LogWarning("[HOMELABELS] gave up — the home tab row was never found.");
+        if (renamed.HasValue)
+        {
+            IsSettled = true;
+            Plugin.Log.LogInfo($"[HOME] Labels renamed ({renamed.Value} labels)");
+        }
     }
 
-    private static void EnsureLabels()
+    // Returns the number of labels renamed, or null when the tab row isn't
+    // ready yet (retry on a later Apply()).
+    private static int? EnsureLabels()
     {
         var tabRow = FindTabRow();
         if (tabRow == null)
         {
-            Plugin.Log.LogDebug("[HOMELABELS] home tab row not found yet");
-            return;
+            Plugin.Log.LogDebug("[HOME] home tab row not found yet — retrying on the next pass");
+            return null;
         }
 
         int checkedButtons = 0;
@@ -110,11 +130,9 @@ internal static class HomeLabelsPatch
             if (go == null)
                 continue;
 
-            // Never touch the Play button clone or the Connect tab clone (or
+            // Never touch the Play button clone, the Connect tab clone (or
             // the logo, which isn't a button anyway).
-            if (go.name.EndsWith(PlayCloneSuffix, StringComparison.Ordinal))
-                continue;
-            if (go.name.EndsWith(ConnectCloneSuffix, StringComparison.Ordinal))
+            if (IsCloneTab(go))
                 continue;
             if (!HasButton(go))
                 continue;
@@ -124,29 +142,38 @@ internal static class HomeLabelsPatch
             reactivated += EnsureLabelVisible(go);
         }
 
+        if (checkedButtons == 0)
+        {
+            Plugin.Log.LogDebug("[HOME] tab row found but no tab buttons yet — retrying on the next pass");
+            return null;
+        }
+
         if (!_loggedLabels)
         {
             _loggedLabels = true;
             LogTabLabels(tabButtons);
         }
 
-        if (checkedButtons > 0)
-        {
-            ApplyConfiguredLabels(tabButtons);
-            _labelsDone = true;
-            Plugin.Log.LogInfo($"[HOMELABELS] verified {checkedButtons} tab buttons " +
-                $"({reactivated} labels re-activated)");
-        }
-        else
-        {
-            Plugin.Log.LogDebug("[HOMELABELS] tab row found but no tab buttons yet");
-        }
+        int renamed = ApplyConfiguredLabels(tabButtons);
+        if (reactivated > 0)
+            Plugin.Log.LogInfo($"[HOME] re-activated {reactivated} disabled label(s)");
+        return renamed;
+    }
+
+    // Never treat another patch's clone as a stock tab.
+    private static bool IsCloneTab(GameObject go)
+    {
+        var name = go.name ?? "";
+        return name.Contains(PlayCloneName, StringComparison.Ordinal)
+            || name.Contains(ConnectCloneName, StringComparison.Ordinal)
+            || name.EndsWith(LegacyPlayCloneSuffix, StringComparison.Ordinal);
     }
 
     // Step 2: set each tab's label from the [Home] Home Tab Labels config,
     // left-to-right in visual sibling order. Skipped entirely when the
-    // configured count doesn't match the tab count (fail-soft).
-    private static void ApplyConfiguredLabels(System.Collections.Generic.List<GameObject> tabButtons)
+    // configured count doesn't match the tab count (fail-soft). Returns the
+    // number of labels whose text was actually rewritten.
+    private static int ApplyConfiguredLabels(System.Collections.Generic.List<GameObject> tabButtons)
     {
         var desired = Plugin.HomeTabLabels.Value
             .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
@@ -156,29 +183,35 @@ internal static class HomeLabelsPatch
 
         if (desired.Length == 0)
         {
-            Plugin.Log.LogDebug("[HOMELABELS] no labels configured — leaving tab label text unchanged");
-            return;
+            Plugin.Log.LogDebug("[HOME] no labels configured — leaving tab label text unchanged");
+            return 0;
         }
 
         if (desired.Length != tabButtons.Count)
         {
-            Plugin.Log.LogWarning("[HOMELABELS] configured label count (" + desired.Length +
+            Plugin.Log.LogWarning("[HOME] configured label count (" + desired.Length +
                 ") doesn't match tab count (" + tabButtons.Count +
                 ") — skipping text changes to avoid mislabeling. Fix [Home] Home Tab Labels in the .cfg " +
                 "(the original labels were logged above at Info).");
-            return;
+            return 0;
         }
 
+        int renamed = 0;
         for (int i = 0; i < tabButtons.Count; i++)
-            SetLabelText(tabButtons[i], desired[i]);
+        {
+            if (SetLabelText(tabButtons[i], desired[i]))
+                renamed++;
+        }
+        return renamed;
     }
 
     // Write the label text into the tab's label slot: prefer the slot that
     // already carries text, else fill the first (possibly empty) slot.
-    // uGUI Text first, TMPro fallback via reflection.
-    private static void SetLabelText(GameObject buttonGo, string label)
+    // uGUI Text first, TMPro fallback via reflection. Returns true when the
+    // text was actually rewritten.
+    private static bool SetLabelText(GameObject buttonGo, string label)
     {
-        // uGUI path.
+        // uGUI Text path.
         // be.788: GetComponentsInChildren requires Il2CppSystem.Type, not System.Type.
         var textType = Il2CppSystem.Type.GetType(typeof(Text).AssemblyQualifiedName);
         var texts = buttonGo.GetComponentsInChildren(textType, true);
@@ -202,23 +235,22 @@ internal static class HomeLabelsPatch
             {
                 if (target.text != label)
                 {
-                    Plugin.Log.LogInfo($"[HOMELABELS] tab '{buttonGo.name}': '{target.text}' -> '{label}'");
+                    Plugin.Log.LogInfo($"[HOME] tab '{buttonGo.name}': '{target.text}' -> '{label}'");
                     target.text = label;
+                    return true;
                 }
-                return;
+                return false;
             }
         }
 
         // TMPro fallback (no compile-time dependency).
         try
         {
-            var tmproAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
-            var tmproType = tmproAsm?.GetType("TMPro.TextMeshProUGUI");
+            var tmproType = ResolveTmproTextType();
             if (tmproType == null)
             {
-                Plugin.Log.LogDebug($"[HOMELABELS] tab '{buttonGo.name}' has no label Text component — skipped");
-                return;
+                Plugin.Log.LogDebug($"[HOME] tab '{buttonGo.name}' has no label Text component — skipped");
+                return false;
             }
             var getTexts = typeof(GameObject).GetMethod("GetComponentsInChildren",
                 new[] { typeof(Type), typeof(bool) });
@@ -241,19 +273,33 @@ internal static class HomeLabelsPatch
                 var current = (string)textProp.GetValue(target, null);
                 if (current != label)
                 {
-                    Plugin.Log.LogInfo($"[HOMELABELS] tab '{buttonGo.name}': '{current}' -> '{label}' (TMPro)");
+                    Plugin.Log.LogInfo($"[HOME] tab '{buttonGo.name}': '{current}' -> '{label}' (TMPro)");
                     textProp.SetValue(target, label, null);
+                    return true;
                 }
+                return false;
             }
-            else
-            {
-                Plugin.Log.LogDebug($"[HOMELABELS] tab '{buttonGo.name}' has no TMPro label — skipped");
-            }
+            Plugin.Log.LogDebug($"[HOME] tab '{buttonGo.name}' has no TMPro label — skipped");
+            return false;
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"[HOMELABELS] TMPro label set failed on '{buttonGo.name}': {e.Message}");
+            Plugin.Log.LogWarning($"[HOME] TMPro label set failed on '{buttonGo.name}': {e.Message}");
+            return false;
         }
+    }
+
+    // TMP_Text is the base class of TextMeshProUGUI and TextMeshPro, so
+    // resolving it covers both. Falls back to TextMeshProUGUI if TMP_Text
+    // can't be resolved (very old TMPro versions).
+    private static Type ResolveTmproTextType()
+    {
+        var tmproAsm = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
+        if (tmproAsm == null)
+            return null;
+        return tmproAsm.GetType("TMPro.TMP_Text")
+            ?? tmproAsm.GetType("TMPro.TextMeshProUGUI");
     }
 
     // Returns 1 when a disabled label was re-activated, else 0. Never changes
@@ -262,7 +308,7 @@ internal static class HomeLabelsPatch
     {
         int fixedCount = 0;
 
-        // uGUI path.
+        // uGUI Text path.
         var textType = Il2CppSystem.Type.GetType(typeof(Text).AssemblyQualifiedName);
         var texts = buttonGo.GetComponentsInChildren(textType, true);
         if (texts != null)
@@ -283,9 +329,7 @@ internal static class HomeLabelsPatch
         // TMPro fallback (no compile-time dependency).
         try
         {
-            var tmproAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
-            var tmproType = tmproAsm?.GetType("TMPro.TextMeshProUGUI");
+            var tmproType = ResolveTmproTextType();
             if (tmproType == null)
                 return fixedCount;
             var getTexts = typeof(GameObject).GetMethod("GetComponentsInChildren",
@@ -302,7 +346,7 @@ internal static class HomeLabelsPatch
         }
         catch (Exception e)
         {
-            Plugin.Log.LogDebug($"[HOMELABELS] TMPro label scan failed: {e.Message}");
+            Plugin.Log.LogDebug($"[HOME] TMPro label scan failed: {e.Message}");
         }
 
         return fixedCount;
@@ -315,7 +359,7 @@ internal static class HomeLabelsPatch
         foreach (var go in tabButtons)
         {
             var label = ReadLabel(go);
-            Plugin.Log.LogInfo($"[HOMELABELS] tab '{go.name}' original label: '{label ?? "<none>"}'");
+            Plugin.Log.LogInfo($"[HOME] tab '{go.name}' original label: '{label ?? "<none>"}'");
         }
     }
 
@@ -335,9 +379,7 @@ internal static class HomeLabelsPatch
         }
         try
         {
-            var tmproAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
-            var tmproType = tmproAsm?.GetType("TMPro.TextMeshProUGUI");
+            var tmproType = ResolveTmproTextType();
             if (tmproType == null)
                 return null;
             var getTexts = typeof(GameObject).GetMethod("GetComponentsInChildren",
@@ -419,9 +461,7 @@ internal static class HomeLabelsPatch
         {
             if (child == null || child.gameObject == null)
                 continue;
-            if (child.gameObject.name.EndsWith(PlayCloneSuffix, StringComparison.Ordinal))
-                continue;
-            if (child.gameObject.name.EndsWith(ConnectCloneSuffix, StringComparison.Ordinal))
+            if (IsCloneTab(child.gameObject))
                 continue;
             if (HasButton(child.gameObject))
                 buttons++;

@@ -13,37 +13,42 @@ namespace RecNetPlugin.Patches;
 
 // Fixes the red "Error loading membership prices" on the Flux Rec+ membership page.
 //
-// Root cause: the 2023 client does NOT call any backend endpoint for membership
-// prices — it reads the localized price of the RR+ subscription SKU from the
-// platform store (PlayerCommerceModel.get_RRPMembershipSKUPrice(), verified in
-// the 20230414 dump). On PC that means Steam; with the Goldberg emulator (no
-// real Steam client), the price query fails and the page shows a red error
-// instead of a price.
+// v0.1.35 (R11) — CORRECT TARGET: SkuModel.GetDisplayPrice() (verified in the
+// 20230414 dump, RVA 0x14ED9B0). This is the method the Plus page actually calls
+// to render the membership price. A Harmony prefix skips the original (which
+// fails against the platform store with the Goldberg emulator / no Steam
+// client, producing the red error bar) and returns the Flux Rec+ token price
+// directly: "10,000 Flux Rec Tokens" ("3,500 Flux Rec Tokens" on Saturdays
+// UTC). The error string itself is backend-sourced, not present in the client,
+// so overriding the price at this point prevents the error from appearing.
 //
-// What this does:
-// 1. PRECISE FIX: Harmony-prefixes PlayerCommerceModel.get_RRPMembershipSKUPrice
-//    (exact signature verified in the dump: public string, zero parameters) to
-//    skip the Steam query and return the Flux Rec+ token price directly
-//    (10,000 tokens, 3,500 on Saturdays UTC — matches the backend's
-//    currentPlusPrice() and the token purchase flow). No DTO shape is guessed.
-// 2. FALLBACK: the original UI-text sweep is kept — it discovers price-loading
-//    methods at runtime (types with Plus/Membership/CampusCard/Subscription in
-//    the name, methods with "Price" in the name) and Harmony-patches them: a
+// REMOVED in R11: the old PlayerCommerceModel.get_RRPMembershipSKUPrice() hook.
+// Re-analysis showed that getter is a trivial cache getter — hooking it did
+// nothing useful (the real price load happens in SkuModel.GetDisplayPrice).
+// (Per the R11 task: "probably remove, it does nothing useful".)
+//
+// What else stays:
+// 1. FALLBACK: the UI-text sweep is kept — it discovers price-loading methods
+//    at runtime (types with Plus/Membership/CampusCard/Subscription in the
+//    name, methods with "Price" in the name) and Harmony-patches them: a
 //    prefix warms the price cache, a postfix replaces the red error text with
 //    the Flux Rec+ token price.
 //    (Postfix, not skip-prefix: we don't know the methods' return types, so
 //    skipping them could break callers. Replacing the text after the fact is
 //    behavior-preserving and safe.)
-// 3. The token price comes from GET /api/subscriptionseasons/v1/seasons/current
+// 2. The token price comes from GET /api/subscriptionseasons/v1/seasons/current
 //    (the TokenPrice field, which already accounts for the Saturday discount).
 //    Falls back to local Saturday logic (3,500 on Saturday UTC, 10,000 otherwise)
 //    if the backend is unreachable.
-// 4. A page watcher (GameObject.SetActive hook, the PlusInspectorPatch pattern)
+// 3. A page watcher (GameObject.SetActive hook, the PlusInspectorPatch pattern)
 //    detects when the Plus page opens and re-scans for the error text for ~15s,
-//    catching async Steam failures that land after the load method returns.
-// 5. PlusTitlePatch (wired from Apply() below) repairs the page title strings
+//    catching async price failures that land after the load method returns.
+// 4. PlusTitlePatch (wired from Apply() below) repairs the page title strings
 //    broken by the installer's RRPLUS_TITLE_PATCH ("Rec Flux Rec+ Member").
 //
+// NOTE: SkuModel is NOT referenced at compile time (typeof(SkuModel) won't
+// build against the interop set checked in here) — it is resolved at runtime
+// via AccessTools-style name lookup, with a warning + retry if not found.
 // IL2CPP safety (see UltraGraphicsPatch / FluxPairingPatch):
 // - TryCast<T>() for downcasts, never direct casts.
 // - GetComponentsInChildren requires Il2CppSystem.Type, not System.Type.
@@ -73,9 +78,13 @@ internal static class PlusPricePatch
     private static int _attempts;
     private static bool _methodsPatched;
     private static bool _watcherPatched;
-    private static bool _getterPatched;
+    private static bool _skuPatched;
     private static bool _pumpCreated;
     private static bool _typeRegistered;
+
+    // Throttled override log: we only announce the first interception and any
+    // change of the returned string afterwards.
+    private static string _lastLoggedPrice;
 
     private static readonly List<string> _patchedMethods = new List<string>();
 
@@ -108,7 +117,7 @@ internal static class PlusPricePatch
             Plugin.Log.LogWarning($"[PLUS-PRICE] title patch apply failed: {e.Message}");
         }
 
-        if ((_methodsPatched && _watcherPatched && _getterPatched) || _attempts >= MaxAttempts)
+        if ((_methodsPatched && _watcherPatched && _skuPatched) || _attempts >= MaxAttempts)
             return;
 
         _attempts++;
@@ -120,8 +129,8 @@ internal static class PlusPricePatch
                 PatchPriceMethods();
             if (!_watcherPatched)
                 PatchPageWatcher();
-            if (!_getterPatched)
-                PatchSkuPriceGetter();
+            if (!_skuPatched)
+                PatchSkuDisplayPrice();
             if (!_priceFetched)
                 EnsurePriceFetched();
         }
@@ -131,7 +140,7 @@ internal static class PlusPricePatch
             return;
         }
 
-        if (_methodsPatched && _watcherPatched && _getterPatched)
+        if (_methodsPatched && _watcherPatched && _skuPatched)
             Plugin.Log.LogInfo("[PLUS-PRICE] price display patch applied");
         else if (_attempts >= MaxAttempts)
             Plugin.Log.LogWarning("[PLUS-PRICE] gave up after max attempts");
@@ -302,78 +311,123 @@ internal static class PlusPricePatch
     }
 
     // ------------------------------------------------------------------
-    // Precise price intercept: PlayerCommerceModel.get_RRPMembershipSKUPrice
+    // Precise price intercept: SkuModel.GetDisplayPrice (R11)
     // ------------------------------------------------------------------
     //
-    // What the client actually calls to load membership prices: there is NO
-    // backend "membership prices" endpoint. The Plus page reads the localized
-    // price of the RR+ subscription SKU from the platform store
-    // (PlayerCommerceModel.get_RRPMembershipSKUPrice(), verified in the
-    // 20230414 dump: "public string get_RRPMembershipSKUPrice()" on
-    // RRUI.Data.PlayerCommerceModel, zero parameters). On PC that means Steam;
-    // with the Goldberg emulator and no Steam client the query fails and the
-    // page shows the red "Error loading membership prices" bar instead.
+    // The method the Plus page ACTUALLY calls to render the membership price is
+    // SkuModel.GetDisplayPrice() (verified in the 20230414 dump, RVA
+    // 0x14ED9B0). The error string shown on failure is backend-sourced and does
+    // not exist in the client, so overriding the price at this exact point
+    // prevents the error from ever appearing.
     //
-    // This Harmony prefix skips the Steam query entirely and returns the Flux
-    // Rec+ token price directly (10,000 tokens, 3,500 on Saturdays UTC —
-    // matching the backend's currentPlusPrice() and the token purchase flow).
-    // Signature verified from the dump, so no DTO shape is guessed.
-    private static void PatchSkuPriceGetter()
+    // This Harmony prefix skips the original platform-store query entirely and
+    // returns the Flux Rec+ token price directly (10,000 tokens, 3,500 on
+    // Saturdays UTC — matching the backend's currentPlusPrice() and the token
+    // purchase flow).
+    //
+    // R11 removed the old PlayerCommerceModel.get_RRPMembershipSKUPrice() hook:
+    // re-analysis showed that getter is a trivial cache getter and hooking it
+    // did nothing useful.
+    //
+    // SkuModel is resolved at runtime (name lookup across all assemblies) and
+    // NEVER referenced as typeof(SkuModel) — it isn't in the interop set this
+    // plugin builds against. If the type or method isn't found yet (commerce
+    // types load lazily), we log a warning and retry via the Apply() loop —
+    // never crash.
+    private static void PatchSkuDisplayPrice()
     {
         try
         {
-            var modelType = AppDomain.CurrentDomain.GetAssemblies()
-                .SelectMany(a => {
-                    try { return a.GetTypes(); }
-                    catch { return Array.Empty<Type>(); }
-                })
-                .FirstOrDefault(t => t.FullName == "RRUI.Data.PlayerCommerceModel"
-                    || t.Name == "PlayerCommerceModel");
-
-            if (modelType == null)
+            Type skuType = null;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Plugin.Log.LogWarning("[PLUS-PRICE] PlayerCommerceModel not found yet — will retry");
+                var asmName = asm.GetName().Name ?? "";
+                if (asmName.StartsWith("RecNetPlugin", StringComparison.Ordinal) ||
+                    asmName.StartsWith("BepInEx", StringComparison.Ordinal) ||
+                    asmName.StartsWith("Harmony", StringComparison.Ordinal))
+                    continue;
+
+                Type[] types;
+                try { types = asm.GetTypes(); }
+                catch { continue; }
+
+                skuType = types.FirstOrDefault(t => t.Name == "SkuModel" ||
+                    (t.FullName != null && t.FullName.EndsWith(".SkuModel", StringComparison.Ordinal)));
+                if (skuType != null)
+                    break;
+            }
+
+            if (skuType == null)
+            {
+                Plugin.Log.LogWarning("[PLUS] SkuModel type not found yet — will retry");
                 return;
             }
 
-            var getter = modelType.GetMethod("get_RRPMembershipSKUPrice",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            var method = skuType.GetMethod("GetDisplayPrice",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static,
                 null, Type.EmptyTypes, null);
 
-            if (getter == null)
+            if (method == null)
             {
-                Plugin.Log.LogWarning("[PLUS-PRICE] get_RRPMembershipSKUPrice not found — will retry");
+                Plugin.Log.LogWarning("[PLUS] SkuModel.GetDisplayPrice not found — will retry");
                 return;
             }
 
-            var harmony = new Harmony("com.fluxrec.plusskuprice");
-            var prefix = new HarmonyMethod(typeof(PlusPricePatch).GetMethod(nameof(PrefixSkuPrice),
+            if (method.ReturnType != typeof(string))
+            {
+                Plugin.Log.LogWarning($"[PLUS] SkuModel.GetDisplayPrice has unexpected signature (returns {method.ReturnType?.Name}) — skipping, will retry");
+                return;
+            }
+
+            var harmony = new Harmony("com.fluxrec.plusskudisplayprice");
+            var prefix = new HarmonyMethod(typeof(PlusPricePatch).GetMethod(nameof(PrefixDisplayPrice),
                 BindingFlags.Static | BindingFlags.NonPublic));
-            harmony.Patch(getter, prefix: prefix);
-            _getterPatched = true;
-            Plugin.Log.LogInfo("[PLUS-PRICE] get_RRPMembershipSKUPrice intercepted — Steam price query bypassed");
+            harmony.Patch(method, prefix: prefix);
+            _skuPatched = true;
+            Plugin.Log.LogInfo($"[PLUS] SkuModel.GetDisplayPrice intercepted on {skuType.FullName} — price overridden");
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"[PLUS-PRICE] SKU price intercept failed: {e.Message}");
+            Plugin.Log.LogWarning($"[PLUS] SkuModel intercept failed: {e.Message}");
         }
     }
 
-    // Returns false: skips the original Steam-backed getter entirely.
-    private static bool PrefixSkuPrice(ref string __result)
+    // Returns false: skips the original platform-store price query entirely.
+    private static bool PrefixDisplayPrice(ref string __result)
     {
         try
         {
-            int price = DateTime.UtcNow.DayOfWeek == DayOfWeek.Saturday
-                ? FallbackSaturdayPrice
-                : FallbackPrice;
-            __result = string.Format("{0:N0} Flux Rec Tokens", price);
+            __result = GetPriceString();
+
+            // Throttled log: announce the first override, then only when the
+            // returned string changes (e.g. Saturday discount kicking in).
+            if (_lastLoggedPrice != __result)
+            {
+                _lastLoggedPrice = __result;
+                Plugin.Log.LogInfo($"[PLUS] Price overridden: {__result}");
+            }
         }
         catch
         {
             __result = "10,000 Flux Rec Tokens";
         }
         return false;
+    }
+
+    // The Flux Rec+ token price: 3,500 tokens on Saturdays (UTC), 10,000 on all
+    // other days — matching the backend's currentPlusPrice().
+    private static string GetPriceString()
+    {
+        try
+        {
+            return DateTime.UtcNow.DayOfWeek == DayOfWeek.Saturday
+                ? "3,500 Flux Rec Tokens"
+                : "10,000 Flux Rec Tokens";
+        }
+        catch
+        {
+            return "10,000 Flux Rec Tokens";
+        }
     }
 
     private static void OnSetActive(GameObject __instance, bool value)

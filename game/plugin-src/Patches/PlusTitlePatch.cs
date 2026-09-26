@@ -1,8 +1,8 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using HarmonyLib;
 using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 using UnityEngine.UI;
@@ -11,67 +11,65 @@ namespace RecNetPlugin.Patches;
 
 // Repairs the Flux Rec+ page title strings.
 //
-// Root cause (NOT the plugin — see below): the installer's RRPLUS_TITLE_PATCH
-// (game/installer/src/patches.rs) does a same-length byte replacement in the
-// RR+ UI AssetBundle:
+// Root cause (NOT the plugin): the installer's RRPLUS_TITLE_PATCH does a
+// same-length byte replacement in the RR+ UI AssetBundle
+// (" Room+ Membership" -> " Flux Rec+ Member"), assuming "Rec" was a separate
+// UI element. It isn't (the match lands inside the contiguous
+// "Rec Room+ Membership" string), so the visible result is
+// "Rec" + " Flux Rec+ Member" = "Rec Flux Rec+ Member" on the header and
+// back button, while the first-occurrence-only patch leaves other copies
+// (the page title) as unrebranded "Rec Room+ Membership".
 //
-//     from: " Room+ Membership"  ->  to: " Flux Rec+ Member"
+// Why a runtime sweep: Armin's installed v0.1.33 already has the bad bytes
+// baked into his game files. A corrected installer patch would not match
+// ("pattern not found — may already be patched") and his install would stay
+// broken. This repairs it in place and is a harmless no-op once the
+// installer is fixed.
 //
-// The patch author assumed "Rec" was a separate UI element. It is not (or the
-// match lands inside the contiguous "Rec Room+ Membership" string), so the
-// visible result is:
-//
-//     "Rec" + " Flux Rec+ Member"  =  "Rec Flux Rec+ Member"
-//
-// exactly what v0.1.33 shows on the header and back button. The patch also
-// only rewrites the FIRST occurrence in the bundle, so other copies (the page
-// title) still show the unrebranded "Rec Room+ Membership".
-//
-// What this does (runtime repair, works on already-installed broken clients):
-// scans every Text under the Plus page when it opens (plus a short rescan
-// window for late-built UI) and applies these replacements, LONGEST FIRST,
-// each only when the text actually contains the pattern (idempotent — already
-// correct text is never touched):
-//     "Rec Flux Rec+ Member"  -> "Flux Rec+ Member"
-//     "Rec Room+ Membership"  -> "Flux Rec+ Membership"
-//     "Rec Room+ Member"      -> "Flux Rec+ Member"
-//     "Rec Room Plus"         -> "Flux Rec+"
-//
-// Why a runtime sweep instead of only fixing the installer: Armin's installed
-// v0.1.33 already has the bad bytes baked into his game files. A corrected
-// installer patch would not match ("pattern not found — may already be
-// patched") and his install would stay broken. This sweep repairs it in place,
-// and is a harmless no-op once the installer is fixed.
+// Design (v0.1.35): the old SetActive gate is GONE. It only armed when the
+// page activated, but the title text is populated ASYNC after activation, so
+// the gate never saw the broken string. Instead a lightweight pump sweeps
+// every 5 seconds. Efficiency guard: the sweep only scans active GameObjects
+// whose name contains "Plus" or "Membership" (e.g.
+// RecNetRRPlusMembershipPage, MembershipBenefitsScreen) — never the whole
+// scene. Both uGUI Text and TMPro are covered (TMPro via the TMP_Text base
+// type, so TextMeshProUGUI and TextMeshPro are both caught). Replacements are
+// longest-first and idempotent: text is rewritten only when it actually
+// changes, so the sweep is silent once everything is fixed.
 //
 // IL2CPP safety (same proven patterns as PlusPricePatch / PlusBalancePatch):
-// - TryCast<T>() for downcasts; GetComponentsInChildren needs Il2CppSystem.Type.
+// - TryCast<T>() for downcasts; GetComponentsInChildren takes
+//   Il2CppSystem.Type.
 // - TMPro resolved by reflection (no compile-time dependency).
 // - Fail-soft: every step wrapped; never throws into game code.
-// - Text is only rewritten when it actually changes (no layout thrash).
 //
 // Wiring: PlusTitlePatch.Apply() is called from PlusPricePatch.Apply()
 // (which Plugin.cs already calls from Load() and OnSceneLoaded()), so no
 // Plugin.cs change is needed.
 internal static class PlusTitlePatch
 {
-    // Ordered longest-first. Outputs never contain any input pattern, so the
-    // sweep is idempotent: running it twice changes nothing the second time.
+    // Longest-first. Note "Rec Room+ Membership" contains "Rec Room+ Member"
+    // as a prefix, so the longer pattern MUST be applied first. Outputs never
+    // contain any input pattern, so the sweep is idempotent: running it twice
+    // changes nothing the second time.
     private static readonly KeyValuePair<string, string>[] Replacements =
     {
-        new KeyValuePair<string, string>("Rec Flux Rec+ Member", "Flux Rec+ Member"),
+        new KeyValuePair<string, string>("Rec Flux Rec+ Member", "Flux Rec+ Membership"),
         new KeyValuePair<string, string>("Rec Room+ Membership", "Flux Rec+ Membership"),
         new KeyValuePair<string, string>("Rec Room+ Member", "Flux Rec+ Member"),
-        new KeyValuePair<string, string>("Rec Room Plus", "Flux Rec+"),
     };
 
-    private const float RescanWindowSeconds = 10f;
+    private const float SweepIntervalSeconds = 5f;
+    private const string PumpObjectName = "FluxTitleRepairPump";
 
-    private static bool _watcherInstalled;
     private static bool _pumpCreated;
     private static bool _typeRegistered;
 
-    private static GameObject _activePlusPage;
-    private static float _rescanUntil;
+    // Cached reflection (resolved lazily once — avoids per-sweep cost).
+    private static Il2CppSystem.Type _uguiTextType;
+    private static Type _tmproTextType;
+    private static PropertyInfo _tmproTextProp;
+    private static bool _tmproResolved;
 
     public static void Apply()
     {
@@ -81,79 +79,67 @@ internal static class PlusTitlePatch
         try
         {
             EnsurePump();
-            if (!_watcherInstalled)
+            Plugin.Log.LogInfo("[PLUS] title repair sweep installed (every 5s, Plus pages only)");
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogWarning($"[PLUS] title repair setup failed: {e.Message}");
+        }
+    }
+
+    // Periodic sweep: find likely-open Plus pages, repair their titles.
+    // Only logs when something actually changed (self-throttled).
+    private static void Sweep()
+    {
+        int repaired = 0;
+
+        try
+        {
+            var all = UnityEngine.Object.FindObjectsOfType(typeof(GameObject));
+            if (all == null)
+                return;
+
+            foreach (var o in all)
             {
-                var harmony = new Harmony("com.fluxrec.plustitle");
-                var setActive = typeof(GameObject).GetMethod(nameof(GameObject.SetActive));
-                var prefix = new HarmonyMethod(typeof(PlusTitlePatch).GetMethod(nameof(OnSetActive),
-                    BindingFlags.Static | BindingFlags.NonPublic));
-                harmony.Patch(setActive, prefix: prefix);
-                _watcherInstalled = true;
-                Plugin.Log.LogInfo("[PLUS-TITLE] page watcher installed");
+                var go = o?.TryCast<GameObject>();
+                if (go == null)
+                    continue;
+
+                var name = go.name;
+                if (string.IsNullOrEmpty(name) || name == PumpObjectName)
+                    continue;
+                if (name.IndexOf("Plus", StringComparison.OrdinalIgnoreCase) < 0 &&
+                    name.IndexOf("Membership", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                if (!go.activeInHierarchy)
+                    continue; // page not actually open — skip, no wasted work
+
+                repaired += RepairTitles(go);
             }
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"[PLUS-TITLE] setup failed: {e.Message}");
+            Plugin.Log.LogWarning($"[PLUS] title sweep failed: {e.Message}");
         }
+
+        if (repaired > 0)
+            Plugin.Log.LogInfo($"[PLUS] Repaired {repaired} titles");
     }
 
-    private static void OnSetActive(GameObject __instance, bool value)
-    {
-        try
-        {
-            if (!value || __instance == null)
-                return;
-            var name = __instance.name ?? "";
-            if (name.IndexOf("Plus", StringComparison.OrdinalIgnoreCase) < 0 &&
-                name.IndexOf("Membership", StringComparison.OrdinalIgnoreCase) < 0)
-                return;
-
-            // Structural confirmation: only treat it as the Plus page when it
-            // actually contains one of the broken/unrebranded strings. This
-            // keeps random "Plus" popups untouched.
-            if (!PageNeedsRepair(__instance))
-                return;
-
-            Plugin.Log.LogInfo($"[PLUS-TITLE] repairing titles on Plus page: {name}");
-            _activePlusPage = __instance;
-            _rescanUntil = Time.time + RescanWindowSeconds;
-            RepairTitles(__instance);
-        }
-        catch { }
-    }
-
-    private static bool PageNeedsRepair(GameObject root)
-    {
-        try
-        {
-            foreach (var s in EnumerateTexts(root))
-            {
-                if (string.IsNullOrEmpty(s))
-                    continue;
-                foreach (var pair in Replacements)
-                {
-                    if (s.Contains(pair.Key))
-                        return true;
-                }
-            }
-        }
-        catch { }
-        return false;
-    }
-
-    private static void RepairTitles(GameObject root)
+    private static int RepairTitles(GameObject root)
     {
         if (root == null)
-            return;
+            return 0;
 
         int repaired = 0;
 
         // uGUI Text path.
         try
         {
-            var textType = Il2CppSystem.Type.GetType(typeof(Text).AssemblyQualifiedName);
-            var texts = root.GetComponentsInChildren(textType, true);
+            if (_uguiTextType == null)
+                _uguiTextType = Il2CppSystem.Type.GetType(typeof(Text).AssemblyQualifiedName);
+
+            var texts = root.GetComponentsInChildren(_uguiTextType, true);
             if (texts != null)
             {
                 foreach (var t in texts)
@@ -172,29 +158,35 @@ internal static class PlusTitlePatch
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"[PLUS-TITLE] uGUI scan failed: {e.Message}");
+            Plugin.Log.LogWarning($"[PLUS] uGUI scan failed: {e.Message}");
         }
 
-        // TMPro fallback (no compile-time dependency).
+        // TMPro path via the TMP_Text base type (covers TextMeshProUGUI and
+        // TextMeshPro; no compile-time dependency).
         try
         {
-            var tmproAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
-            var tmproType = tmproAsm?.GetType("TMPro.TextMeshProUGUI");
-            if (tmproType != null)
+            if (!_tmproResolved)
+            {
+                var tmproAsm = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
+                _tmproTextType = tmproAsm?.GetType("TMPro.TMP_Text");
+                _tmproTextProp = _tmproTextType?.GetProperty("text");
+                _tmproResolved = true;
+            }
+
+            if (_tmproTextType != null && _tmproTextProp != null)
             {
                 var getTexts = typeof(GameObject).GetMethod("GetComponentsInChildren",
                     new[] { typeof(Type), typeof(bool) });
-                var comps = (System.Collections.IEnumerable)getTexts.Invoke(root,
-                    new object[] { tmproType, true });
-                var textProp = tmproType.GetProperty("text");
+                var comps = (IEnumerable)getTexts.Invoke(root,
+                    new object[] { _tmproTextType, true });
                 foreach (var c in comps)
                 {
-                    var cur = textProp.GetValue(c, null) as string;
+                    var cur = _tmproTextProp.GetValue(c, null) as string;
                     var fixed_ = ApplyReplacements(cur);
                     if (fixed_ != null)
                     {
-                        textProp.SetValue(c, fixed_, null);
+                        _tmproTextProp.SetValue(c, fixed_, null);
                         repaired++;
                     }
                 }
@@ -202,11 +194,10 @@ internal static class PlusTitlePatch
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"[PLUS-TITLE] TMPro scan failed: {e.Message}");
+            Plugin.Log.LogWarning($"[PLUS] TMPro scan failed: {e.Message}");
         }
 
-        if (repaired > 0)
-            Plugin.Log.LogInfo($"[PLUS-TITLE] repaired {repaired} title text(s)");
+        return repaired;
     }
 
     // Returns the repaired string, or null when nothing matched (caller keeps
@@ -225,46 +216,6 @@ internal static class PlusTitlePatch
         return result != s ? result : null;
     }
 
-    // Enumerates current text values without modifying anything (used for the
-    // structural confirmation check).
-    private static IEnumerable<string> EnumerateTexts(GameObject root)
-    {
-        var out_ = new List<string>();
-        try
-        {
-            var textType = Il2CppSystem.Type.GetType(typeof(Text).AssemblyQualifiedName);
-            var texts = root.GetComponentsInChildren(textType, true);
-            if (texts != null)
-            {
-                foreach (var t in texts)
-                {
-                    var txt = t.TryCast<Text>();
-                    if (txt != null)
-                        out_.Add(txt.text ?? "");
-                }
-            }
-        }
-        catch { }
-        try
-        {
-            var tmproAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
-            var tmproType = tmproAsm?.GetType("TMPro.TextMeshProUGUI");
-            if (tmproType != null)
-            {
-                var getTexts = typeof(GameObject).GetMethod("GetComponentsInChildren",
-                    new[] { typeof(Type), typeof(bool) });
-                var comps = (System.Collections.IEnumerable)getTexts.Invoke(root,
-                    new object[] { tmproType, true });
-                var textProp = tmproType.GetProperty("text");
-                foreach (var c in comps)
-                    out_.Add((textProp.GetValue(c, null) as string) ?? "");
-            }
-        }
-        catch { }
-        return out_;
-    }
-
     private static void EnsurePump()
     {
         if (_pumpCreated)
@@ -276,7 +227,7 @@ internal static class PlusTitlePatch
                 ClassInjector.RegisterTypeInIl2Cpp<TitleRepairPump>();
                 _typeRegistered = true;
             }
-            var go = new GameObject("FluxPlusTitlePump");
+            var go = new GameObject(PumpObjectName);
             go.hideFlags = HideFlags.HideAndDontSave;
             UnityEngine.Object.DontDestroyOnLoad(go);
             go.AddComponent<TitleRepairPump>();
@@ -284,25 +235,28 @@ internal static class PlusTitlePatch
         }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"[PLUS-TITLE] pump failed: {e.Message}");
+            Plugin.Log.LogWarning($"[PLUS] title pump failed: {e.Message}");
         }
     }
 
     private class TitleRepairPump : MonoBehaviour
     {
+        private float _accum;
+
         void Update()
         {
-            // Re-scan the active Plus page while the window lasts. Catches
-            // title text built a few frames after the page activates.
+            // Throttled sweep: the page title is populated async AFTER the
+            // page opens, so a one-shot scan on activation misses it. A 5s
+            // sweep catches late-built UI without per-frame cost.
             try
             {
-                if (_activePlusPage != null)
-                {
-                    if (Time.time < _rescanUntil)
-                        RepairTitles(_activePlusPage);
-                    else
-                        _activePlusPage = null;
-                }
+                if (!Plugin.EnableFluxPlus.Value)
+                    return;
+                _accum += Time.unscaledDeltaTime;
+                if (_accum < SweepIntervalSeconds)
+                    return;
+                _accum = 0f;
+                Sweep();
             }
             catch { }
         }

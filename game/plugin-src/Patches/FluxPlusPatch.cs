@@ -320,11 +320,12 @@ internal static class FluxPlusPatch
         }
     }
 
-    private static int ParseBalance(string json)
+    private static int ParseBalanceObject(string json)
     {
+        // Minimal parser for {"Balance": 12345} (case-insensitive key).
+        // Returns -1 when no Balance key is present.
         try
         {
-            // Minimal parser for {"Balance": 12345} or {"balance": 12345}
             json = json.Trim().TrimStart('{').TrimEnd('}');
             foreach (var pair in json.Split(','))
             {
@@ -337,6 +338,31 @@ internal static class FluxPlusPatch
                     if (int.TryParse(val, out var i)) return i;
                 }
             }
+        }
+        catch { }
+        return -1;
+    }
+
+    private static int ParseBalance(string json)
+    {
+        try
+        {
+            json = json.Trim();
+            if (json.StartsWith("[") && json.EndsWith("]"))
+            {
+                // v4/balance/:currencyType returns a single-entry array like
+                // [{"CurrencyType":2,"Platform":-2,"Balance":10000}].
+                // Scan each entry; take the first Balance found.
+                var inner = json.Substring(1, json.Length - 2);
+                foreach (var entry in inner.Split(new[] { '}' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    int b = ParseBalanceObject(entry);
+                    if (b >= 0) return b;
+                }
+                return 0;
+            }
+            int bal = ParseBalanceObject(json);
+            return bal >= 0 ? bal : 0;
         }
         catch { }
         return 0;

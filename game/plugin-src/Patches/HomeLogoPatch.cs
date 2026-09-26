@@ -22,7 +22,9 @@
 //    pattern; generic GetComponent<T>/AddComponent<T> only for Unity
 //    built-in types (Image, RectTransform, LayoutElement).
 //  - Idempotent: a child named "FluxHomeLogo" is never inserted twice.
-//  - Fail-soft: every step is wrapped, retries stop after MaxAttempts.
+//  - Fail-soft: every step is wrapped. There is NO local retry budget —
+//    the UiDiscoveryRetry driver schedules retries and reads IsSettled to
+//    stop calling once the logo is in place.
 //  - The logo is raycast-transparent (raycastTarget = false) so it never
 //    eats clicks meant for the tab row.
 //
@@ -40,51 +42,63 @@ namespace RecNetPlugin.Patches;
 internal static class HomeLogoPatch
 {
     private const string LogoObjectName = "FluxHomeLogo";
-    private const int MaxAttempts = 10;
 
     // Procedural logo texture dimensions.
     private const int TexW = 512;
     private const int TexH = 160;
     private const int GlyphScale = 10;
 
-    private static int _attempts;
-    private static bool _done;
+    // UiDiscoveryRetry integration: the driver keeps calling Apply() until
+    // this is true, then stops. Apply() is idempotent on top of that.
+    public static bool IsSettled { get; private set; }
 
-    // Called from Plugin.Load and again on each scene load: retries until
-    // the RRUI home screen exists, then inserts the logo once.
+    private static int _attempts;
+    private static DateTime _lastProgressLog = DateTime.MinValue;
+
+    // Called from Plugin.Load and again by the UiDiscoveryRetry driver:
+    // retries until the RRUI home screen exists, then inserts the logo
+    // once. No local attempt budget — the driver owns the retry schedule.
     public static void Apply()
     {
         if (!Plugin.EnableFluxHomeBranding.Value)
             return;
 
-        if (_done || _attempts >= MaxAttempts)
+        if (IsSettled)
             return;
 
         _attempts++;
         try { EnsureLogo(); }
         catch (Exception e)
         {
-            Plugin.Log.LogWarning($"[HOMELOGO] attempt {_attempts} failed: {e.Message}");
+            Plugin.Log.LogWarning($"[HOME] attempt {_attempts} failed: {e.Message}");
         }
 
-        if (_attempts >= MaxAttempts && !_done)
-            Plugin.Log.LogWarning("[HOMELOGO] gave up — the RRUI home screen was never found.");
+        if (!IsSettled)
+            LogProgressThrottled();
+    }
+
+    // One progress line at most every 60 seconds until settled.
+    private static void LogProgressThrottled()
+    {
+        var now = DateTime.UtcNow;
+        if ((now - _lastProgressLog).TotalSeconds < 60)
+            return;
+        _lastProgressLog = now;
+        Plugin.Log.LogInfo($"[HOME] waiting for RRUI home screen (attempt {_attempts})");
     }
 
     private static void EnsureLogo()
     {
         var root = FindHomeRoot(out var tabRow);
         if (root == null)
-        {
-            Plugin.Log.LogDebug("[HOMELOGO] home screen not found yet");
             return;
-        }
 
         // Idempotent: never insert twice (scene reloads rebuild the UI).
         var existing = root.transform.Find(LogoObjectName);
         if (existing != null)
         {
-            _done = true;
+            IsSettled = true;
+            Plugin.Log.LogInfo("[HOME] Logo replaced");
             return;
         }
 
@@ -97,8 +111,8 @@ internal static class HomeLogoPatch
             index = Math.Max(0, tabRow.transform.GetSiblingIndex());
         logo.transform.SetSiblingIndex(index);
 
-        _done = true;
-        Plugin.Log.LogInfo($"[HOMELOGO] inserted Flux logo above tab row (sibling index {index})");
+        IsSettled = true;
+        Plugin.Log.LogInfo("[HOME] Logo replaced");
     }
 
     // Builds the logo GameObject: a UnityEngine.UI.Image with a generated
