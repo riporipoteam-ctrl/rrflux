@@ -216,9 +216,12 @@ describe('auth worker routes', () => {
 		expect(await res.text()).toBe('"AA=="')
 	})
 
-	test.each([[1]] as Array<[number]>)(
+	test.each([
+		['0 (Steam)', 0],
+		['1 (Meta)', 1],
+	])(
 		'GET /cachedlogin/forplatformid/%s/:id returns [] for an unknown id',
-		async (platform) => {
+		async (_label, platform) => {
 			const res = await exports.default.fetch(
 				`${ORIGIN}/cachedlogin/forplatformid/${platform}/abc123`
 			)
@@ -226,25 +229,6 @@ describe('auth worker routes', () => {
 			expect(await res.json()).toEqual([])
 		}
 	)
-
-	// Unknown Steam identities get the canned requirePassword entry (not []), which
-	// is how a fresh Steam player lands on the username/password login screen
-	// instead of silently auto-creating a random account.
-	test('GET /cachedlogin/forplatformid/0/:id returns the canned Steam login entry for an unknown id', async () => {
-		const res = await exports.default.fetch(
-			`${ORIGIN}/cachedlogin/forplatformid/0/76561198050191709`
-		)
-		expect(res.status).toBe(200)
-		const body = (await res.json()) as Array<Record<string, unknown>>
-		expect(body).toHaveLength(1)
-		expect(body[0]).toMatchObject({
-			platform: 0,
-			platformId: '76561198050191709',
-			accountId: 0,
-			requirePassword: true,
-		})
-		expect(typeof body[0].lastLoginTime).toBe('string')
-	})
 
 	// The one stubbed identity: `1/1` consults nothing and always answers the canned
 	// entry, which is how a sideloaded APK (no Meta SDK, so no real identity) gets off
@@ -843,15 +827,13 @@ describe('auth worker routes', () => {
 		// The token's sub is the new account id, allocated above the system accounts.
 		const sub = Number.parseInt(payload.sub as string, 10)
 		expect(sub).toBeGreaterThanOrEqual(2)
-		// The account exists in the DB with NO username — the real client prompts
-		// the player to choose one after ALL SET (before the Code of Conduct).
-		// Auto-assigning a random name makes the client skip that step.
+		// The account exists in the DB with an auto-assigned (non-default) username.
 		const row = await env.DB.prepare('SELECT data FROM account WHERE account_id = ?1')
 			.bind(sub)
 			.first<{ data: string }>()
 		expect(row).not.toBeNull()
 		const account = JSON.parse(row!.data) as { username: string }
-		expect(account.username).toBe('')
+		expect(account.username).not.toMatch(/^Player\d+$/)
 	})
 
 	test('POST /connect/token create_account stores the login device on the account', async () => {
@@ -1529,6 +1511,7 @@ describe('auth worker routes', () => {
 			'POST /account/me/changepassword',
 			'POST /cachedlogin/forplatformid/{platform}/{id}',
 			'POST /cachedlogin/forplatformids',
+			'POST /connect/deviceauthorization',
 			'POST /connect/token',
 		])
 

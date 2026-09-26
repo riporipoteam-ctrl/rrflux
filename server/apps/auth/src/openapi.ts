@@ -109,6 +109,20 @@ export const OAuthError = z.object({
 	error_description: z.string(),
 })
 
+/**
+ * Successful `POST /connect/deviceauthorization` body (RFC 8628 §3.2). The iOS
+ * client shows `user_code` on screen and polls `/connect/token` with the device
+ * grant until the player approves at `verification_uri`.
+ */
+export const DeviceAuthorizationResponse = z.object({
+	device_code: z.string().describe('High-entropy code the client polls with; single-use'),
+	user_code: z.string().describe('Short human-typed code shown on the device screen'),
+	verification_uri: z.string().describe('Approval page the player opens in a browser'),
+	verification_uri_complete: z.string().describe('Approval page with the user code prefilled'),
+	expires_in: z.int().describe('Flow lifetime in seconds (DEVICE_CODE_TTL_SECONDS)'),
+	interval: z.int().describe('Minimum seconds between token polls'),
+})
+
 /** Successful `POST /connect/token` body. */
 export const TokenResponse = z.object({
 	access_token: z.string().describe('Signed JWT; `sub` is the account id'),
@@ -156,6 +170,10 @@ export const TokenRequest = z.object({
 				'Meta: `{"Nonce":…,"AppId":…,"Source":…}`'
 		),
 	refresh_token: z.string().optional().describe('Required on a refresh_token grant'),
+	device_code: z
+		.string()
+		.optional()
+		.describe('Device grant: the code issued by POST /connect/deviceauthorization'),
 	device_id: z
 		.string()
 		.optional()
