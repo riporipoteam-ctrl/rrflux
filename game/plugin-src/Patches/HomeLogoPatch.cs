@@ -94,7 +94,7 @@ internal static class HomeLogoPatch
         // Directly above the tab row when we found it, else first child.
         int index = 0;
         if (tabRow != null)
-            index = Math.Max(0, tabRow.GetSiblingIndex());
+            index = Math.Max(0, tabRow.transform.GetSiblingIndex());
         logo.transform.SetSiblingIndex(index);
 
         _done = true;
