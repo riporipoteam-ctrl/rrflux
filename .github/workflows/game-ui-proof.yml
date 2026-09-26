@@ -94,15 +94,9 @@ jobs:
           $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $p) { Write-Host "::error::RecRoom not running"; exit 1 }
           
-          Add-Type @"
-            using System;
-            using System.Runtime.InteropServices;
-            public class Win32 {
-              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-              [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-            }
-"@
-          [Win32]::SetForegroundWindow($p.MainWindowHandle)
+          # Focus the game window using COM instead of Add-Type here-string (YAML-safe)
+          $wshell = New-Object -ComObject WScript.Shell
+          $wshell.AppActivate($p.Id)
           Start-Sleep -Seconds 2
           
           # The account picker shows account tiles. We need to add/select the test account.
@@ -160,14 +154,9 @@ jobs:
           $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $p) { Write-Host "RecRoom not running, skipping navigation"; exit 0 }
           
-          Add-Type @"
-            using System;
-            using System.Runtime.InteropServices;
-            public class Win32b {
-              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-            }
-"@
-          [Win32b]::SetForegroundWindow($p.MainWindowHandle)
+          # Focus the game window
+          $wshell = New-Object -ComObject WScript.Shell
+          $wshell.AppActivate($p.Id)
           Start-Sleep -Seconds 2
           
           # Try to open settings - typically Esc or a settings button
