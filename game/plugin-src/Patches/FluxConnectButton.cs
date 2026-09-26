@@ -8,23 +8,30 @@
 //    enum {Rooms=0, Clubs=1, Items=2, Inventions=3, Creators=4}.
 //  - Tab button GameObject/type names may be obfuscated and re-rolled per
 //    build, and the tab LABELS are unreliable too: tabs can be icon-only
-//    (no label at all) and HomeLabelsPatch rewrites the visible labels to
-//    the configured values, so any label-based matching breaks the moment
-//    labels are empty or renamed. Discovery here uses NO label matching at
-//    all — labels are only ever read for log output.
-//  - Discovery is two-tier:
-//      PRIMARY: anchor on the unobfuscated HomeTop5TabsModel type via
-//      FindObjectsOfType, take its GameObject's transform as the tab row,
-//      and pick the clone source by POSITION: prefer a child whose
-//      GameObject/component name hints at "Creators" (enum index 4), else
-//      the LAST tab in the row (least disruptive to tab order/layout).
-//      FALLBACK (only when the model type is absent): find the home root
-//      and take the tab row by POSITION — the first descendant row with
-//      >=2 button-carrying children, preferring exactly 5 (the Top5 row).
-//  - The plugin clones that tab (same button, same style, same tab row),
-//    inserts the clone as its next sibling and relabels its first text to
-//    "Connect". Visual consistency with the game's design language is
-//    guaranteed because it is literally the same button GameObject.
+//    (no label at all), labels may be empty/disabled at runtime, and
+//    HomeLabelsPatch rewrites the visible labels to the configured values,
+//    so any label-based matching breaks the moment labels are empty or
+//    renamed. Discovery here uses NO label matching at all — labels are
+//    only ever read for log output.
+//  - Discovery runs three strategies, in order, and logs a full row scan
+//    every time one runs (row GO name, child count, per-child name, Button
+//    presence, label text or "empty"/"no label"):
+//      A. MODEL-ANCHORED: resolve the unobfuscated HomeTop5TabsModel type
+//         via FindObjectsOfType, take its GameObject. Its transform is the
+//         tab row when it carries >=2 button children; otherwise a bounded
+//         BFS of its subtree finds the row (preferring exactly 5 buttons,
+//         the Top5 row).
+//      B. INDEX-BASED (positional fallback, only when the model type is
+//         absent): find the home/Watch root, BFS to the first Transform
+//         with >=2 button-carrying active children (preferring exactly 5),
+//         and use the FIRST child with a Button component as the clone
+//         source. No name hints, no labels.
+//      C. FAILURE: a detailed per-attempt log plus a full scene snapshot
+//         (row hierarchy dump) at give-up.
+//  - The plugin clones the source tab (same button, same style, same tab
+//    row), inserts the clone as its next sibling and relabels its first
+//    text to "Connect". Visual consistency with the game's design language
+//    is guaranteed because it is literally the same button GameObject.
 //  - The clone's original onClick listeners (which switch to the cloned tab)
 //    are removed and replaced with a single listener that opens the Flux
 //    pairing overlay (FluxPairingPatch.ShowOverlay). The listener is OUR OWN
@@ -34,12 +41,13 @@
 //  - The tab is a pure overlay trigger: it never registers with
 //    TabsModel<T>.GoToPage, so it cannot corrupt tab navigation state.
 //  - The clone is named "<source>_FluxConnectTab"; HomeLabelsPatch skips
-//    GameObjects carrying that suffix, so our clone is never relabeled by
-//    the labels patch.
+//    any GameObject whose name CONTAINS that marker (IsCloneTab), so our
+//    clone is never relabeled by the labels patch regardless of Apply()
+//    ordering. The marker must stay exactly "_FluxConnectTab".
 //
 // Hard rules honored:
 //  - The source tab itself is untouched: the plugin only ADDS a sibling.
-//  - Idempotent: the clone is only added once per tab row (name-suffix
+//  - Idempotent: the clone is only added once per tab row (name-marker
 //    check), so scene reloads and repeated Apply() calls never duplicate it.
 //
 // IL2CPP rules: click handlers go through
@@ -85,6 +93,12 @@ internal static class FluxConnectButton
     private static bool _gaveUp;
     private static DateTime _firstAttemptUtc = DateTime.MinValue;
     private static DateTime _lastProgressLogUtc = DateTime.MinValue;
+
+    // Row-scan logging throttle: a full per-child row scan is logged at Info
+    // the first time a given row state is seen, and again only when the row
+    // state changes (new children, buttons appearing). Between changes the
+    // tick stays quiet so the 2-second retry loop can't flood the log.
+    private static string _lastRowScanSignature;
 
     // True once there is nothing left to do: feature disabled in config, the
     // Connect tab was added, or the retry budget ran out. The
@@ -155,13 +169,15 @@ internal static class FluxConnectButton
         var elapsed = DateTime.UtcNow - _firstAttemptUtc;
         Plugin.Log.LogWarning("[CONNECT] GAVE UP adding the Connect tab after " +
             $"{_attempts} attempts over {elapsed.TotalMinutes:F1} minutes. " +
-            "Searched: (1) PRIMARY — the Watch home tab row anchored on the " +
-            "unobfuscated HomeTop5TabsModel type via FindObjectsOfType, clone source " +
-            "picked by position (prefer a 'Creators'-named child, else the last tab); " +
-            "(2) FALLBACK — the home root's tab row by position (first descendant " +
-            "row with >=2 button-carrying children, preferring exactly 5). " +
-            "No label-based matching was used (labels may be empty or rewritten " +
-            "by HomeLabelsPatch). Tab row contents at give-up:\n" + DescribeSceneState());
+            "Searched: (A) MODEL-ANCHORED — the HomeTop5TabsModel instance's " +
+            "GameObject (transform is the row when it carries >=2 button " +
+            "children, else a bounded BFS of its subtree preferring 5), " +
+            "source = first child with a Button component; (B) INDEX-BASED — " +
+            "only when the model type is absent — home/Watch root -> first " +
+            "row by position (>=2 button children, prefer 5), source = first " +
+            "child with a Button; (C) detailed failure logged per attempt. " +
+            "No label-based matching was used (labels may be empty or " +
+            "rewritten by HomeLabelsPatch). Tab row contents at give-up:\n" + DescribeSceneState());
     }
 
     // Compact scene-state snapshot for the progress log, plus the full tab
@@ -178,11 +194,18 @@ internal static class FluxConnectButton
             }
             else
             {
-                var row = FirstGameObjectOfType(modelType)?.transform;
-                if (row == null)
+                var modelGo = FirstGameObjectOfType(modelType);
+                if (modelGo == null)
                     parts.Add("HomeTop5TabsModel type present but no live instance in the scene.");
                 else
-                    parts.Add("HomeTop5TabsModel row:\n" + DumpRowHierarchy(row));
+                {
+                    parts.Add("HomeTop5TabsModel instance: '" + modelGo.name + "' " +
+                        $"(path: {TransformPath(modelGo.transform)}).");
+                    var row = FindTabRowByModel();
+                    parts.Add(row == null
+                        ? "No tab row found under the model instance."
+                        : "Tab row under model instance:\n" + DumpRowHierarchy(row));
+                }
             }
 
             var root = FindHomeRoot();
@@ -205,22 +228,12 @@ internal static class FluxConnectButton
         var lines = new List<string>();
         try
         {
-            lines.Add($"'{row.name}' childCount={row.childCount} active={row.gameObject.activeInHierarchy}");
+            lines.Add($"'{row.name}' childCount={row.childCount} active={row.gameObject.activeInHierarchy} " +
+                $"path={TransformPath(row)}");
             int shown = Math.Min(row.childCount, 12);
             for (int i = 0; i < shown; i++)
             {
-                var child = row.GetChild(i);
-                if (child == null)
-                    continue;
-                var go = child.gameObject;
-                if (go == null)
-                    continue;
-                var label = ReadFirstLabel(go);
-                var comps = ComponentNames(go, 10);
-                lines.Add($"  [{i}] '{go.name}' active={go.activeInHierarchy} " +
-                    $"children={child.childCount} label='{label ?? "<none>"}' " +
-                    $"button={(FindButton(go) != null ? "yes" : "no")} " +
-                    $"components=[{string.Join(", ", comps)}]");
+                lines.Add("  " + DescribeChild(row.GetChild(i), i));
             }
             if (row.childCount > shown)
                 lines.Add($"  ... and {row.childCount - shown} more children (capped).");
@@ -231,6 +244,32 @@ internal static class FluxConnectButton
         }
         var text = string.Join("\n", lines);
         return text.Length > 6000 ? text.Substring(0, 6000) + "\n  ... (dump truncated)" : text;
+    }
+
+    // One child, one log line: index, name, active state, Button presence,
+    // and label text ("empty" / "no label" when there is none). Labels are
+    // DIAGNOSTIC ONLY — never used for matching.
+    private static string DescribeChild(Transform child, int index)
+    {
+        try
+        {
+            if (child == null)
+                return $"[{index}] <null>";
+            var go = child.gameObject;
+            if (go == null)
+                return $"[{index}] <no GameObject>";
+            var label = ReadFirstLabel(go);
+            var labelText = label == null ? "no label" : (label.Length == 0 ? "empty" : label);
+            var button = FindButton(go) != null;
+            var comps = ComponentNames(go, 10);
+            return $"[{index}] '{go.name}' active={go.activeInHierarchy} " +
+                $"children={child.childCount} button={(button ? "yes" : "no")} " +
+                $"label='{labelText}' components=[{string.Join(", ", comps)}]";
+        }
+        catch (Exception e)
+        {
+            return $"[{index}] describe failed: {e.Message}";
+        }
     }
 
     private static List<string> ComponentNames(GameObject go, int max)
@@ -282,12 +321,9 @@ internal static class FluxConnectButton
     // beside it. Idempotent: never clones twice into the same row.
     private static void EnsureConnectTab()
     {
-        var source = FindSourceTab();
-        if (source == null)
-        {
-            Plugin.Log.LogDebug("[CONNECT] home tab row not found yet");
+        var (row, source, strategy) = FindSourceTab();
+        if (row == null || source == null)
             return;
-        }
 
         var parent = source.transform.parent;
         if (parent == null)
@@ -300,11 +336,11 @@ internal static class FluxConnectButton
             return;
         }
 
-        // Already added? (a sibling already carrying our suffix)
+        // Already added? (a sibling already carrying our marker)
         for (int i = 0; i < parent.childCount; i++)
         {
             var child = parent.GetChild(i);
-            if (child != null && child.name.EndsWith(CloneNameSuffix, StringComparison.Ordinal))
+            if (child != null && (child.name ?? string.Empty).Contains(CloneNameSuffix, StringComparison.Ordinal))
             {
                 _buttonDone = true;
                 Plugin.Log.LogDebug("[CONNECT] Connect tab already present");
@@ -312,51 +348,157 @@ internal static class FluxConnectButton
             }
         }
 
+        Plugin.Log.LogInfo($"[CONNECT] strategy {strategy}: cloning '{source.name}' " +
+            $"from row '{row.name}' as the Connect tab");
         CloneAsConnect(source);
         _buttonDone = true;
     }
 
-    // Two-tier discovery, NO label matching anywhere:
-    //   PRIMARY: HomeTop5TabsModel instance -> its transform is the tab row,
-    //   source tab picked by position (Creators-named child else last tab).
-    //   FALLBACK: only when the model type is absent — home root found, tab
-    //   row taken by position (first row with >=2 button children, prefer 5).
-    // If the model row exists but has no usable tab children yet, the UI is
-    // still building: skip the expensive fallback scan this tick and retry
-    // on the next UiDiscoveryRetry tick.
-    private static GameObject FindSourceTab()
+    // Three-tier discovery, NO label matching anywhere:
+    //   A. MODEL-ANCHORED: HomeTop5TabsModel instance -> its GameObject ->
+    //      the tab row (the model's own transform, or a descendant row).
+    //   B. INDEX-BASED (only when the model type is absent): home root ->
+    //      tab row by POSITION (first descendant row with >=2 button-
+    //      carrying children, preferring exactly 5).
+    //   C. FAILURE: detailed per-attempt log with a row scan / scene
+    //      snapshot (DescribeChild output), so a failed attempt still leaves
+    //      real data in the log.
+    // If a row exists but has no usable tab buttons yet, the UI is still
+    // building: skip the expensive fallback scan this tick and retry on the
+    // next UiDiscoveryRetry tick.
+    // Returns (row, source tab, strategy name); row or source is null when
+    // discovery failed this attempt.
+    private static (Transform row, GameObject source, string strategy) FindSourceTab()
     {
-        var row = FindTabRowByModel();
-        if (row != null)
+        // A: model-anchored.
+        var modelRow = FindTabRowByModel();
+        if (modelRow != null)
         {
-            var source = PickSourceTab(row);
+            var modelType = ResolveModelType();
+            LogDiscoveryRun("A (model-anchored)", modelRow, modelType);
+            var source = PickSourceTab(modelRow);
             if (source != null)
-                return source;
-            Plugin.Log.LogDebug("[CONNECT] HomeTop5TabsModel row exists but has no usable tab buttons yet");
-            return null;
+                return (modelRow, source, "A");
+            Plugin.Log.LogDebug("[CONNECT] strategy A: HomeTop5TabsModel row exists " +
+                "but has no usable tab buttons yet — retrying on the next tick");
+            return (null, null, null);
         }
 
-        Plugin.Log.LogDebug("[CONNECT] HomeTop5TabsModel not in scene — trying the positional fallback");
+        var typeResolved = ResolveModelType() != null;
+        if (typeResolved)
+        {
+            Plugin.Log.LogDebug("[CONNECT] strategy A: HomeTop5TabsModel type present " +
+                "but no live instance in the scene — retrying on the next tick");
+            return (null, null, null);
+        }
+
+        // B: index-based positional fallback (only when the model type is
+        // absent entirely — never as a shortcut over a real model).
+        Plugin.Log.LogDebug("[CONNECT] strategy A failed (model type absent) — trying strategy B (index-based)");
         var fallbackRow = FindTabRowByPosition();
         if (fallbackRow == null)
-            return null;
+        {
+            LogDiscoveryFailureB();
+            return (null, null, null);
+        }
+        LogDiscoveryRun("B (index-based)", fallbackRow, null);
         var fallbackSource = PickSourceTab(fallbackRow);
         if (fallbackSource != null)
-            Plugin.Log.LogWarning("[CONNECT] used the positional fallback row " +
+            Plugin.Log.LogWarning("[CONNECT] strategy B: used the positional fallback row " +
                 $"'{fallbackRow.name}' (model type absent) — source tab '{fallbackSource.name}'");
-        return fallbackSource;
+        else
+            Plugin.Log.LogDebug("[CONNECT] strategy B: fallback row found but no usable tab buttons yet");
+        return (fallbackRow, fallbackSource, "B");
     }
 
-    // PRIMARY anchor: the unobfuscated HomeTop5TabsModel type's live
-    // instance; its transform is the tab row. The type is cached after the
-    // first successful resolution.
+    // Detailed discovery log, run once per row state: the row's GO name and
+    // path, child count, and per child — name, active state, Button
+    // presence, and label text ("empty"/"no label"). Labels are logged only;
+    // matching never uses them. Repeated identical row states are suppressed
+    // to Debug so the 2-second retry tick can't flood the log.
+    private static void LogDiscoveryRun(string strategy, Transform row, Type modelType)
+    {
+        try
+        {
+            int buttons = CountButtonChildren(row);
+            var signature = $"{row.GetInstanceID()}|{row.childCount}|{buttons}";
+            if (signature == _lastRowScanSignature)
+            {
+                Plugin.Log.LogDebug($"[CONNECT] strategy {strategy}: row '{row.name}' unchanged since last scan");
+                return;
+            }
+            _lastRowScanSignature = signature;
+
+            var lines = new List<string>
+            {
+                $"[CONNECT] strategy {strategy}: row scan of '{row.name}' " +
+                $"(path: {TransformPath(row)}, childCount={row.childCount}, " +
+                $"active={row.gameObject.activeInHierarchy}, buttonChildren={buttons})"
+            };
+            int shown = Math.Min(row.childCount, 16);
+            for (int i = 0; i < shown; i++)
+                lines.Add("[CONNECT]   " + DescribeChild(row.GetChild(i), i));
+            if (row.childCount > shown)
+                lines.Add($"[CONNECT]   ... and {row.childCount - shown} more children (capped).");
+            if (modelType != null)
+                lines.Add($"[CONNECT]   anchored on {modelType.FullName} instance '{row.name}'");
+            Plugin.Log.LogInfo(string.Join("\n", lines));
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogDebug($"[CONNECT] row scan logging failed: {e.Message}");
+        }
+    }
+
+    // Detailed failure log when strategy B also finds no row: what was
+    // scanned and what the scene contains, at Debug so the retry tick stays
+    // quiet (the full snapshot lands in the 60-second progress log and at
+    // give-up).
+    private static void LogDiscoveryFailureB()
+    {
+        try
+        {
+            var root = FindHomeRoot();
+            var lines = new List<string>
+            {
+                "[CONNECT] strategy B failed: no positional tab row found. " +
+                $"home root={(root == null ? "<none>" : $"'{root.name}' (path: {TransformPath(root)})")}"
+            };
+            if (root != null)
+            {
+                int shown = Math.Min(root.childCount, 8);
+                for (int i = 0; i < shown; i++)
+                    lines.Add("[CONNECT]   root child: " + DescribeChild(root.GetChild(i), i));
+            }
+            Plugin.Log.LogDebug(string.Join("\n", lines));
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogDebug($"[CONNECT] failure logging failed: {e.Message}");
+        }
+    }
+
+    // A: MODEL-ANCHORED. Resolve the unobfuscated HomeTop5TabsModel type,
+    // find its live GameObject, and get the tab row from it: the model's
+    // own transform when it carries >=2 button children, else a bounded BFS
+    // of its subtree (the model may be a container above the actual row).
     private static Transform FindTabRowByModel()
     {
         var modelType = ResolveModelType();
         if (modelType == null)
             return null;
-        var go = FirstGameObjectOfType(modelType);
-        return go != null ? go.transform : null;
+        var modelGo = FirstGameObjectOfType(modelType);
+        if (modelGo == null)
+            return null;
+        var modelT = modelGo.transform;
+        if (modelT != null && IsTabRow(modelT, out _))
+            return modelT;
+        // The model instance exists but isn't itself the row — look below it.
+        var subRow = FindTabRowInSubtree(modelT);
+        if (subRow != null)
+            Plugin.Log.LogInfo($"[CONNECT] strategy A: model instance '{modelGo.name}' is a container — " +
+                $"tab row is descendant '{subRow.name}'");
+        return subRow;
     }
 
     private static Type ResolveModelType()
@@ -372,14 +514,13 @@ internal static class FluxConnectButton
         return _modelType;
     }
 
-    // Pick the clone source inside a tab row by POSITION, never by label:
-    // prefer a child whose GameObject or component name hints at "Creators"
-    // (enum index 4 — appending after it is least disruptive), else the last
-    // button-carrying child in the row.
+    // Pick the clone source inside a tab row by INDEX, never by label or
+    // name: the FIRST active child carrying a uGUI Button (excluding our own
+    // clone). First-in-sibling-order is the most stable choice — the leading
+    // tab always exists and is enabled, while later tabs may be dynamic.
     private static GameObject PickSourceTab(Transform row)
     {
-        GameObject creatorsHint = null;
-        GameObject last = null;
+        GameObject first = null;
         int usable = 0;
         for (int i = 0; i < row.childCount; i++)
         {
@@ -389,58 +530,40 @@ internal static class FluxConnectButton
             var go = child.gameObject;
             if (go == null || !go.activeInHierarchy)
                 continue;
-            // Skip our own clone if it somehow exists without the suffix check.
-            if (go.name.EndsWith(CloneNameSuffix, StringComparison.Ordinal))
+            // Skip our own clone if it somehow exists without the marker check.
+            if ((go.name ?? string.Empty).Contains(CloneNameSuffix, StringComparison.Ordinal))
                 continue;
             if (FindButton(go) == null)
                 continue;
             usable++;
-            last = go;
-            if (creatorsHint == null && NameHintsCreators(go))
-                creatorsHint = go;
+            if (first == null)
+                first = go;
         }
 
-        var picked = creatorsHint ?? last;
-        if (picked != null)
-            Plugin.Log.LogInfo("[CONNECT] picked source tab " +
-                $"'{picked.name}' in row '{row.name}' " +
-                $"({(creatorsHint != null ? "Creators name hint" : "last tab")}, " +
-                $"{usable} usable tabs, label='{ReadFirstLabel(picked) ?? "<none>"}')");
-        return picked;
+        if (first != null)
+            Plugin.Log.LogInfo($"[CONNECT] picked source tab '{first.name}' in row '{row.name}' " +
+                $"(first button child by index, {usable} usable tabs, " +
+                $"label='{ReadFirstLabel(first) ?? "no label"}')");
+        return first;
     }
 
-    // Name hint only (GameObject or component type name) — never the visible
-    // label. Obfuscated names simply miss and we fall back to the last tab.
-    private static bool NameHintsCreators(GameObject go)
-    {
-        try
-        {
-            if ((go.name ?? string.Empty).IndexOf("Creators", StringComparison.OrdinalIgnoreCase) >= 0)
-                return true;
-            foreach (var compName in ComponentNames(go, 10))
-            {
-                if (compName.IndexOf("Creators", StringComparison.OrdinalIgnoreCase) >= 0)
-                    return true;
-            }
-        }
-        catch
-        {
-            // best effort only
-        }
-        return false;
-    }
-
-    // FALLBACK anchor: find the home root, then take the tab row BY
-    // POSITION — breadth-first from the root, the first Transform whose
-    // active children include >=2 button-carrying ones is a tab row;
-    // prefer a row with exactly 5 (the Top5 row). Bounded so a huge scene
-    // can't stall the tick.
+    // B: INDEX-BASED positional fallback — find the home root, then BFS for
+    // the first Transform with >=2 button-carrying active children,
+    // preferring a row with exactly 5 (the Top5 row). Bounded so a huge
+    // scene can't stall the tick. Never used when the model type resolved.
     private static Transform FindTabRowByPosition()
     {
         var root = FindHomeRoot();
         if (root == null)
             return null;
+        return FindTabRowInSubtree(root);
+    }
 
+    // Bounded BFS of a subtree for the first tab-row-like Transform,
+    // preferring exactly 5 button children (the Top5 row). The root itself
+    // is skipped — it must be a descendant row.
+    private static Transform FindTabRowInSubtree(Transform root)
+    {
         const int MaxNodes = 5000;
         int visited = 0;
         Transform firstRow = null;
@@ -481,9 +604,23 @@ internal static class FluxConnectButton
             var go = t.gameObject;
             if (go == null || !go.activeInHierarchy)
                 return false;
-            if (go.name.EndsWith(CloneNameSuffix, StringComparison.Ordinal))
+            if ((go.name ?? string.Empty).Contains(CloneNameSuffix, StringComparison.Ordinal))
                 return false;
-            for (int i = 0; i < t.childCount && buttonChildren < 6; i++)
+            buttonChildren = CountButtonChildren(t);
+            return buttonChildren >= 2;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static int CountButtonChildren(Transform t)
+    {
+        int count = 0;
+        try
+        {
+            for (int i = 0; i < t.childCount && count < 6; i++)
             {
                 var child = t.GetChild(i);
                 if (child == null)
@@ -492,14 +629,14 @@ internal static class FluxConnectButton
                 if (cgo == null || !cgo.activeInHierarchy)
                     continue;
                 if (FindButton(cgo) != null)
-                    buttonChildren++;
+                    count++;
             }
-            return buttonChildren >= 2;
         }
         catch
         {
-            return false;
+            // best effort only
         }
+        return count;
     }
 
     // Anchor the home UI without relying on labels: the unobfuscated
