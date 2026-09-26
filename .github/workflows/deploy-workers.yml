@@ -7,6 +7,10 @@ on:
         description: 'Comma-separated worker dirs to deploy (default: auth,accounts,rooms,econ,api,clubs,img)'
         required: false
         default: 'auth,accounts,rooms,econ,api,clubs,img'
+      target:
+        description: "Deploy target: 'workers-dev' deploys to <name>.workers.dev; 'custom-domain' deploys onto <subdomain>.recflare.net (the client-facing hosts)"
+        required: false
+        default: 'workers-dev'
 
 jobs:
   deploy:
@@ -19,7 +23,9 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       RECFLARE_DOMAIN: ${{ secrets.RECFLARE_DOMAIN }}
-      RECFLARE_WORKERS_DEV: ${{ secrets.RECFLARE_WORKERS_DEV }}
+      # Custom-domain deploys pass an empty RECFLARE_WORKERS_DEV so
+      # run-wrangler-deploy uses --domain <subdomain>.recflare.net.
+      RECFLARE_WORKERS_DEV: ${{ inputs.target == 'workers-dev' && secrets.RECFLARE_WORKERS_DEV || '' }}
       RECFLARE_D1: ${{ secrets.RECFLARE_D1 }}
       RECFLARE_KV: ${{ secrets.RECFLARE_KV }}
       RECFLARE_SECRETS_STORE: ${{ secrets.RECFLARE_SECRETS_STORE }}
