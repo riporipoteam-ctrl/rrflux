@@ -51,7 +51,7 @@ internal static class FluxConnectButton
             }
 
             var go = new GameObject("FluxConnectButton");
-            go.hideFlags = HideFlags.HideAndDontSave;
+            go.hideFlags = HideFlags.HideAndDontDestroy;
             UnityEngine.Object.DontDestroyOnLoad(go);
             go.AddComponent<FluxConnectButtonOverlay>();
             _buttonCreated = true;

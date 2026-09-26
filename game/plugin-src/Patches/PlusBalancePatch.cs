@@ -65,7 +65,7 @@ internal static class PlusBalancePatch
             {
                 ClassInjector.RegisterTypeInIl2Cpp<PlusBalanceDispatcher>();
                 var go = new GameObject(DispatcherObjectName);
-                go.hideFlags = HideFlags.HideAndDontSave;
+                go.hideFlags = HideFlags.HideAndDontDestroy;
                 UnityEngine.Object.DontDestroyOnLoad(go);
                 go.AddComponent<PlusBalanceDispatcher>();
                 _dispatcherReady = true;

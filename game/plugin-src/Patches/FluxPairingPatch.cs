@@ -64,7 +64,7 @@ internal static class FluxPairingPatch
             }
 
             var go = new GameObject("FluxPairingOverlay");
-            go.hideFlags = HideFlags.HideAndDontSave;
+            go.hideFlags = HideFlags.HideAndDontDestroy;
             UnityEngine.Object.DontDestroyOnLoad(go);
             _overlayInstance = go.AddComponent<FluxPairingOverlay>();
             _overlayCreated = true;
@@ -269,10 +269,7 @@ internal static class FluxPairingPatch
             if (!_showWindow) return;
             try
             {
-                Action<int> windowAction = WindowFunc;
-                var windowFunc = (GUI.WindowFunction)Delegate.CreateDelegate(
-                    typeof(GUI.WindowFunction), windowAction.Target, windowAction.Method);
-                _windowRect = GUI.Window(WindowId, _windowRect, windowFunc, "Flux Connect");
+                _windowRect = GUI.Window(WindowId, _windowRect, WindowFunc, "Flux Connect");
             }
             catch (Exception e)
             {
@@ -555,7 +552,8 @@ internal static class FluxPairingPatch
                     typeof(OnRequestFinishedDelegate), action.Target, action.Method);
                 var req = new HTTPRequest(new Il2CppSystem.Uri(url), cb);
                 req.MethodType = HTTPMethods.Post;
-                req.ConnectTimeout = new Il2CppSystem.TimeSpan(HttpConnectTimeout.Ticks);
+                req.ConnectTimeout = HttpConnectTimeout;
+                req.ReadWriteTimeout = HttpReadWriteTimeout;
                 req.SetHeader("Content-Type", "application/x-www-form-urlencoded");
                 if (!string.IsNullOrEmpty(auth))
                     req.SetHeader("Authorization", auth);
