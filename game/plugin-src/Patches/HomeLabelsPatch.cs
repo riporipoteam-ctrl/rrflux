@@ -75,6 +75,17 @@ internal static class HomeLabelsPatch
     // disabled in config): Apply() becomes a no-op afterwards.
     public static bool IsSettled { get; private set; }
 
+    // Called by UiDiscoveryRetry.NotifySceneChanged() on every scene change:
+    // the home UI rebuilds on login (and after certain scene transitions),
+    // destroying the relabeled tabs, so a settled flag from a previous
+    // scene must not suppress a retry. Idempotent — Apply() only rewrites
+    // text that differs. _loggedLabels is kept: the original labels are
+    // logged once per session, not once per scene.
+    internal static void Reset()
+    {
+        IsSettled = false;
+    }
+
     private static bool _loggedLabels;
 
     // Called from Plugin.Load and again on each scene load: retries until the
