@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using BestHTTP;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
@@ -87,130 +86,24 @@ public class SendRequestPatch
                     Plugin.Log.LogInfo($"[HTTP] intercepted {host} -> {newHost}");
             }
 
-            // Storefront endpoint compatibility (comprehensive, 2026-09-26) —
-            // see ApplyStorefrontFixes below for the full endpoint enumeration.
-            ApplyStorefrontFixes(request);
+            // Store crash fix (2026-09-26): the 2023 client calls /api/storefronts/v2/balance
+            // which our backend doesn't implement (only v4/balance/:currencyType exists).
+            // The 404 causes a NullReferenceException → blank white store page → crash.
+            // Rewrite to the v4 endpoint which returns the same balance data.
+            try
+            {
+                var path = request.Uri.AbsolutePath;
+                if (path.Equals("/api/storefronts/v2/balance", StringComparison.OrdinalIgnoreCase))
+                {
+                    var builder = new Il2CppSystem.UriBuilder(request.Uri) { Path = "/api/storefronts/v4/balance/2" };
+                    request.Uri = builder.Uri;
+                    Plugin.Log.LogInfo("[HTTP] rewrote /api/storefronts/v2/balance -> /api/storefronts/v4/balance/2 (store crash fix)");
+                }
+            }
+            catch { }
 
             if (debug)
                 LogResponseWhenDone(request);
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Storefront endpoint compatibility (comprehensive, 2026-09-26).
-    //
-    // Complete enumeration of the storefront endpoints baked into the 2023
-    // client, extracted from GameAssembly's global-metadata.dat (2026-09-26),
-    // with the live backend status of each (probed 2026-09-26 against the
-    // deployed econ worker, the host the client's service discovery resolves
-    // for storefront traffic):
-    //
-    //   SERVED — no rewrite needed:
-    //     GET /api/storefronts/v1/adcarouselitems -> 200 `[]`
-    //     GET /api/storefronts/v1/toptoday        -> 200 `[]`
-    //     GET /api/storefronts/v1/objectives     -> 200 `[]`
-    //     v2/buyItem, v2/buyInvention             -> implemented (purchases)
-    //     POST /api/ugcPurchasables/v1/items/bulk -> implemented (item resolve)
-    //     POST /api/items/purchaseInfos           -> implemented (price tags)
-    //   REWRITTEN — see StorefrontRewrites:
-    //     v2/balance -> v4/balance/2
-    //   NO BACKEND EQUIVALENT — see UnmappedStorefrontPaths (telemetry only):
-    //     v1/PurchaseRoomKeyWithCurrency, v1/buyForFreeGiftButton,
-    //     v1/buyProgressionEventXpBoost, v1/buyPurchaseReminder, v1/buyRoomKey,
-    //     v1/trialInvention, v1/trialInvention/duration, v2/buyElite, v2/buyTier
-    //
-    // Notes:
-    // - The 2023 client only ever calls v1/v2 storefront routes (no v3/v4/v5/v6
-    //   strings exist in its metadata), so v2/balance is the ONLY version
-    //   mismatch with a working backend equivalent.
-    // - The deployed backend ALSO has a native v2/balance now (added
-    //   2026-09-25), but its response shape is not in any local tree, while
-    //   v4/balance/2's shape ([{CurrencyType, Platform, Balance}], the
-    //   backend's BalanceEntry = the client's BalanceResponseDTO) is verified
-    //   — so the rewrite stays, unconditionally.
-    // - Response synthesis was considered for the 404 set and REJECTED:
-    //   their shapes are not recoverable from any parsing code in the plugin
-    //   or backend, and inventing one risks a worse crash than the 404.
-    //   Fabricating a BestHTTP HTTPResponse was likewise rejected (no
-    //   verifiable constructor contract; the v0.1.30 hang came from touching
-    //   game callbacks). Balance is the one shape we CAN verify, and its
-    //   rewrite target is a real, working endpoint, so no synthesis is needed.
-    // ------------------------------------------------------------------
-    private static readonly (string From, string To)[] StorefrontRewrites =
-    {
-        // The 2023 client fetches its token balance here (all-balances array
-        // on the real server). The backend serves the per-currency v4 route
-        // instead; the entry shape is identical ([{CurrencyType, Platform,
-        // Balance}]). currencyType 2 = RecCenterTokens — the same bucket the
-        // token purchase flow reads and charges (FluxPlusPatch,
-        // PlusBuyDialog, PlusBalancePatch all use /api/storefronts/v4/balance/2).
-        ("/api/storefronts/v2/balance", "/api/storefronts/v4/balance/2"),
-    };
-
-    // Client-called storefront paths with no backend equivalent. These are
-    // all purchase/action endpoints (room keys, try-on, elite tiers, gift
-    // button, …), never page-open fetches. The 404 passes through untouched;
-    // each is logged ONCE per session so the next Store crash report names
-    // the exact endpoint the client tried.
-    private static readonly string[] UnmappedStorefrontPaths =
-    {
-        "/api/storefronts/v1/PurchaseRoomKeyWithCurrency",
-        "/api/storefronts/v1/buyForFreeGiftButton",
-        "/api/storefronts/v1/buyProgressionEventXpBoost",
-        "/api/storefronts/v1/buyPurchaseReminder",
-        "/api/storefronts/v1/buyRoomKey",
-        "/api/storefronts/v1/trialInvention",
-        "/api/storefronts/v1/trialInvention/duration",
-        "/api/storefronts/v2/buyElite",
-        "/api/storefronts/v2/buyTier",
-    };
-
-    private static readonly HashSet<string> _loggedUnmappedStorefronts =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-    private static void ApplyStorefrontFixes(HTTPRequest request)
-    {
-        string path;
-        try { path = request.Uri.AbsolutePath; }
-        catch { return; }
-        if (string.IsNullOrEmpty(path))
-            return;
-
-        // Trailing-slash tolerance: the client's metadata strings carry no
-        // trailing slash, but be lenient in case a call site adds one.
-        var normPath = path.EndsWith("/", StringComparison.Ordinal) && path.Length > 1
-            ? path.Substring(0, path.Length - 1)
-            : path;
-
-        foreach (var (from, to) in StorefrontRewrites)
-        {
-            if (!normPath.Equals(from, StringComparison.OrdinalIgnoreCase))
-                continue;
-            try
-            {
-                var builder = new Il2CppSystem.UriBuilder(request.Uri) { Path = to };
-                request.Uri = builder.Uri;
-                Plugin.Log.LogInfo($"[HTTP] rewrote {from} -> {to} (storefront compat)");
-            }
-            catch (Exception e)
-            {
-                Plugin.Log.LogWarning($"[HTTP] storefront rewrite {from} -> {to} failed: {e.Message}");
-            }
-            return;
-        }
-
-        foreach (var unmapped in UnmappedStorefrontPaths)
-        {
-            if (!normPath.Equals(unmapped, StringComparison.OrdinalIgnoreCase))
-                continue;
-            lock (_loggedUnmappedStorefronts)
-            {
-                if (_loggedUnmappedStorefronts.Add(normPath))
-                    Plugin.Log.LogWarning(
-                        $"[HTTP] storefront endpoint {normPath} has no backend equivalent " +
-                        "(404 expected, no rewrite applied) — include this line with any Store crash report.");
-            }
-            return;
         }
     }
 
