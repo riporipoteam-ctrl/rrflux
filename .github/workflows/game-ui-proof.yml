@@ -74,13 +74,13 @@ jobs:
           function Shot($name) {
             $bmp = New-Object System.Drawing.Bitmap(1280, 720)
             $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720)
             $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
             $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
           }
           Shot "01-account-picker"
 
-      - name: Click SWITCH ACCOUNT
+      - name: Click SWITCH ACCOUNT and login
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Windows.Forms
@@ -88,31 +88,49 @@ jobs:
           function Shot($name) {
             $bmp = New-Object System.Drawing.Bitmap(1280, 720)
             $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720)
             $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
             $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
+          }
+          function ClickAt($x, $y) {
+            [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($x, $y)
+            Start-Sleep -Milliseconds 400
+            $s = '[DllImport("user32.dll")] public static extern void mouse_event(int f,int x,int y,int d,int e);'
+            $tt = Add-Type -MemberDefinition $s -Name ("MC"+(Get-Random)) -Namespace "W32" -PassThru
+            $tt::mouse_event(0x02, $x, $y, 0, 0)
+            Start-Sleep -Milliseconds 100
+            $tt::mouse_event(0x04, $x, $y, 0, 0)
+            Start-Sleep -Milliseconds 400
           }
           
           $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $p) { Write-Host "::error::RecRoom not running"; exit 1 }
-          
           $wshell = New-Object -ComObject WScript.Shell
           $wshell.AppActivate($p.Id)
           Start-Sleep -Seconds 2
           
-          Write-Host "Clicking SWITCH ACCOUNT with mouse at (770, 550)..."
-          # Move mouse using .NET (YAML-safe, no here-string)
-          [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(770, 550)
-          Start-Sleep -Milliseconds 500
-          # Click via SendMessage is complex; try the simple .NET mouse click via reflection
-          $sig = '[DllImport("user32.dll")] public static extern void mouse_event(int f, int x, int y, int d, int e);'
-          $t = Add-Type -MemberDefinition $sig -Name "MClick" -Namespace "Win32" -PassThru
-          $t::mouse_event(0x02, 770, 550, 0, 0)
-          Start-Sleep -Milliseconds 100
-          $t::mouse_event(0x04, 770, 550, 0, 0)
-          Start-Sleep -Seconds 8
-          Shot "03-after-switch-account-click"
+          Write-Host "Clicking SWITCH ACCOUNT..."
+          ClickAt 770 550
+          Start-Sleep -Seconds 5
+          Shot "03-login-screen"
           
+          Write-Host "Typing username..."
+          ClickAt 770 270
+          Start-Sleep -Seconds 1
+          [System.Windows.Forms.SendKeys]::SendWait("@ripotester1")
+          Start-Sleep -Seconds 1
+          
+          Write-Host "Typing password..."
+          [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+          Start-Sleep -Seconds 1
+          [System.Windows.Forms.SendKeys]::SendWait("8756733756.ll")
+          Start-Sleep -Seconds 1
+          Shot "04-credentials-entered"
+          
+          Write-Host "Clicking PLAY..."
+          ClickAt 770 570
+          Start-Sleep -Seconds 15
+          Shot "05-after-play"
           Write-Host "Done."
 
       - name: Navigate to Settings Visuals (if logged in)
@@ -123,7 +141,7 @@ jobs:
           function Shot($name) {
             $bmp = New-Object System.Drawing.Bitmap(1280, 720)
             $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720)
             $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
             $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
           }
