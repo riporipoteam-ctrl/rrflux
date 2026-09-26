@@ -24,10 +24,9 @@ namespace RecNetPlugin.Patches;
 //    IL2CPP crashes.
 // 4. Backend: POST /api/CampusCard/v1/PurchaseWithTokens (10,000 tokens,
 //    sets hasPlus=true, active after next login).
-// 5. Shows user-visible success/error feedback through a small IMGUI toast
-//    overlay (PlusToastOverlay), since the game's own toast model is not
-//    safely resolvable on IL2CPP. HTTP callbacks are marshalled to the main
-//    thread through a queue drained in Update().
+// 5. Purchase success/failure feedback goes to the BepInEx log
+//    (LogInfo/LogWarning), since the game's own toast model is not safely
+//    resolvable on IL2CPP.
 //
 // One knob, see [Plus] in the .cfg:
 //   Enable Flux Rec + -> THE FIX (default true).
@@ -40,8 +39,6 @@ internal static class FluxPlusPatch
     private static bool _done;
     private static bool _branded;
     private static bool _priceInterceptDone;
-    private static bool _overlayCreated;
-    private static bool _typeRegistered;
 
     // User-visible purchase feedback (exact strings, keep in sync with docs).
     private const string MsgSuccess =
@@ -57,8 +54,6 @@ internal static class FluxPlusPatch
     {
         if (!Plugin.EnableFluxPlus.Value)
             return;
-
-        EnsureToastOverlay();
 
         if (_done || _attempts >= MaxAttempts)
             return;
@@ -81,133 +76,6 @@ internal static class FluxPlusPatch
             Plugin.Log.LogInfo("[PLUS] Flux Rec + patch applied");
         else if (_attempts >= MaxAttempts)
             Plugin.Log.LogWarning("[PLUS] gave up after max attempts");
-    }
-
-    // Standalone IMGUI toast overlay (same proven pattern as FluxPairingPatch):
-    // created once on the main thread, survives scene loads, draws a transient
-    // centered message box. HTTP callbacks enqueue through ShowToast and are
-    // drained in Update(), so OnGUI only ever runs on the main thread.
-    private static void EnsureToastOverlay()
-    {
-        if (_overlayCreated) return;
-
-        try
-        {
-            if (!_typeRegistered)
-            {
-                ClassInjector.RegisterTypeInIl2Cpp<PlusToastOverlay>();
-                _typeRegistered = true;
-            }
-
-            var go = new GameObject("FluxPlusToastOverlay");
-            go.hideFlags = HideFlags.HideAndDontSave;
-            UnityEngine.Object.DontDestroyOnLoad(go);
-            go.AddComponent<PlusToastOverlay>();
-            _overlayCreated = true;
-            Plugin.Log.LogInfo("[PLUS] toast overlay ready");
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogWarning($"[PLUS] toast overlay setup failed: {e.Message}");
-        }
-    }
-
-    private class PlusToastOverlay : MonoBehaviour
-    {
-        private const float ToastDurationSec = 6f;
-
-        private static PlusToastOverlay _instance;
-        private static readonly Queue<Action> _pending = new Queue<Action>();
-        private static readonly object _queueLock = new object();
-
-        private string _message = "";
-        private bool _isError;
-        private float _hideAt;
-        private GUIStyle _boxStyle;
-        private GUIStyle _labelStyle;
-
-        // Thread-safe: may be called from BestHTTP callbacks.
-        public static void ShowToast(string message, bool isError)
-        {
-            if (string.IsNullOrEmpty(message)) return;
-            try
-            {
-                lock (_queueLock) { _pending.Enqueue(() => SetToast(message, isError)); }
-            }
-            catch { }
-        }
-
-        private static void SetToast(string message, bool isError)
-        {
-            try
-            {
-                if (_instance == null) return;
-                _instance._message = message;
-                _instance._isError = isError;
-                _instance._hideAt = Time.realtimeSinceStartup + ToastDurationSec;
-            }
-            catch { }
-        }
-
-        private void Start()
-        {
-            _instance = this;
-        }
-
-        private void Update()
-        {
-            try
-            {
-                while (true)
-                {
-                    Action a = null;
-                    lock (_queueLock)
-                    {
-                        if (_pending.Count == 0) break;
-                        a = _pending.Dequeue();
-                    }
-                    try { a(); } catch { }
-                }
-            }
-            catch { }
-        }
-
-        private void EnsureStyles()
-        {
-            if (_boxStyle != null) return;
-            _boxStyle = new GUIStyle(GUI.skin.box);
-            _labelStyle = new GUIStyle(GUI.skin.label);
-            _labelStyle.wordWrap = true;
-            _labelStyle.alignment = TextAnchor.MiddleCenter;
-            _labelStyle.normal.textColor = Color.white;
-            _labelStyle.fontSize = 16;
-        }
-
-        private void OnGUI()
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(_message)) return;
-                if (Time.realtimeSinceStartup >= _hideAt) { _message = ""; return; }
-
-                EnsureStyles();
-
-                var w = Mathf.Min(Screen.width - 40f, 560f);
-                var h = 92f;
-                var rect = new Rect((Screen.width - w) / 2f, Screen.height - h - 90f, w, h);
-
-                var oldBg = GUI.backgroundColor;
-                GUI.backgroundColor = _isError
-                    ? new Color(0.45f, 0.12f, 0.12f, 0.95f)
-                    : new Color(0.10f, 0.35f, 0.14f, 0.95f);
-                GUI.Box(rect, GUIContent.none, _boxStyle);
-                GUI.backgroundColor = oldBg;
-
-                var labelRect = new Rect(rect.x + 16f, rect.y + 12f, rect.width - 32f, rect.height - 24f);
-                GUI.Label(labelRect, _message, _labelStyle);
-            }
-            catch { }
-        }
     }
 
     private static void PatchBuyMethod()
@@ -324,8 +192,7 @@ internal static class FluxPlusPatch
             var auth = SendRequestPatch.ConnectToRecNetPatch.LastAuthHeader;
             if (string.IsNullOrEmpty(auth))
             {
-                Plugin.Log.LogWarning("[PLUS] no auth token — cannot purchase");
-                PlusToastOverlay.ShowToast(MsgGenericFailure, true);
+                Plugin.Log.LogWarning($"[PLUS] no auth token — cannot purchase. {MsgGenericFailure}");
                 return false;
             }
 
@@ -336,8 +203,7 @@ internal static class FluxPlusPatch
         }
         catch (Exception e)
         {
-            Plugin.Log.LogError($"[PLUS] intercept failed: {e.Message}");
-            PlusToastOverlay.ShowToast(MsgGenericFailure, true);
+            Plugin.Log.LogError($"[PLUS] intercept failed: {e.Message}. {MsgGenericFailure}");
             return false;
         }
     }
@@ -375,8 +241,7 @@ internal static class FluxPlusPatch
         }
         catch (Exception e)
         {
-            Plugin.Log.LogError($"[PLUS] purchase flow failed: {e.Message}");
-            PlusToastOverlay.ShowToast(MsgGenericFailure, true);
+            Plugin.Log.LogError($"[PLUS] purchase flow failed: {e.Message}. {MsgGenericFailure}");
         }
     }
 
@@ -394,8 +259,7 @@ internal static class FluxPlusPatch
             {
                 if (resp == null || resp.StatusCode != 200)
                 {
-                    Plugin.Log.LogWarning("[PLUS] balance check failed");
-                    PlusToastOverlay.ShowToast(MsgGenericFailure, true);
+                    Plugin.Log.LogWarning("[PLUS] balance check failed. " + MsgGenericFailure);
                     return;
                 }
 
@@ -404,8 +268,7 @@ internal static class FluxPlusPatch
 
                 if (balance < PlusPriceTokens)
                 {
-                    Plugin.Log.LogWarning($"[PLUS] insufficient tokens ({balance} < {PlusPriceTokens})");
-                    PlusToastOverlay.ShowToast(MsgInsufficientFunds, true);
+                    Plugin.Log.LogWarning($"[PLUS] insufficient tokens ({balance} < {PlusPriceTokens}). {MsgInsufficientFunds}");
                     return;
                 }
 
@@ -425,8 +288,7 @@ internal static class FluxPlusPatch
             }
             catch (Exception e)
             {
-                Plugin.Log.LogError($"[PLUS] balance callback failed: {e.Message}");
-                PlusToastOverlay.ShowToast(MsgGenericFailure, true);
+                Plugin.Log.LogError($"[PLUS] balance callback failed: {e.Message}. {MsgGenericFailure}");
             }
         }
 
@@ -436,30 +298,24 @@ internal static class FluxPlusPatch
             {
                 if (resp != null && resp.StatusCode == 200)
                 {
-                    Plugin.Log.LogInfo("[PLUS] purchase complete — re-login to activate");
-                    PlusToastOverlay.ShowToast(MsgSuccess, false);
+                    Plugin.Log.LogInfo("[PLUS] " + MsgSuccess);
                 }
                 else if (resp != null && resp.StatusCode == 400)
                 {
                     var code = FluxPairingPatch.GetJsonString(resp.DataAsText ?? "", "error") ?? "";
-                    Plugin.Log.LogWarning($"[PLUS] purchase rejected: {code}");
-                    if (code == "already_owned")
-                        PlusToastOverlay.ShowToast(MsgAlreadyOwned, true);
-                    else if (code == "insufficient_funds")
-                        PlusToastOverlay.ShowToast(MsgInsufficientFunds, true);
-                    else
-                        PlusToastOverlay.ShowToast(MsgGenericFailure, true);
+                    var userMsg = code == "already_owned" ? MsgAlreadyOwned
+                        : code == "insufficient_funds" ? MsgInsufficientFunds
+                        : MsgGenericFailure;
+                    Plugin.Log.LogWarning($"[PLUS] purchase rejected: {code}. {userMsg}");
                 }
                 else
                 {
-                    Plugin.Log.LogWarning($"[PLUS] purchase failed: {resp?.StatusCode}");
-                    PlusToastOverlay.ShowToast(MsgGenericFailure, true);
+                    Plugin.Log.LogWarning($"[PLUS] purchase failed: {resp?.StatusCode}. {MsgGenericFailure}");
                 }
             }
             catch (Exception e)
             {
-                Plugin.Log.LogError($"[PLUS] purchase callback failed: {e.Message}");
-                PlusToastOverlay.ShowToast(MsgGenericFailure, true);
+                Plugin.Log.LogError($"[PLUS] purchase callback failed: {e.Message}. {MsgGenericFailure}");
             }
         }
     }
