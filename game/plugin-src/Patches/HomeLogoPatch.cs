@@ -52,16 +52,6 @@ internal static class HomeLogoPatch
     // this is true, then stops. Apply() is idempotent on top of that.
     public static bool IsSettled { get; private set; }
 
-    // Called by UiDiscoveryRetry.NotifySceneChanged() on every scene change:
-    // the home UI rebuilds on login (and after certain scene transitions),
-    // destroying the inserted logo, so a settled flag from a previous scene
-    // must not suppress a retry. Idempotent — Apply() re-checks for an
-    // existing "FluxHomeLogo" child before inserting.
-    internal static void Reset()
-    {
-        IsSettled = false;
-    }
-
     private static int _attempts;
     private static DateTime _lastProgressLog = DateTime.MinValue;
 
