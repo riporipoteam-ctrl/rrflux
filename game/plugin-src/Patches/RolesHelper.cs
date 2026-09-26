@@ -166,7 +166,7 @@ internal static class RolesHelper
         {
             ClassInjector.RegisterTypeInIl2Cpp<RolesPump>();
             var go = new GameObject("FluxRolesPump");
-            go.hideFlags = HideFlags.HideAndDontDestroy;
+            go.hideFlags = HideFlags.HideAndDontSave;
             UnityEngine.Object.DontDestroyOnLoad(go);
             go.AddComponent<RolesPump>();
             _pumpCreated = true;
@@ -323,8 +323,7 @@ internal static class RolesHelper
                 typeof(OnRequestFinishedDelegate), action.Target, action.Method);
             var req = new HTTPRequest(new Il2CppSystem.Uri(url), cb);
             req.MethodType = HTTPMethods.Get;
-            req.ConnectTimeout = HttpConnectTimeout;
-            req.ReadWriteTimeout = HttpReadWriteTimeout;
+            req.ConnectTimeout = new Il2CppSystem.TimeSpan(HttpConnectTimeout.Ticks);
             HTTPManager.SendRequest(req);
         }
         catch (Exception e)
