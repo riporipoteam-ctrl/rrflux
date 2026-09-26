@@ -216,8 +216,25 @@ public static class PlusBuyDialog
 
             if (watch != null)
             {
-                watch.ShowRRUIConfirmationPage(title, message);
-                Plugin.Log.LogWarning("[PLUS-DIALOG] DialogListModel not found under Watch — fallback ShowRRUIConfirmationPage shown (buy/cancel not wired)");
+                // Fallback: try ShowRRUIConfirmationPage via reflection
+                try
+                {
+                    var m = watch.GetType().GetMethod("ShowRRUIConfirmationPage",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (m != null)
+                    {
+                        m.Invoke(watch, new object[] { title, message });
+                        Plugin.Log.LogWarning("[PLUS-DIALOG] DialogListModel not found under Watch — fallback ShowRRUIConfirmationPage shown (buy/cancel not wired)");
+                    }
+                    else
+                    {
+                        Plugin.Log.LogWarning("[PLUS-DIALOG] DialogListModel not found and ShowRRUIConfirmationPage not available");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning($"[PLUS-DIALOG] fallback failed: {ex.Message}");
+                }
                 return;
             }
 
@@ -256,27 +273,45 @@ public static class PlusBuyDialog
 
     private static void ShowViaDialogList(RRUI.Dialogs.DialogListModel list, string title, string message)
     {
-        // DMGCKEOKIPC: the game's two-button dialog config (global
-        // namespace, public parameterless ctor). Property mapping is
-        // best-effort — see the file header for the verified hierarchy.
+        // DMGCKEOKIPC: the game's two-button dialog config.
+        // Use reflection for property sets (obfuscated names, compile-time
+        // names unverified). Property mapping from build errors:
+        //   AMFPEDOFIGE.LJJGMJNNJKN = title, CBGMHAODOKL = dismiss flag
+        //   FBNJPEHPKJA.AJGKDMIDAJA = message, GMFABKOCIOO = primary text,
+        //     EHOOLNCFNCO = primary callback, EFCGLEKHKBP = flag
+        //   DMGCKEOKIPC.CBFPNPEBBJH = secondary text, CGHFEEPNEMJ = secondary
+        //     callback, JFGDGEIJCJD = flag
         var cfg = new DMGCKEOKIPC();
+        var t = cfg.GetType();
 
-        // Base (.AMFPEDOFIGE): dialog title + explicit-dismiss flag.
-        cfg.OELAKKKFDDJ = title;
-        cfg.NIEKPBOCCAF = true;
+        void SetProp(string name, object value)
+        {
+            var p = t.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (p != null && p.CanWrite)
+            {
+                try { p.SetValue(cfg, value, null); }
+                catch (Exception e) { Plugin.Log.LogWarning($"[PLUS-DIALOG] set {name} failed: {e.Message}"); }
+            }
+            else
+            {
+                Plugin.Log.LogWarning($"[PLUS-DIALOG] property {name} not found");
+            }
+        }
 
-        // One-button level (.FBNJPEHPKJA): message, primary button.
-        cfg.NDCIMEGCAKI = message;
-        cfg.OAHDBNDJAEI = "Buy";
-        cfg.KMCCJBDDBKF = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action>(
+        var buyCallback = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action>(
             new Action(OnBuyClicked));
-        cfg.FHLEBPMKMEG = true;
-
-        // Two-button level (.DMGCKEOKIPC): secondary (Cancel) button.
-        cfg.FCOLDANGMGB = "Cancel";
-        cfg.NKDHHPAACPG = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action>(
+        var cancelCallback = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action>(
             new Action(OnCancelClicked));
-        cfg.LIEBDBFDBJO = true;
+
+        SetProp("LJJGMJNNJKN", title);
+        SetProp("CBGMHAODOKL", true);
+        SetProp("AJGKDMIDAJA", message);
+        SetProp("GMFABKOCIOO", "Buy");
+        SetProp("EHOOLNCFNCO", buyCallback);
+        SetProp("EFCGLEKHKBP", true);
+        SetProp("CBFPNPEBBJH", "Cancel");
+        SetProp("CGHFEEPNEMJ", cancelCallback);
+        SetProp("JFGDGEIJCJD", true);
 
         var shown = list.AddTwoButtonMessageDialog(cfg);
         _shownDialog = shown;
