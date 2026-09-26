@@ -1,5 +1,5 @@
 // Adds a "Play" tab to the Watch home tab row by cloning the Rooms tab and
-// rewiring its click to Play navigation. v0.1.35 rewrite (retargeted).
+// rewiring its click to Play navigation. v0.1.35 rewrite.
 //
 // Why this shape (and why the old "Create button" hunt is gone):
 //  - Research for v0.1.35 confirmed there is NO Create tab on the RRUI home
@@ -7,7 +7,6 @@
 //    HomeTop5TabsModel, enum EKNOKKDNHFP) and the legacy createRoomButton is
 //    a Button3D, not a uGUI Button — so hunting a "Create" uGUI Button could
 //    never succeed. The old file targeted a button that does not exist.
-//    There is deliberately NO "Create" label search anywhere in this file.
 //  - The home screen is 100% code-built at runtime via RRUI (Rec Room's UI
 //    framework) — there are no home-screen prefabs to edit. The plugin
 //    clones the Rooms tab (same prefab, same style, same row), inserts the
@@ -20,14 +19,11 @@
 //    DelegateSupport.ConvertDelegate — our OWN fresh handler, never a
 //    wrapped game callback, so the v0.1.30 Delegate.CreateDelegate hang
 //    cannot recur.
-//  - The click handler calls the game's own Play navigation:
-//    WatchUI.ShowScreenAndGoToPlay(bool) — public and unobfuscated in build
-//    20230414, resolved at runtime by name (a compile-time reference would
-//    break the build if the interop ever regenerates without it). The method
-//    is resolved ONCE (static field) and only invoked from the click
-//    handler, which runs on the Unity main thread. If the method is ever
-//    missing, the click logs a one-time Warning with the nav-probe
-//    diagnostics (nav enum ELCPGOKLPLO, Play = 8) instead of silently dying.
+//  - The click handler resolves Play navigation. The Play nav method has not
+//    been confirmed by research yet, so the handler currently performs a
+//    side-effect-free discovery probe (log evidence only, nothing invoked)
+//    and falls back to logging "[PLAY] Play pressed (nav not yet wired)".
+//    The exact call site for the real nav is marked below.
 //
 // Hard rules honored:
 //  - The source tab itself is untouched: the plugin only ADDS a sibling.
@@ -53,9 +49,7 @@
 // DelegateSupport.ConvertDelegate<UnityAction>(new Action(...)) — NEVER
 // new UnityAction(...) or method-group construction; downcasts go through
 // TryCast<T>(), never direct casts; GetComponent / GetComponentsInChildren
-// require Il2CppSystem.Type; no IMGUI. Game methods are invoked through
-// reflection (MethodInfo.Invoke), the same precedent PlusBuyDialog uses for
-// WatchUI methods.
+// require Il2CppSystem.Type; no IMGUI.
 //
 // One knob, see [Home] in the .cfg:
 //   Enable Play Button -> THE FEATURE (default true).
@@ -99,15 +93,11 @@ internal static class PlayButtonPatch
     private static DateTime _firstAttemptUtc = DateTime.MinValue;
     private static DateTime _lastProgressLogUtc = DateTime.MinValue;
 
-    // Cached Play-nav resolution. The nav call site is resolved lazily on
-    // the FIRST click (never during Apply — the Watch may not exist yet and
-    // reflection is not free), then reused for every later click.
-    private static bool _navResolved;
-    private static MethodInfo _showScreenAndGoToPlay; // WatchUI.ShowScreenAndGoToPlay(bool), or null
-    private static bool _navIsStatic;                 // true if the resolved method is static
-    private static string _navParamName;              // bool param name, for the log
-    private static bool _navMissingLogged;            // one-time Warning when the method is absent
-    private static string _navProbeSummary;           // diagnostic fallback when the method is absent
+    // Cached nav-probe result: the Play nav method is still unknown, so the
+    // first click performs a side-effect-free discovery scan and every later
+    // click reuses its summary instead of re-scanning assemblies.
+    private static bool _navProbeDone;
+    private static string _navProbeSummary;
 
     // True once there is nothing left to do: feature disabled in config, the
     // Play tab was added, or the retry budget ran out. The UiDiscoveryRetry
@@ -700,7 +690,7 @@ internal static class PlayButtonPatch
         var playAction = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UnityAction>(
             new Action(OnPlayClicked));
         button.onClick.AddListener(playAction);
-        Plugin.Log.LogInfo("[PLAY] Play tab wired to WatchUI.ShowScreenAndGoToPlay");
+        Plugin.Log.LogInfo("[PLAY] Play tab wired to Play navigation");
     }
 
     private static void OnPlayClicked()
@@ -710,7 +700,8 @@ internal static class PlayButtonPatch
             Plugin.Log.LogInfo("[PLAY] Play tab pressed");
             if (TryPlayNavigation())
                 return;
-            Plugin.Log.LogWarning("[PLAY] Play pressed but the nav call did not fire — see diagnostics above");
+            // The Play nav method is not confirmed yet — safe fallback.
+            Plugin.Log.LogInfo("[PLAY] Play pressed (nav not yet wired)");
         }
         catch (Exception e)
         {
@@ -718,150 +709,32 @@ internal static class PlayButtonPatch
         }
     }
 
-    // Play navigation. Returns true when the game's own nav call was issued,
-    // false when the nav API could not be resolved (caller logs the safe
-    // fallback message).
+    // Play navigation resolution. Returns true when a nav call was actually
+    // issued, false when the nav API is still unknown (the caller then logs
+    // the safe fallback).
     //
-    // The call site: WatchUI.ShowScreenAndGoToPlay(bool) — public and
-    // unobfuscated in build 20230414 per the v0.1.35 research. The MethodInfo
-    // is resolved lazily on the FIRST click (never during Apply: the Watch
-    // may not exist yet and reflection is not free) and cached for every
-    // later click. The invoke itself is side-effectful only in the sense
-    // the game does its own Play navigation — nothing else is touched.
+    // >>> RESEARCH NOTE — the call site for the real nav, once confirmed: <<<
+    // Research identified a nav enum (ELCPGOKLPLO, Play = 8) and the home
+    // tabs are driven by HomeTop5TabsModel / TabsModel<T>.GoToPage. The real
+    // implementation belongs HERE: resolve the nav target and invoke it, then
+    // return true. Until then this method only PROBES (read-only: no game
+    // method is ever invoked), caches the summary, and returns false so the
+    // click stays a safe no-op.
     private static bool TryPlayNavigation()
     {
-        if (!_navResolved)
+        if (!_navProbeDone)
         {
-            _navResolved = true;
-            try
-            {
-                _showScreenAndGoToPlay = ResolveShowScreenAndGoToPlay();
-                if (_showScreenAndGoToPlay != null)
-                {
-                    var navKind = _navIsStatic ? "static" : "instance";
-                    Plugin.Log.LogInfo("[PLAY] nav resolved: " +
-                        $"WatchUI.ShowScreenAndGoToPlay(bool {_navParamName}) " +
-                        $"({navKind})");
-                }
-                else
-                {
-                    _navProbeSummary = ProbePlayNavApi();
-                }
-            }
-            catch (Exception e)
-            {
-                Plugin.Log.LogWarning($"[PLAY] nav resolution failed: {e.Message}");
-            }
+            _navProbeDone = true;
+            try { _navProbeSummary = ProbePlayNavApi(); }
+            catch (Exception e) { _navProbeSummary = $"probe failed: {e.Message}"; }
+            Plugin.Log.LogDebug("[PLAY] nav probe: " + _navProbeSummary);
         }
-
-        if (_showScreenAndGoToPlay == null)
-        {
-            // Research says this method exists and is unobfuscated, so its
-            // absence is a genuine surprise — say it ONCE, with the probe
-            // evidence researchers need to find the real call site.
-            if (!_navMissingLogged)
-            {
-                _navMissingLogged = true;
-                Plugin.Log.LogWarning("[PLAY] WatchUI.ShowScreenAndGoToPlay(bool) NOT found — " +
-                    "Play nav unwired. Probe evidence: " + _navProbeSummary);
-            }
-            return false;
-        }
-
-        try
-        {
-            object target = null;
-            if (!_navIsStatic)
-            {
-                target = GetWatchUILocal();
-                if (target == null)
-                {
-                    Plugin.Log.LogWarning("[PLAY] WatchUI.get_Local() returned null — nav call skipped");
-                    return false;
-                }
-            }
-            _showScreenAndGoToPlay.Invoke(target, new object[] { true });
-            Plugin.Log.LogInfo("[PLAY] invoked WatchUI.ShowScreenAndGoToPlay(true)");
-            return true;
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogWarning($"[PLAY] nav invoke failed: {e.Message}");
-            return false;
-        }
+        return false;
     }
 
-    // Resolve WatchUI.ShowScreenAndGoToPlay(bool) by name at runtime.
-    // Returns null when the type or method is absent. Prefers a public
-    // instance method, accepts public/non-public, static or instance, as
-    // long as it takes exactly one bool parameter.
-    private static MethodInfo ResolveShowScreenAndGoToPlay()
-    {
-        var watchType = FindTypeByName("WatchUI");
-        if (watchType == null)
-        {
-            Plugin.Log.LogDebug("[PLAY] WatchUI type not found during nav resolution");
-            return null;
-        }
-
-        MethodInfo fallback = null;
-        bool fallbackIsStatic = false;
-        foreach (var m in watchType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic |
-            BindingFlags.Static | BindingFlags.Instance))
-        {
-            if (m == null || !m.Name.Equals("ShowScreenAndGoToPlay", StringComparison.Ordinal))
-                continue;
-            var ps = m.GetParameters();
-            if (ps.Length != 1 || ps[0].ParameterType != typeof(bool))
-            {
-                Plugin.Log.LogDebug("[PLAY] ShowScreenAndGoToPlay overload skipped " +
-                    $"(params: [{string.Join(", ", ps.Select(p => p.ParameterType.Name))}])");
-                continue;
-            }
-
-            bool isPublicInstance = m.IsPublic && !m.IsStatic;
-            if (fallback == null)
-            {
-                fallback = m;
-                fallbackIsStatic = m.IsStatic;
-            }
-            if (isPublicInstance)
-            {
-                _navIsStatic = false;
-                _navParamName = ps[0].Name;
-                return m;
-            }
-        }
-
-        if (fallback != null)
-        {
-            _navIsStatic = fallbackIsStatic;
-            _navParamName = fallback.GetParameters()[0].Name;
-        }
-        return fallback;
-    }
-
-    // WatchUI.get_Local() via reflection (same pattern PlusBuyDialog uses).
-    // The result is passed straight into MethodInfo.Invoke — no game type is
-    // ever referenced at compile time.
-    private static object GetWatchUILocal()
-    {
-        var watchType = FindTypeByName("WatchUI");
-        if (watchType == null)
-            return null;
-        var getLocal = watchType.GetMethod("get_Local",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        if (getLocal == null || getLocal.GetParameters().Length != 0)
-            return null;
-        try { return getLocal.Invoke(null, null); }
-        catch { return null; }
-    }
-
-    // Side-effect-free discovery fallback: find the nav enum the v0.1.35
-    // research named (ELCPGOKLPLO, Play = 8) and any type exposing a
-    // page-navigation method that could take it. NOTHING is invoked — log
-    // evidence for the researchers only. Only runs when
-    // ShowScreenAndGoToPlay was not found.
+    // Side-effect-free discovery: find the nav enum research named and any
+    // type exposing a page-navigation method that could take it. NOTHING is
+    // invoked — log evidence for the researchers only.
     private static string ProbePlayNavApi()
     {
         Type navEnumType = null;
