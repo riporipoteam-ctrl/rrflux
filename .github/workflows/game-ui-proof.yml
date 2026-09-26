@@ -1,0 +1,187 @@
+name: Game UI proof (logged-in in-game screenshots)
+
+# Logs into the game with a test account, navigates to key screens,
+# and captures screenshots to prove UI modifications are actually visible.
+# This is the honest proof — not "it boots", but "the UI is modified".
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'recflare-installer release tag to test'
+        required: true
+        default: 'recflare-installer-v0.1.31'
+      test_username:
+        description: 'Test account username (e.g. @ripotester1)'
+        required: true
+        default: ''
+      test_password:
+        description: 'Test account password'
+        required: true
+        default: ''
+
+jobs:
+  ui-proof:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - name: Prep dirs + hosts entry
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory D:\shots -Force | Out-Null
+          try { Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 ns.rec.net" } catch { Write-Host "hosts edit skipped: $_" }
+
+      - name: Download FluxRec-Setup
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          Invoke-WebRequest -Uri "https://github.com/riporipoteam-ctrl/rrflux/releases/download/$tag/FluxRec-Setup.exe" -OutFile D:\FluxRec-Setup.exe
+          Write-Host "downloaded:" (Get-Item D:\FluxRec-Setup.exe).Length "bytes"
+
+      - name: Run installer (silent)
+        shell: pwsh
+        run: |
+          $p = Start-Process D:\FluxRec-Setup.exe -ArgumentList "--dir","D:\FluxRec","--silent" -PassThru
+          $deadline = (Get-Date).AddMinutes(55)
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 30
+            if ($p.HasExited) { break }
+            Write-Host "installing... (installer still running)"
+          }
+          if (-not $p.HasExited) { Write-Host "INSTALL TIMEOUT — killing"; $p.Kill() }
+          else { Write-Host "installer exit code:" $p.ExitCode }
+
+      - name: Launch game
+        shell: pwsh
+        run: |
+          Start-Process D:\FluxRec\FluxRecLauncher.exe -ArgumentList "--play","--dir","D:\FluxRec"
+          Write-Host "launcher started, waiting for RecRoom window..."
+          $booted = $false
+          $deadline = (Get-Date).AddMinutes(12)
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 15
+            $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($p -and $p.MainWindowHandle -ne 0) { Write-Host "game window up"; $booted = $true; break }
+          }
+          if (-not $booted) { Write-Host "::error::Game window never appeared"; exit 1 }
+          Write-Host "waiting 90s for boot to account picker..."
+          Start-Sleep -Seconds 90
+
+      - name: Screenshot account picker (before login)
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          function Shot($name) {
+            $bmp = New-Object System.Drawing.Bitmap(1280, 720)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+            $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
+          }
+          Shot "01-account-picker"
+
+      - name: Automated login via UI
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          $username = "${{ inputs.test_username }}"
+          $password = "${{ inputs.test_password }}"
+          
+          Write-Host "Starting automated login..."
+          Write-Host "Username length: $($username.Length), Password length: $($password.Length)"
+          
+          # Focus the game window
+          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $p) { Write-Host "::error::RecRoom not running"; exit 1 }
+          
+          Add-Type @"
+            using System;
+            using System.Runtime.InteropServices;
+            public class Win32 {
+              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+              [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+            }
+"@
+          [Win32]::SetForegroundWindow($p.MainWindowHandle)
+          Start-Sleep -Seconds 2
+          
+          # The account picker shows account tiles. We need to add/select the test account.
+          # Strategy: Press Tab to navigate, Enter to select, then type credentials.
+          # This is exploratory - screenshots will show us what's happening.
+          
+          Write-Host "Attempting to navigate account picker..."
+          
+          # Take a screenshot to see the picker state
+          Add-Type -AssemblyName System.Drawing
+          function Shot($name) {
+            $bmp = New-Object System.Drawing.Bitmap(1280, 720)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+            $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
+          }
+          
+          # Try pressing Enter on the focused element (might select default account or +)
+          [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+          Start-Sleep -Seconds 5
+          Shot "02-after-enter"
+          
+          # If we're at a login screen, try typing the username
+          # (We don't know the exact UI flow, so we're exploring)
+          [System.Windows.Forms.SendKeys]::SendWait($username)
+          Start-Sleep -Seconds 2
+          Shot "03-after-username"
+          
+          [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+          Start-Sleep -Seconds 1
+          [System.Windows.Forms.SendKeys]::SendWait($password)
+          Start-Sleep -Seconds 2
+          Shot "04-after-password"
+          
+          [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+          Start-Sleep -Seconds 10
+          Shot "05-after-login-attempt"
+          
+          Write-Host "Login attempt complete. Check screenshots to see the state."
+
+      - name: Navigate to Settings Visuals (if logged in)
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          function Shot($name) {
+            $bmp = New-Object System.Drawing.Bitmap(1280, 720)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen([System.Drawing.Point]::new(0,0), [System.Drawing.Point]::Empty, [System.Drawing.Size]::new(1280,720))
+            $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
+          }
+          
+          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $p) { Write-Host "RecRoom not running, skipping navigation"; exit 0 }
+          
+          Add-Type @"
+            using System;
+            using System.Runtime.InteropServices;
+            public class Win32b {
+              [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+            }
+"@
+          [Win32b]::SetForegroundWindow($p.MainWindowHandle)
+          Start-Sleep -Seconds 2
+          
+          # Try to open settings - typically Esc or a settings button
+          # We'll try keyboard shortcuts
+          Write-Host "Attempting to open Settings..."
+          [System.Windows.Forms.SendKeys]::SendWait("{ESC}")
+          Start-Sleep -Seconds 3
+          Shot "06-after-esc"
+          
+          Write-Host "Navigation attempt complete."
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-ui-proof-shots
+          path: D:\shots\*.png
