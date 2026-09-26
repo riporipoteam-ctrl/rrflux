@@ -4,7 +4,6 @@ import { useWorkersLogger } from 'workers-tagged-logger'
 import { z } from 'zod'
 
 import {
-	claimReservedAdmin,
 	countAccountsBySignupIp,
 	createAccount,
 	GAME_VERSION,
@@ -39,9 +38,18 @@ import { generateToken, TOKEN_TTL_SECONDS, validateAndGetAccountId } from '@repo
 import { banEvasionMatch, resolveBan } from '../../api/src/bans-db'
 import { verifyMetaNonce } from './meta-nonce'
 import {
+	approveDeviceCode,
+	consumeDeviceCode,
+	denyDeviceCode,
+	getPendingDeviceFlow,
+	issueDeviceCode,
+	pollDeviceCode,
+} from './device-db'
+import {
 	CachedLogin,
 	ChangePasswordRequest,
 	ChangePasswordResponse,
+	DeviceAuthorizationResponse,
 	FakeCachedLogin,
 	form,
 	json,
@@ -99,6 +107,90 @@ const BLOCKED_DESCRIPTION = 'this device or network is blocked'
  * It exists only to get such a client onto the username/password login screen.
  */
 const SIDELOAD_PLATFORM_ID = '1'
+
+/**
+ * The OAuth device authorization grant (RFC 8628 §3.5) the iOS client sends to
+ * `/connect/token` while polling, after starting a flow at
+ * `POST /connect/deviceauthorization`. The exact URN appears in the 20230414 iOS
+ * binary (`urn:ietf:params:oauth:grant-type:device_code`).
+ */
+const DEVICE_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
+
+/** Escape a string for interpolation into the device approval page HTML. */
+function escHtml(s: string): string {
+	return s.replace(/[&<>"']/g, (ch) => {
+		switch (ch) {
+			case '&':
+				return '&amp;'
+			case '<':
+				return '&lt;'
+			case '>':
+				return '&gt;'
+			case '"':
+				return '&quot;'
+			default:
+				return '&#39;'
+		}
+	})
+}
+
+/**
+ * The device-login approval page (`GET /device`). Dependency-free and dark, so
+ * it renders the same on a phone browser and a desktop one.
+ */
+function devicePage(opts: { code?: string; known?: boolean; expiresIn?: number; error?: string | null }): string {
+	const code = escHtml(opts.code ?? '')
+	const error = opts.error ? `<p class="err">${escHtml(opts.error)}</p>` : ''
+	const hint =
+		opts.known && (opts.expiresIn ?? 0) > 0
+			? `<p class="hint">This code expires in about ${Math.ceil((opts.expiresIn ?? 0) / 60)} minute(s).</p>`
+			: `<p class="hint">Type the code shown on the device that wants to log in.</p>`
+	return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flux Rec — approve device login</title>
+<style>
+body{background:#0f1115;color:#e8eaf0;font-family:system-ui,sans-serif;display:flex;justify-content:center;padding:2rem 1rem;margin:0}
+.card{background:#171a21;border:1px solid #2a2f3a;border-radius:12px;padding:2rem;max-width:26rem;width:100%}
+h1{font-size:1.25rem;margin:0 0 .5rem}
+.hint{color:#9aa0ae;font-size:.9rem}
+.err{color:#ff8080;font-size:.9rem}
+label{display:block;margin:1rem 0 .25rem;font-size:.85rem;color:#c6cbd6}
+input{width:100%;box-sizing:border-box;background:#0f1115;border:1px solid #2a2f3a;color:#e8eaf0;border-radius:8px;padding:.6rem;font-size:1rem}
+input.code{letter-spacing:.35em;text-transform:uppercase;text-align:center;font-weight:700}
+.row{display:flex;gap:.75rem;margin-top:1.5rem}
+button{flex:1;border:0;border-radius:8px;padding:.7rem;font-size:1rem;cursor:pointer}
+.approve{background:#3b82f6;color:#fff}
+.deny{background:#2a2f3a;color:#c6cbd6}
+</style></head><body><div class="card">
+<h1>Approve device login</h1>${hint}${error}
+<form method="post" action="/device/approve">
+<label for="user_code">Device code</label>
+<input class="code" id="user_code" name="user_code" value="${code}" maxlength="8" autocomplete="off" required>
+<label for="username">Flux Rec username</label>
+<input id="username" name="username" autocomplete="username" required>
+<label for="password">Password</label>
+<input id="password" name="password" type="password" autocomplete="current-password" required>
+<div class="row">
+<button class="approve" type="submit" name="action" value="approve">Approve</button>
+<button class="deny" type="submit" name="action" value="deny">Deny</button>
+</div></form></div></body></html>`
+}
+
+/** Short confirmation page after a device flow is approved or denied. */
+function deviceDone(title: string, message: string): string {
+	return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flux Rec — ${escHtml(title)}</title>
+<style>
+body{background:#0f1115;color:#e8eaf0;font-family:system-ui,sans-serif;display:flex;justify-content:center;padding:2rem 1rem;margin:0}
+.card{background:#171a21;border:1px solid #2a2f3a;border-radius:12px;padding:2rem;max-width:26rem;width:100%}
+h1{font-size:1.25rem;margin:0 0 .5rem}
+p{color:#9aa0ae}
+</style></head><body><div class="card">
+<h1>${escHtml(title)}</h1><p>${escHtml(message)}</p></div></body></html>`
+}
 
 /**
  * The canned entry served for the one Oculus cached-login lookup below — the sideloaded
@@ -252,16 +344,19 @@ async function roleFilterAnswer(c: Context<App>, role: 'developer' | 'moderator'
 
 /**
  * The role names beyond `gameClient` for an account's token `role` claim. Base roles
- * (gameClient) are added by generateToken. `screenshare` is on EVERY token — it is a
- * feature gate the client reads, not a privilege anyone is granted. The rest are the
+ * (gameClient) are added by generateToken. `screenshare` is gated: only developers,
+ * moderators, and accounts explicitly granted it (`canScreenshare`) get it — the
+ * client gates the screen-share feature on this claim. The rest are the
  * operator-granted extras, plus `junior` off the account's own `isJunior` flag.
  * Order is stable so tokens are deterministic.
  */
 function accountRoles(
 	account: Pick<Account, 'isDeveloper' | 'isModerator' | 'isJunior' | 'canScreenshare'> | null
 ): string[] {
-	const roles: string[] = ['screenshare']
+	const roles: string[] = []
 	if (!account) return roles
+	if (account.isDeveloper || account.isModerator || account.canScreenshare)
+		roles.push('screenshare')
 	if (account.isDeveloper) roles.push('developer')
 	if (account.isModerator) roles.push('moderator')
 	if (account.isJunior) roles.push('junior')
@@ -566,28 +661,6 @@ const app = new Hono<App>()
 			if (platformInt === PlatformType.Oculus && id === SIDELOAD_PLATFORM_ID) {
 				return c.json([FAKE_OCULUS_CACHED_LOGIN])
 			}
-			// Fresh Steam identities (no linked accounts) land on the client's
-			// username/password login screen instead of silently auto-creating a
-			// random account. The canned entry is not redeemable by the
-			// cached_login grant (accountId 0 has no link); requirePassword pushes
-			// the client to its login form, where "Create an account" mints a real
-			// username+password account and links this Steam identity to it.
-			// Identities that already have links keep the normal picker below.
-			if (platformInt === PlatformType.Steam) {
-				const steamLinks = await getLinksForPlatformIdentity(c.env.DB, platformInt, id)
-				if (steamLinks.length === 0) {
-					return c.json([
-						{
-							platform: PlatformType.Steam,
-							platformId: id,
-							accountId: 0,
-							lastLoginTime: new Date().toISOString(),
-							requirePassword: true,
-						},
-					])
-				}
-				return c.json(await toCachedLogins(c.env.DB, steamLinks))
-			}
 			// Listed straight from the link table, which is also what the `cached_login`
 			// grant authorizes against — so the picker can't offer an account the grant
 			// then refuses.
@@ -627,6 +700,104 @@ const app = new Hono<App>()
 		}
 	)
 
+	// Device authorization endpoint (RFC 8628 §3.1) — the iOS client's "login with
+	// another device" entry point. Returns the user_code the phone shows on screen
+	// plus the verification_uri the player opens in a browser to approve it.
+	.post(
+		'/connect/deviceauthorization',
+		describeRoute({
+			tags: ['Token'],
+			summary: 'Device authorization — start an RFC 8628 login flow',
+			description: [
+				'Starts a device login flow for a client with no browser of its own (the iOS',
+				'build calls this `connect/deviceauthorization`). The client shows `user_code`',
+				'on screen and polls `/connect/token` with',
+				'`grant_type=urn:ietf:params:oauth:grant-type:device_code` until the player',
+				'opens `verification_uri` in a browser, signs in with username and password,',
+				'and approves. Flows expire after 10 minutes and are single-use.',
+			].join(' '),
+			responses: { 200: json(DeviceAuthorizationResponse, 'Device/user codes and verification URIs') },
+		}),
+		async (c) => {
+			const { deviceCode, userCode, expiresIn, interval } = await issueDeviceCode(c.env.DB)
+			// The origin follows the request's own Host (the relay forwards the public
+			// host), so the verification link opens from any browser.
+			const origin = new URL(c.req.url).origin
+			return c.json({
+				device_code: deviceCode,
+				user_code: userCode,
+				verification_uri: `${origin}/device`,
+				verification_uri_complete: `${origin}/device?code=${encodeURIComponent(userCode)}`,
+				expires_in: expiresIn,
+				interval,
+			})
+		}
+	)
+
+	// Device approval page — the human side of the RFC 8628 flow. The player opens
+	// the verification_uri from the device screen, types the user_code (or follows
+	// the prefilled link), signs in with their Flux Rec username and password, and
+	// approves or denies the login.
+	.get('/device', async (c) => {
+		const code = c.req.query('code') ?? ''
+		const pending = code ? await getPendingDeviceFlow(c.env.DB, code) : null
+		return c.html(
+			devicePage({
+				code,
+				known: pending != null,
+				expiresIn: pending?.expiresIn ?? 0,
+				error:
+					code && !pending ? 'That code is unknown, expired, or already used.' : null,
+			})
+		)
+	})
+	.post('/device/approve', async (c) => {
+		const raw = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
+		const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+		const userCode = str(raw.user_code).trim()
+		const username = str(raw.username).trim()
+		const password = str(raw.password)
+		if (!userCode) {
+			return c.html(devicePage({ error: 'Type the code shown on your device.' }), 400)
+		}
+		if (str(raw.action) === 'deny') {
+			await denyDeviceCode(c.env.DB, userCode)
+			return c.html(
+				deviceDone(
+					'Login denied',
+					'The device asking to log in was told no. You can close this page.'
+				)
+			)
+		}
+		const pending = await getPendingDeviceFlow(c.env.DB, userCode)
+		if (!pending) {
+			return c.html(
+				devicePage({ code: userCode, error: 'That code is unknown, expired, or already used.' }),
+				400
+			)
+		}
+		const account = username ? await getAccountByUsername(c.env.DB, username) : null
+		const hash = account ? await getPasswordHash(c.env.DB, account.accountId) : null
+		if (!account || !hash || !(await verifyPassword(password, hash))) {
+			return c.html(
+				devicePage({ code: userCode, known: true, error: 'Wrong username or password.' }),
+				401
+			)
+		}
+		if (!(await approveDeviceCode(c.env.DB, userCode, account.accountId))) {
+			return c.html(
+				devicePage({ code: userCode, error: 'That code expired before it was approved.' }),
+				400
+			)
+		}
+		return c.html(
+			deviceDone(
+				'Login approved',
+				`Signed in as ${escHtml(account.username)} — the device should log in any second now. You can close this page.`
+			)
+		)
+	})
+
 	// OAuth token endpoint — accepts a form-urlencoded body and issues a JWT.
 	.post(
 		'/connect/token',
@@ -634,12 +805,11 @@ const app = new Hono<App>()
 			tags: ['Token'],
 			summary: 'OAuth token endpoint — issues a JWT',
 			description: [
-				'Issues an access token (plus a single-use refresh token) for one of four grants,',
+				'Issues an access token (plus a single-use refresh token) for one of five grants,',
 				'selected by `grant_type`. Every grant returns the same body on success.',
 				'',
-				'**`create_account`** — mints a new account with no username (the client then',
-				'prompts the player to choose one, real Rec Room order: ALL SET →',
-				'username/password → Code of Conduct) and places it in the Orientation room. A posted',
+				'**`create_account`** — mints a new account with an auto-assigned random username',
+				'(players do not pick one initially) and places it in the Orientation room. A posted',
 				'`password` becomes the login credential. Subject to two independent signup caps,',
 				'per verified platform id and per signup IP (`MAX_ACCOUNTS_PER_PLATFORM_ID` /',
 				'`MAX_ACCOUNTS_PER_IP`; either disabled by setting it to 0). If it asserts a',
@@ -653,6 +823,12 @@ const app = new Hono<App>()
 				'',
 				'**`refresh_token`** — redeems a stored single-use refresh token, rotating it. The',
 				'platform and platform id come from what was stored at issue time, not the body.',
+				'',
+				'**device code** (`grant_type=urn:ietf:params:oauth:grant-type:device_code`) —',
+				'the RFC 8628 poll from `POST /connect/deviceauthorization` (the iOS "login',
+				'with another device" path). A pending flow answers `authorization_pending`, a',
+				'denied one `access_denied`, a too-fast poll `slow_down`. An approved flow is',
+				'consumed single-use and logs in as the approving account, stamped iOS.',
 				'',
 				'**`password`** (the fallback for any unrecognised or absent `grant_type`) —',
 				'identifies the account by `username` or numeric `account_id` and requires the',
@@ -860,9 +1036,8 @@ const app = new Hono<App>()
 			if (verifiedPlatformId !== null) platformId = verifiedPlatformId
 
 			// Resolve the account this token is for:
-			//  - create_account: mint + persist a brand-new account with no username —
-			//    the client prompts the player to choose one after ALL SET (before the
-			//    Code of Conduct); the token's `sub` is its id.
+			//  - create_account: mint + persist a brand-new account (auto-assigned random
+			//    username — players don't pick one initially); the token's `sub` is its id.
 			//    A `password` may be posted to establish the account's login credential.
 			//  - refresh_token: redeem a stored (single-use) refresh token for its account +
 			//    platform, so an expiring session renews without re-login.
@@ -949,13 +1124,11 @@ const app = new Hono<App>()
 				}
 
 				// A player-chosen username may be posted with the signup. Validate it
-				// (length, charset, uniqueness). When absent or blank the account is
-				// created with NO username: the real client then shows its
-				// username/password step after ALL SET (before the Code of Conduct).
-				// Auto-assigning a random name here makes the client skip that step.
+				// (length, charset, uniqueness); when absent or blank the account keeps
+				// the auto-assigned random username from createAccount.
 				const postedSignupUsername =
 					typeof body.username === 'string' ? body.username.trim() : ''
-				let chosenUsername = ''
+				let chosenUsername: string | undefined
 				if (postedSignupUsername !== '') {
 					if (
 						postedSignupUsername.length < 3 ||
@@ -986,8 +1159,9 @@ const app = new Hono<App>()
 				// (for the account DTO and the refresh grant's claims); the link written just
 				// below is what a later cached login is actually authorized against.
 				const account = await createAccount(c.env.DB, {
-					username: chosenUsername,
-					displayName: chosenUsername,
+					...(chosenUsername !== undefined
+						? { username: chosenUsername, displayName: chosenUsername }
+						: {}),
 					platforms: platformInt || 0,
 					platform: verifiedPlatform ?? undefined,
 					platformId: verifiedPlatformId ?? undefined,
@@ -998,12 +1172,6 @@ const app = new Hono<App>()
 					lastLoginIp: clientIp || undefined,
 				})
 				accountId = String(account.accountId)
-				// First-come admin reservation: the first account created while no admin
-				// exists claims the developer+moderator flags, so the operator's account
-				// is admin from the very first login (the token minted below re-reads
-				// the account and stamps the roles). Signup-only — a login can never
-				// mint this.
-				await claimReservedAdmin(c.env.DB, account.accountId, account.username)
 				if (verifiedPlatformId !== null) {
 					await linkPlatformIdentity(
 						c.env.DB,
@@ -1032,6 +1200,50 @@ const app = new Hono<App>()
 				// the account below, so a refreshed token always reflects the identity the
 				// account is bound to now.
 				accountId = String(refreshed)
+			} else if (grantType === DEVICE_CODE_GRANT) {
+				// Device authorization grant (RFC 8628 §3.5): the client polls with the
+				// device_code from POST /connect/deviceauthorization. Pending and denied
+				// flows answer with their standard errors so the client keeps polling or
+				// stops; an approved flow is consumed (single-use) and logs in as the
+				// approving account, stamped as an iOS login.
+				const presented = typeof body.device_code === 'string' ? body.device_code : ''
+				const polled = presented ? await pollDeviceCode(c.env.DB, presented) : null
+				if (polled?.slowDown) {
+					return c.json(
+						{ error: 'slow_down', error_description: 'polling too fast; back off' },
+						400
+					)
+				}
+				if (!polled) {
+					return c.json(
+						{ error: 'invalid_grant', error_description: 'device_code is invalid or expired' },
+						400
+					)
+				}
+				if (polled.status === 'pending') {
+					return c.json(
+						{ error: 'authorization_pending', error_description: 'authorization pending' },
+						400
+					)
+				}
+				if (polled.status === 'denied') {
+					return c.json(
+						{ error: 'access_denied', error_description: 'the authorization was denied' },
+						400
+					)
+				}
+				const approved = await consumeDeviceCode(c.env.DB, presented)
+				if (!approved) {
+					return c.json(
+						{ error: 'invalid_grant', error_description: 'device_code is invalid or expired' },
+						400
+					)
+				}
+				accountId = String(approved)
+				platform = PlatformType.IOS
+				platformId = ''
+				await setLastLoginTime(c.env.DB, approved, new Date().toISOString())
+				await setLoginContext(c.env.DB, approved, { deviceId, deviceClass, ip: clientIp })
 			} else if (grantType === 'cached_login') {
 				// Platform-authenticated login into an already-linked account. The client posts
 				// the `account_id` it got from /cachedlogin/forplatformid together with the
@@ -1286,11 +1498,7 @@ const app = new Hono<App>()
 			const id = await authedId(c)
 			if (id === null) return c.body(null, 401)
 
-			let body = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>
-			if (typeof body.newPassword !== 'string') {
-				// The 2023 client posts JSON, which parseBody() does not handle.
-				body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
-			}
+			const body = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
 			const oldPassword = typeof body.oldPassword === 'string' ? body.oldPassword : ''
 			const newPassword = typeof body.newPassword === 'string' ? body.newPassword : ''
 			if (newPassword === '') {

@@ -35,6 +35,9 @@ public class Plugin : BasePlugin
     public static ConfigEntry<bool> EnableFluxPlus { get; private set; }
     public static ConfigEntry<bool> FixPresenceMapping { get; private set; }
     public static ConfigEntry<bool> EnableUltraGraphics { get; private set; }
+    public static ConfigEntry<bool> EnableFluxPairing { get; private set; }
+    public static ConfigEntry<string> PairingAuthHostOverride { get; private set; }
+    public static ConfigEntry<string> PairedFluxAccount { get; private set; }
 
     private static bool _corruptDone;
 
@@ -71,6 +74,10 @@ public class Plugin : BasePlugin
 
         EnableUltraGraphics = Config.Bind("Graphics", "Enable Ultra Graphics", true, "Add an \"Ultra\" preset button next to Low/Medium/High in Game Settings -> Visuals -> Graphics Quality and apply it through Unity's QualitySettings API (8x MSAA, 4 pixel lights, 150m shadow distance, 2x LOD bias). Medium stays the default; Low/Medium/High are untouched. Set false to hide the button and skip the QualitySettings boost.");
 
+        EnableFluxPairing = Config.Bind("Pairing", "Enable Flux Pairing", true, "Link the in-game account to a Flux Social account via a 6-digit pairing code (OAuth 2.0 device flow, RFC 8628). Press F8 in-game to open the Flux Connect window. Set false to disable the overlay.");
+        PairingAuthHostOverride = Config.Bind("Pairing", "Auth Host Override", "", "Override the auth worker host used for pairing (empty = derived from the RecNet NameServer host by swapping ns. -> auth.).");
+        PairedFluxAccount = Config.Bind("Pairing", "Paired Flux Account", "", "Flux account this game is paired with (set automatically after pairing completes; clear to unpair).");
+
         // Not a patch — Unity's telemetry has a real opt-out, so we just set it. Retried from
         // OnSceneLoaded until it takes, since the native setters can refuse this early.
         Patches.UnityTelemetryPatch.Apply();
@@ -99,6 +106,10 @@ public class Plugin : BasePlugin
         // graphics hook: same retry-on-scene-load pattern as the watch gates.
         Patches.PresenceMappingPatch.Apply();
         Patches.UltraGraphicsPatch.Apply();
+
+        // Flux Connect pairing overlay (F8): standalone IMGUI window, no game
+        // types touched — safe to retry from OnSceneLoaded like the rest.
+        Patches.FluxPairingPatch.Apply();
 
         Harmony.CreateAndPatchAll(typeof(Plugin).Assembly);
 
@@ -131,6 +142,9 @@ public class Plugin : BasePlugin
         // their target types / the settings page are available (no-op once done).
         Patches.PresenceMappingPatch.Apply();
         Patches.UltraGraphicsPatch.Apply();
+
+        // Retry the Flux Connect pairing overlay setup (no-op once created).
+        Patches.FluxPairingPatch.Apply();
 
         // CheatManager boots us out of rooms when it runs, but it's ALSO the DUID service the DI
         // container resolves for account creation / login (destroying it removes that service).
