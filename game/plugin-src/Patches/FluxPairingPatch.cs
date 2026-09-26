@@ -17,7 +17,9 @@ namespace RecNetPlugin.Patches;
 // player approves it in a real browser, the game polls until approved.
 //
 // How it works:
-// 1. Press F8 in-game -> a draggable "Flux Connect" IMGUI overlay opens.
+// 1. Press F8 in-game (or click the Flux Connect button, which calls
+//    FluxPairingPatch.ShowOverlay()) -> a draggable "Flux Connect" IMGUI
+//    overlay opens.
 //    (Standalone overlay on purpose: the Edit Profile page types are
 //    obfuscated and re-rolled per game build, so hooking it would silently
 //    break on every client update. This overlay touches zero game types.)
@@ -45,6 +47,8 @@ internal static class FluxPairingPatch
 {
     private static bool _overlayCreated;
     private static bool _typeRegistered;
+    // Held so the visible Flux Connect button can open the overlay on demand.
+    private static FluxPairingOverlay _overlayInstance;
 
     public static void Apply()
     {
@@ -62,13 +66,35 @@ internal static class FluxPairingPatch
             var go = new GameObject("FluxPairingOverlay");
             go.hideFlags = HideFlags.HideAndDontDestroy;
             UnityEngine.Object.DontDestroyOnLoad(go);
-            go.AddComponent<FluxPairingOverlay>();
+            _overlayInstance = go.AddComponent<FluxPairingOverlay>();
             _overlayCreated = true;
             Plugin.Log.LogInfo("[PAIRING] Flux Connect overlay ready — press F8 in-game");
         }
         catch (Exception e)
         {
             Plugin.Log.LogWarning($"[PAIRING] overlay setup failed: {e.Message}");
+        }
+    }
+
+    // Called by the visible Flux Connect button (or any other UI entry point)
+    // to open the pairing overlay. Creates the overlay on demand if Apply()
+    // never ran (e.g. plugin loaded before login). F8 still toggles it as a
+    // fallback — see FluxPairingOverlay.Update.
+    public static void ShowOverlay()
+    {
+        try
+        {
+            if (_overlayInstance == null)
+            {
+                // Not created yet (or was lost) — build it now.
+                _overlayCreated = false;
+                Apply();
+            }
+            _overlayInstance?.Show();
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogWarning($"[PAIRING] ShowOverlay failed: {e.Message}");
         }
     }
 
@@ -227,6 +253,15 @@ internal static class FluxPairingPatch
             {
                 Plugin.Log.LogWarning($"[PAIRING] update failed: {e.Message}");
             }
+        }
+
+        // Opens the overlay — entry point for the Flux Connect button.
+        // (F8 still toggles _showWindow in Update(); this only opens, never
+        // closes, so a button click can never accidentally hide it.)
+        public void Show()
+        {
+            _showWindow = true;
+            Cursor.visible = true;
         }
 
         private void OnGUI()

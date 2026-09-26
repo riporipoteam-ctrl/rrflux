@@ -33,11 +33,18 @@ public class Plugin : BasePlugin
     public static ConfigEntry<bool> ForceNewWatchUI { get; private set; }
     public static ConfigEntry<bool> ForceIsDeveloper { get; private set; }
     public static ConfigEntry<bool> EnableFluxPlus { get; private set; }
+    public static ConfigEntry<bool> EnablePlusBalance { get; private set; }
     public static ConfigEntry<bool> FixPresenceMapping { get; private set; }
     public static ConfigEntry<bool> EnableUltraGraphics { get; private set; }
     public static ConfigEntry<bool> EnableFluxPairing { get; private set; }
+    public static ConfigEntry<bool> EnablePlayButton { get; private set; }
     public static ConfigEntry<string> PairingAuthHostOverride { get; private set; }
     public static ConfigEntry<string> PairedFluxAccount { get; private set; }
+    public static ConfigEntry<bool> EnableDevNametagBadge { get; private set; }
+    public static ConfigEntry<bool> EnableFluxHomeBranding { get; private set; }
+    public static ConfigEntry<string> HomeTabLabels { get; private set; }
+    public static ConfigEntry<bool> EnableModBadge { get; private set; }
+    public static ConfigEntry<string> ModeratorAccountIds { get; private set; }
 
     private static bool _corruptDone;
 
@@ -70,6 +77,8 @@ public class Plugin : BasePlugin
 
         EnableFluxPlus = Config.Bind("Plus", "Enable Flux Rec Plus", true, "Rebrand Rec Room Plus to Flux Rec Plus and replace the Steam real-money purchase with a 10,000-token purchase (ON by default). Intercepts BuyRRPlusMembership() to prevent the Steam store from opening. Set false to restore the original (broken) Steam flow.");
 
+        EnablePlusBalance = Config.Bind("Plus", "Show Token Balance", true, "Show the player's token balance next to the Buy button on the Flux Rec+ membership page (ON by default). Refreshes from GET /api/storefronts/v4/balance/2 each time the page opens. Set false to hide it.");
+
         FixPresenceMapping = Config.Bind("Presence", "Fix Appear Online To Mapping", true, "Fix the Game Settings -> Experience -> PRESENCE slider so All/Friends/Favorites/No One store the correct values (ON by default). The slider's notch labels run opposite to the internal enum order, so without this selecting \"All\" stores Offline (\"No One\"). Set false if a future client build ships the labels in enum order.");
 
         EnableUltraGraphics = Config.Bind("Graphics", "Enable Ultra Graphics", true, "Add an \"Ultra\" preset button next to Low/Medium/High in Game Settings -> Visuals -> Graphics Quality and apply it through Unity's QualitySettings API (8x MSAA, 4 pixel lights, 150m shadow distance, 2x LOD bias). Medium stays the default; Low/Medium/High are untouched. Set false to hide the button and skip the QualitySettings boost.");
@@ -77,6 +86,16 @@ public class Plugin : BasePlugin
         EnableFluxPairing = Config.Bind("Pairing", "Enable Flux Pairing", true, "Link the in-game account to a Flux Social account via a 6-digit pairing code (OAuth 2.0 device flow, RFC 8628). Press F8 in-game to open the Flux Connect window. Set false to disable the overlay.");
         PairingAuthHostOverride = Config.Bind("Pairing", "Auth Host Override", "", "Override the auth worker host used for pairing (empty = derived from the RecNet NameServer host by swapping ns. -> auth.).");
         PairedFluxAccount = Config.Bind("Pairing", "Paired Flux Account", "", "Flux account this game is paired with (set automatically after pairing completes; clear to unpair).");
+
+        EnableDevNametagBadge = Config.Bind("Badges", "Enable Dev Nametag Badge", true, "Render an orange \"DEV\" badge above the nametag of developer players (ON by default). The badge is created once per nametag and follows the nametag's own visibility. Set false to disable.");
+
+        EnableModBadge = Config.Bind("Badges", "Enable Mod Badge", true, "Render a blue/green \"MOD\" badge above the nametag of community moderators (ON by default). The badge is created once per nametag and follows the nametag's own visibility. Set false to disable.");
+        ModeratorAccountIds = Config.Bind("Badges", "Moderator Account IDs", "", "Comma-separated list of account IDs or usernames that should show the MOD badge. Fallback used when the client's own IsModerator flag is unavailable. Empty = rely on the client flag only.");
+
+        EnableFluxHomeBranding = Config.Bind("Home", "Enable Flux Home Branding", true, "Show the \"FLUX REC\" logo above the tab row on the home screen and ensure the tab icon labels (\"Rooms\" labels) are visible (ON by default). Covers HomeLogoPatch + HomeLabelsPatch; coexists with the Play button and the Flux Connect button. Set false to keep the stock home screen.");
+        HomeTabLabels = Config.Bind("Home", "Home Tab Labels", "Rec Center;Dorm Room;Club;This Room;Events", "Semicolon-separated labels applied left-to-right to the home screen tab buttons (\"Rooms\" labels). The patch logs each tab's ORIGINAL label at Info on first run so you can verify the order and names against your client build — adjust this list if they don't match. Labels are only applied when the count matches the tab count; empty = leave label text unchanged.");
+
+        EnablePlayButton = Config.Bind("Home", "Enable Play Button", true, "Add a \"Play\" button beside \"Create\" on the home screen for Quick Play (join a random public room). The button is a same-style clone of Create, relabeled \"Play\", with its click handler replaced by the quick-play entry point (the game's own QuickPlay method if found, else PhotonNetwork.JoinRandomRoom()). Set false to skip it.");
 
         // Not a patch — Unity's telemetry has a real opt-out, so we just set it. Retried from
         // OnSceneLoaded until it takes, since the native setters can refuse this early.
@@ -94,6 +113,13 @@ public class Plugin : BasePlugin
         // until patched, since the commerce types may not be loaded yet.
         Patches.FluxPlusPatch.Apply();
 
+        // Plus price display fix: replaces the red "Error loading membership prices"
+        // with the Flux Rec+ token price. Retried from OnSceneLoaded.
+        Patches.PlusPricePatch.Apply();
+
+        // Token balance label next to the Plus page Buy button.
+        Patches.PlusBalancePatch.Apply();
+
         // Nametag badge patch: renders Dev/Community Mod badges above nametag
         // (precise, minimal — no broad method scanning).
         Patches.NametagBadgePatch.Apply();
@@ -110,6 +136,24 @@ public class Plugin : BasePlugin
         // Flux Connect pairing overlay (F8): standalone IMGUI window, no game
         // types touched — safe to retry from OnSceneLoaded like the rest.
         Patches.FluxPairingPatch.Apply();
+
+        // Visible "Flux Connect" button: floating top-right IMGUI button that
+        // opens the pairing overlay (same as F8). Also standalone IMGUI.
+        Patches.FluxConnectButton.Apply();
+
+        // Play button beside Create on the home screen (clone + relabel):
+        // retried from OnSceneLoaded until the home screen exists (no-op once done).
+        Patches.PlayButtonPatch.Apply();
+
+        // Flux home logo above the tab row: retried from OnSceneLoaded until
+        // the RRUI home screen exists (no-op once inserted).
+        Patches.HomeLogoPatch.Apply();
+
+        // Rooms labels under the home tab icons: same retry pattern (no-op
+        // once verified). Re-activates disabled labels, then sets label text
+        // from [Home] Home Tab Labels. Only touches stock tab buttons — never
+        // the Play clone ("_Play" suffix).
+        Patches.HomeLabelsPatch.Apply();
 
         Harmony.CreateAndPatchAll(typeof(Plugin).Assembly);
 
@@ -133,6 +177,12 @@ public class Plugin : BasePlugin
         // Retry the Flux Rec Plus patch until patched (no-op once done).
         Patches.FluxPlusPatch.Apply();
 
+        // Retry the Plus price display fix (no-op once done).
+        Patches.PlusPricePatch.Apply();
+
+        // Retry the Plus balance label setup (no-op once installed).
+        Patches.PlusBalancePatch.Apply();
+
         // Retry the nametag badge patch until patched (no-op once done).
         Patches.NametagBadgePatch.Apply();
 
@@ -145,6 +195,20 @@ public class Plugin : BasePlugin
 
         // Retry the Flux Connect pairing overlay setup (no-op once created).
         Patches.FluxPairingPatch.Apply();
+
+        // Retry the floating Flux Connect button setup (no-op once created).
+        Patches.FluxConnectButton.Apply();
+
+        // Retry the Flux home logo insertion until the RRUI home screen
+        // exists (no-op once inserted).
+        Patches.HomeLogoPatch.Apply();
+
+        // Retry the Rooms-labels pass until the home tab row exists (no-op
+        // once verified).
+        Patches.HomeLabelsPatch.Apply();
+
+        // Retry the Play button clone until the home screen exists (no-op once done).
+        Patches.PlayButtonPatch.Apply();
 
         // CheatManager boots us out of rooms when it runs, but it's ALSO the DUID service the DI
         // container resolves for account creation / login (destroying it removes that service).

@@ -86,6 +86,22 @@ public class SendRequestPatch
                     Plugin.Log.LogInfo($"[HTTP] intercepted {host} -> {newHost}");
             }
 
+            // Store crash fix (2026-09-26): the 2023 client calls /api/storefronts/v2/balance
+            // which our backend doesn't implement (only v4/balance/:currencyType exists).
+            // The 404 causes a NullReferenceException → blank white store page → crash.
+            // Rewrite to the v4 endpoint which returns the same balance data.
+            try
+            {
+                var path = request.Uri.AbsolutePath;
+                if (path.Equals("/api/storefronts/v2/balance", StringComparison.OrdinalIgnoreCase))
+                {
+                    var builder = new Il2CppSystem.UriBuilder(request.Uri) { Path = "/api/storefronts/v4/balance/2" };
+                    request.Uri = builder.Uri;
+                    Plugin.Log.LogInfo("[HTTP] rewrote /api/storefronts/v2/balance -> /api/storefronts/v4/balance/2 (store crash fix)");
+                }
+            }
+            catch { }
+
             if (debug)
                 LogResponseWhenDone(request);
         }
