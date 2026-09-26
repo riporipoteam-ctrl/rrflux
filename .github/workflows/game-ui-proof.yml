@@ -80,32 +80,10 @@ jobs:
           }
           Shot "01-account-picker"
 
-      - name: Automated login via UI
+      - name: Click SWITCH ACCOUNT
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Windows.Forms
-          $username = "${{ inputs.test_username }}"
-          $password = "${{ inputs.test_password }}"
-          
-          Write-Host "Starting automated login..."
-          Write-Host "Username length: $($username.Length), Password length: $($password.Length)"
-          
-          # Focus the game window
-          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $p) { Write-Host "::error::RecRoom not running"; exit 1 }
-          
-          # Focus the game window using COM instead of Add-Type here-string (YAML-safe)
-          $wshell = New-Object -ComObject WScript.Shell
-          $wshell.AppActivate($p.Id)
-          Start-Sleep -Seconds 2
-          
-          # The account picker shows account tiles. We need to add/select the test account.
-          # Strategy: Press Tab to navigate, Enter to select, then type credentials.
-          # This is exploratory - screenshots will show us what's happening.
-          
-          Write-Host "Attempting to navigate account picker..."
-          
-          # Take a screenshot to see the picker state
           Add-Type -AssemblyName System.Drawing
           function Shot($name) {
             $bmp = New-Object System.Drawing.Bitmap(1280, 720)
@@ -115,28 +93,23 @@ jobs:
             $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
           }
           
-          # Try pressing Enter on the focused element (might select default account or +)
-          [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
-          Start-Sleep -Seconds 5
-          Shot "02-after-enter"
+          $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $p) { Write-Host "::error::RecRoom not running"; exit 1 }
           
-          # If we're at a login screen, try typing the username
-          # (We don't know the exact UI flow, so we're exploring)
-          [System.Windows.Forms.SendKeys]::SendWait($username)
+          $wshell = New-Object -ComObject WScript.Shell
+          $wshell.AppActivate($p.Id)
           Start-Sleep -Seconds 2
-          Shot "03-after-username"
           
+          Write-Host "Clicking SWITCH ACCOUNT via Tab+Enter..."
           [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
-          Start-Sleep -Seconds 1
-          [System.Windows.Forms.SendKeys]::SendWait($password)
           Start-Sleep -Seconds 2
-          Shot "04-after-password"
+          Shot "02-after-tab"
           
           [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
-          Start-Sleep -Seconds 10
-          Shot "05-after-login-attempt"
+          Start-Sleep -Seconds 8
+          Shot "03-after-switch-account-click"
           
-          Write-Host "Login attempt complete. Check screenshots to see the state."
+          Write-Host "Done."
 
       - name: Navigate to Settings Visuals (if logged in)
         shell: pwsh
