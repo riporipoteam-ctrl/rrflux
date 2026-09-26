@@ -269,7 +269,10 @@ internal static class FluxPairingPatch
             if (!_showWindow) return;
             try
             {
-                _windowRect = GUI.Window(WindowId, _windowRect, new GUI.WindowFunction(WindowFunc), "Flux Connect");
+                Action<int> windowAction = WindowFunc;
+                var windowFunc = (GUI.WindowFunction)Delegate.CreateDelegate(
+                    typeof(GUI.WindowFunction), windowAction.Target, windowAction.Method);
+                _windowRect = GUI.Window(WindowId, _windowRect, windowFunc, "Flux Connect");
             }
             catch (Exception e)
             {
