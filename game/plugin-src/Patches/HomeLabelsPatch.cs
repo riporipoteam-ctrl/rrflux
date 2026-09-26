@@ -36,11 +36,8 @@
 //    never touches tab buttons).
 //  - PlayButtonPatch: inserts a "_Play"-suffixed sibling of Create INSIDE
 //    the tab row. Skipped by name here — different feature, no overlap.
-//  - FluxConnectButton: inserts a "_FluxConnectTab"-suffixed sibling of a
-//    source tab INSIDE the tab row and relabels it "Connect". Touches the
-//    same row but matches by its own suffix and button semantics — no
-//    conflict by construction (no overlap with label-text keys patched
-//    here).
+//  - FluxConnectButton: standalone IMGUI overlay in the top-right corner;
+//    touches zero game UI types — no conflict by construction.
 //  - WatchUIPatch: only forces which home variant renders; this patch works
 //    on whichever tab row exists.
 //
