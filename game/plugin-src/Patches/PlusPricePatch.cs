@@ -549,7 +549,7 @@ internal static class PlusPricePatch
                 _typeRegistered = true;
             }
             var go = new GameObject("FluxPlusPricePump");
-            go.hideFlags = HideFlags.HideAndDontDestroy;
+            go.hideFlags = HideFlags.HideAndDontSave;
             UnityEngine.Object.DontDestroyOnLoad(go);
             go.AddComponent<PriceQueuePump>();
             _pumpCreated = true;
