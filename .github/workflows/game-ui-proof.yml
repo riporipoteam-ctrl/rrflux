@@ -121,7 +121,7 @@ jobs:
           Start-Sleep -Seconds 1
           
           Write-Host "Typing password..."
-          [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+          ClickAt 770 340
           Start-Sleep -Seconds 1
           [System.Windows.Forms.SendKeys]::SendWait("8756733756.ll")
           Start-Sleep -Seconds 1
