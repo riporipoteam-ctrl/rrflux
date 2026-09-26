@@ -2,9 +2,9 @@
 //
 // Why this shape:
 //  - The 2023 client's home screen is the RRUI Watch home tab, built 100%
-//    at runtime by AGUI.StackedUI.HomeScreenFlow (no prefabs): a
-//    HomeTop5TabsModel row of 5 tab buttons plus a data-driven content feed.
-//  - The plugin resolves the unobfuscated AGUI.StackedUI.HomeScreenFlow /
+//    at runtime by RRUIHomeScreenImpl (no prefabs): a HomeTop5TabsModel row
+//    of 5 tab buttons plus a data-driven content feed.
+//  - The plugin resolves the unobfuscated RRUIHomeScreenImpl /
 //    HomeTop5TabsModel type names at runtime, finds the live GameObject,
 //    and inserts a new child (a UnityEngine.UI.Image) directly above the
 //    tab-row container: SetSiblingIndex(tabRowIndex) when the row is found,
@@ -94,7 +94,7 @@ internal static class HomeLogoPatch
         // Directly above the tab row when we found it, else first child.
         int index = 0;
         if (tabRow != null)
-            index = Math.Max(0, tabRow.transform.GetSiblingIndex());
+            index = Math.Max(0, tabRow.GetSiblingIndex());
         logo.transform.SetSiblingIndex(index);
 
         _done = true;
