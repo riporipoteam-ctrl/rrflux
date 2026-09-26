@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using BestHTTP;
 using Il2CppInterop.Runtime.Injection;
 using Il2CppInterop.Runtime.InteropTypes;
@@ -201,7 +202,7 @@ public static class PlusBuyDialog
             string title = "Flux Rec +";
             string message = $"Buy Flux Rec+ for {price:N0} Flux Rec Tokens?\n30 days of membership.\n{balanceText}";
 
-            var watch = RecRoom.Core.WatchUI.get_Local();
+            var watch = GetWatchUI();
             var list = watch != null && watch.gameObject != null
                 ? RRUI.Dialogs.DialogListModel.TryFindDialogListModel(watch.gameObject)
                 : null;
@@ -228,6 +229,31 @@ public static class PlusBuyDialog
         }
     }
 
+    private static Component GetWatchUI()
+    {
+        // Resolve WatchUI via reflection (get_Local is a property accessor in IL2CPP interop)
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type t;
+            try { t = asm.GetType("WatchUI"); }
+            catch { continue; }
+            if (t == null) continue;
+
+            var m = t.GetMethod("get_Local",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            if (m == null || m.GetParameters().Length != 0) continue;
+
+            try
+            {
+                var local = m.Invoke(null, null);
+                if (local == null) return null;
+                return ((UnityEngine.Object)local).TryCast<Component>();
+            }
+            catch { return null; }
+        }
+        return null;
+    }
+
     private static void ShowViaDialogList(RRUI.Dialogs.DialogListModel list, string title, string message)
     {
         // DMGCKEOKIPC: the game's two-button dialog config (global
@@ -236,21 +262,21 @@ public static class PlusBuyDialog
         var cfg = new DMGCKEOKIPC();
 
         // Base (.AMFPEDOFIGE): dialog title + explicit-dismiss flag.
-        cfg.OELAKKKFDDJ(title);
-        cfg.NIEKPBOCCAF(true);
+        cfg.OELAKKKFDDJ = title;
+        cfg.NIEKPBOCCAF = true;
 
         // One-button level (.FBNJPEHPKJA): message, primary button.
-        cfg.NDCIMEGCAKI(message);
-        cfg.OAHDBNDJAEI("Buy");
-        cfg.KMCCJBDDBKF(Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action>(
-            new Action(OnBuyClicked)));
-        cfg.FHLEBPMKMEG(true);
+        cfg.NDCIMEGCAKI = message;
+        cfg.OAHDBNDJAEI = "Buy";
+        cfg.KMCCJBDDBKF = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action>(
+            new Action(OnBuyClicked));
+        cfg.FHLEBPMKMEG = true;
 
         // Two-button level (.DMGCKEOKIPC): secondary (Cancel) button.
-        cfg.FCOLDANGMGB("Cancel");
-        cfg.NKDHHPAACPG(Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action>(
-            new Action(OnCancelClicked)));
-        cfg.LIEBDBFDBJO(true);
+        cfg.FCOLDANGMGB = "Cancel";
+        cfg.NKDHHPAACPG = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action>(
+            new Action(OnCancelClicked));
+        cfg.LIEBDBFDBJO = true;
 
         var shown = list.AddTwoButtonMessageDialog(cfg);
         _shownDialog = shown;
