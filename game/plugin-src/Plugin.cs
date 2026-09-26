@@ -81,7 +81,7 @@ public class Plugin : BasePlugin
 
         FixPresenceMapping = Config.Bind("Presence", "Fix Appear Online To Mapping", true, "Fix the Game Settings -> Experience -> PRESENCE slider so All/Friends/Favorites/No One store the correct values (ON by default). The slider's notch labels run opposite to the internal enum order, so without this selecting \"All\" stores Offline (\"No One\"). Set false if a future client build ships the labels in enum order.");
 
-        EnableUltraGraphics = Config.Bind("Graphics", "Enable Ultra Graphics", true, "Add an \"Ultra\" preset button next to Low/Medium/High in Game Settings -> Visuals -> Graphics Quality and apply it through Unity's QualitySettings API (8x MSAA, 4 pixel lights, 150m shadow distance, 2x LOD bias). Medium stays the default; Low/Medium/High are untouched. Set false to hide the button and skip the QualitySettings boost.");
+        EnableUltraGraphics = Config.Bind("Graphics", "Enable Ultra Graphics", true, "High already maps to Ultra=3 (the PC ceiling in this build) — this patch just ensures the 4 runtime-settable Unity quality knobs are maxed when the game boots: 8x MSAA, 4 pixel lights, 150m shadow distance, 2x LOD bias (ON by default). Low/Medium/High presets are untouched. Set false to skip the knob maxing.");
 
         EnableFluxPairing = Config.Bind("Pairing", "Enable Flux Pairing", true, "Link the in-game account to a Flux Social account via a 6-digit pairing code (OAuth 2.0 device flow, RFC 8628). Press F8 in-game to open the Flux Connect window. Set false to disable the overlay.");
         PairingAuthHostOverride = Config.Bind("Pairing", "Auth Host Override", "", "Override the auth worker host used for pairing (empty = derived from the RecNet NameServer host by swapping ns. -> auth.).");
@@ -95,7 +95,7 @@ public class Plugin : BasePlugin
         EnableFluxHomeBranding = Config.Bind("Home", "Enable Flux Home Branding", true, "Show the \"FLUX REC\" logo above the tab row on the home screen and ensure the tab icon labels (\"Rooms\" labels) are visible (ON by default). Covers HomeLogoPatch + HomeLabelsPatch; coexists with the Play button and the Flux Connect button. Set false to keep the stock home screen.");
         HomeTabLabels = Config.Bind("Home", "Home Tab Labels", "Rec Center;Dorm Room;Club;This Room;Events", "Semicolon-separated labels applied left-to-right to the home screen tab buttons (\"Rooms\" labels). The patch logs each tab's ORIGINAL label at Info on first run so you can verify the order and names against your client build — adjust this list if they don't match. Labels are only applied when the count matches the tab count; empty = leave label text unchanged.");
 
-        EnablePlayButton = Config.Bind("Home", "Enable Play Button", true, "Add a \"Play\" button beside \"Create\" on the home screen for Quick Play (join a random public room). The button is a same-style clone of Create, relabeled \"Play\", with its click handler replaced by the quick-play entry point (the game's own QuickPlay method if found, else PhotonNetwork.JoinRandomRoom()). Set false to skip it.");
+        EnablePlayButton = Config.Bind("Home", "Enable Play Button", true, "Add a \"Play\" tab to the home screen tab row (Rooms/Clubs/Items/Inventions/Creators). The tab is a same-style clone of the Rooms tab, relabeled \"Play\", with its click handler replaced by the game's own Play navigation (WatchUI.ShowScreenAndGoToPlay). Set false to skip it.");
 
         // Not a patch — Unity's telemetry has a real opt-out, so we just set it. Retried from
         // OnSceneLoaded until it takes, since the native setters can refuse this early.
@@ -156,13 +156,14 @@ public class Plugin : BasePlugin
         Patches.HomeLabelsPatch.Apply();
 
         // Persistent time-based retry driver for the UI-discovery patches
-        // above (Play button, Connect tab, Ultra): their targets all build
-        // asynchronously INSIDE a scene (home tab row post-login, Settings
-        // page on first open), long after sceneLoaded fires, so scene-load
-        // retries alone never coincide with the UI existing. The driver
-        // re-ticks each patch every 2s until it reports IsSettled, then
-        // destroys itself. Idempotent — also re-armed from OnSceneLoaded in
-        // case plugin-load-time creation failed.
+        // above (Play button, Connect tab, Ultra, home logo, home labels):
+        // their targets all build asynchronously INSIDE a scene (home tab
+        // row post-login, Settings page on first open), long after
+        // sceneLoaded fires, so scene-load retries alone never coincide
+        // with the UI existing. The driver re-ticks each patch every 2s
+        // until it reports IsSettled, then idles — it never self-destructs,
+        // because home UI rebuilds on login. Idempotent — also re-armed from
+        // OnSceneLoaded in case plugin-load-time creation failed.
         Patches.UiDiscoveryRetry.Ensure();
 
         Harmony.CreateAndPatchAll(typeof(Plugin).Assembly);
@@ -176,9 +177,13 @@ public class Plugin : BasePlugin
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         // Keep the UI-discovery retry driver alive (idempotent): covers the
-        // case where plugin-load-time creation failed, and re-arms it if it
-        // ever stopped while a patch still needs discovery.
+        // case where plugin-load-time creation failed. Re-arms every patch
+        // for immediate retry — scene transitions rebuild the home UI
+        // (login rebuilds it entirely), so a patch settled in the previous
+        // scene must not stay silent. The driver itself never destroys
+        // itself; it idles once every patch is settled.
         Patches.UiDiscoveryRetry.Ensure();
+        Patches.UiDiscoveryRetry.NotifySceneChanged();
 
         // No-op once the switches have stuck; must run before the early return below.
         Patches.UnityTelemetryPatch.Apply();

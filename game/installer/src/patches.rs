@@ -39,13 +39,27 @@ const RRPLUS_USD_PATCH: BytePatch = BytePatch {
     desc: "RR+ USD to Flux Rec Tokens",
 };
 
-/// Rec Room+ Membership title. Stored as " Room+ Membership" (leading space, "Rec" is a
-/// separate UI element). Found in the RR+ UI AssetBundle at offset 1443123.
+/// Rec Room+ Membership title. The full string is stored in the RR+ UI AssetBundle
+/// (the old v0.1.34 patch only matched the " Room+ Membership" tail, leaving the
+/// leading "Rec" and producing the garbled "Rec Flux Rec+ Member").
+///
+/// v0.1.35 fix: match the FULL "Rec Room+ Membership" (20 bytes) and replace
+/// with "Flux Rec+ Membership" (20 bytes) — same-length replacement.
 const RRPLUS_TITLE_PATCH: BytePatch = BytePatch {
     file: "RecRoom_Data/StreamingAssets/aa/StandaloneWindows64/345318383a217ece0ae0ca51345ec71c.bundle",
-    from: b" Room+ Membership",
-    to: b" Flux Rec+ Member",
+    from: b"Rec Room+ Membership",
+    to: b"Flux Rec+ Membership",
     desc: "RR+ Membership title to Flux Rec+",
+};
+
+/// Repair patch for installs broken by the v0.1.34 patch ("Rec Flux Rec+ Member").
+/// Replaces the garbled 20-byte string with "Flux Rec+ Membership" (20 bytes).
+/// Fail-soft: skipped on installs that already have the correct text.
+const RRPLUS_TITLE_REPAIR_PATCH: BytePatch = BytePatch {
+    file: "RecRoom_Data/StreamingAssets/aa/StandaloneWindows64/345318383a217ece0ae0ca51345ec71c.bundle",
+    from: b"Rec Flux Rec+ Member",
+    to: b"Flux Rec+ Membership",
+    desc: "RR+ Membership title repair (v0.1.34 garble fix)",
 };
 
 /// "Join Rec Room+" button text. Found in the RR+ UI AssetBundle at offset 1551629.
@@ -80,6 +94,9 @@ pub fn apply_client_patches(dir: &Path) {
 
     // RR+ Membership title patch
     apply_patch(dir, &RRPLUS_TITLE_PATCH);
+
+    // RR+ Membership title repair patch (fixes v0.1.34 garble)
+    apply_patch(dir, &RRPLUS_TITLE_REPAIR_PATCH);
 
     // Join RR+ button patch
     apply_patch(dir, &RRPLUS_JOIN_PATCH);
@@ -166,5 +183,29 @@ mod tests {
         let hay = b"hello Welcome to Rec Room world";
         assert_eq!(find_subsequence(hay, b"Welcome to Rec Room"), Some(6));
         assert_eq!(find_subsequence(hay, b"not here"), None);
+    }
+
+    #[test]
+    fn rrplus_title_patch_is_same_length() {
+        assert_eq!(RRPLUS_TITLE_PATCH.from.len(), RRPLUS_TITLE_PATCH.to.len());
+        assert_eq!(RRPLUS_TITLE_PATCH.from.len(), 20);
+        assert_eq!(RRPLUS_TITLE_PATCH.from, b"Rec Room+ Membership");
+        assert_eq!(RRPLUS_TITLE_PATCH.to, b"Flux Rec+ Membership");
+    }
+
+    #[test]
+    fn rrplus_title_repair_patch_is_same_length() {
+        assert_eq!(RRPLUS_TITLE_REPAIR_PATCH.from.len(), RRPLUS_TITLE_REPAIR_PATCH.to.len());
+        assert_eq!(RRPLUS_TITLE_REPAIR_PATCH.from.len(), 20);
+        assert_eq!(RRPLUS_TITLE_REPAIR_PATCH.from, b"Rec Flux Rec+ Member");
+        assert_eq!(RRPLUS_TITLE_REPAIR_PATCH.to, b"Flux Rec+ Membership");
+    }
+
+    #[test]
+    fn rrplus_title_repair_matches_old_garble() {
+        // The v0.1.34 patch produced "Rec" + " Flux Rec+ Member" — the repair
+        // patch must match exactly that garbled string.
+        let garbled: Vec<u8> = [b"Rec", b" Flux Rec+ Member".as_ref()].concat();
+        assert_eq!(&garbled[..], RRPLUS_TITLE_REPAIR_PATCH.from);
     }
 }
