@@ -263,7 +263,7 @@ internal static class PlusTitlePatch
             {
                 var getTexts = typeof(GameObject).GetMethod("GetComponentsInChildren",
                     new[] { typeof(Type), typeof(bool) });
-                var comps = (IEnumerable)getTexts.Invoke(root,
+                var comps = (System.Collections.IEnumerable)getTexts.Invoke(root,
                     new object[] { _tmproTextType, true });
                 foreach (var c in comps)
                 {
