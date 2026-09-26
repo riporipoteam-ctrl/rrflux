@@ -738,9 +738,10 @@ internal static class PlayButtonPatch
                 _showScreenAndGoToPlay = ResolveShowScreenAndGoToPlay();
                 if (_showScreenAndGoToPlay != null)
                 {
+                    var navKind = _navIsStatic ? "static" : "instance";
                     Plugin.Log.LogInfo("[PLAY] nav resolved: " +
                         $"WatchUI.ShowScreenAndGoToPlay(bool {_navParamName}) " +
-                        $"({_navIsStatic ? "static" : "instance"})");
+                        $"({navKind})");
                 }
                 else
                 {
