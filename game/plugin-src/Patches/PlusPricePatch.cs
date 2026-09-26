@@ -22,6 +22,14 @@ namespace RecNetPlugin.Patches;
 // UTC). The error string itself is backend-sourced, not present in the client,
 // so overriding the price at this point prevents the error from appearing.
 //
+// v0.1.35 (R11b) — SKU FILTER: the prefix now ONLY intercepts when the instance
+// is positively identified as the RR+ membership SKU (checks the underlying
+// Sku from SkuModel.get_Sku(): Source==1 / membership-typed source, or a
+// membership/RR+ product name). All other SKUs pass through to the original
+// method untouched, so unrelated store prices can't break. Identification is
+// conservative: if we can't positively identify the SKU, we do NOT intercept
+// (the text-sweep fallback below still covers any red error text that shows).
+//
 // REMOVED in R11: the old PlayerCommerceModel.get_RRPMembershipSKUPrice() hook.
 // Re-analysis showed that getter is a trivial cache getter — hooking it did
 // nothing useful (the real price load happens in SkuModel.GetDisplayPrice).
@@ -82,9 +90,19 @@ internal static class PlusPricePatch
     private static bool _pumpCreated;
     private static bool _typeRegistered;
 
+    // The patched MethodInfo for SkuModel.GetDisplayPrice (kept so the prefix
+    // knows whether the target is static — a static target has no instance to
+    // identify a SKU from).
+    private static MethodInfo _displayPriceMethod;
+
     // Throttled override log: we only announce the first interception and any
     // change of the returned string afterwards.
     private static string _lastLoggedPrice;
+
+    // First-seen diagnostics for the SKU filter (so we can verify in logs that
+    // the membership SKU was identified and other SKUs passed through).
+    private static bool _loggedMembershipSeen;
+    private static bool _loggedPassthroughSeen;
 
     private static readonly List<string> _patchedMethods = new List<string>();
 
@@ -323,7 +341,9 @@ internal static class PlusPricePatch
     // This Harmony prefix skips the original platform-store query entirely and
     // returns the Flux Rec+ token price directly (10,000 tokens, 3,500 on
     // Saturdays UTC — matching the backend's currentPlusPrice() and the token
-    // purchase flow).
+    // purchase flow) — but ONLY when the instance is positively identified as
+    // the RR+ membership SKU (see IsRRPlusMembershipSku). Other SKUs pass
+    // through to the original method, so unrelated store prices are untouched.
     //
     // R11 removed the old PlayerCommerceModel.get_RRPMembershipSKUPrice() hook:
     // re-analysis showed that getter is a trivial cache getter and hooking it
@@ -383,8 +403,9 @@ internal static class PlusPricePatch
             var prefix = new HarmonyMethod(typeof(PlusPricePatch).GetMethod(nameof(PrefixDisplayPrice),
                 BindingFlags.Static | BindingFlags.NonPublic));
             harmony.Patch(method, prefix: prefix);
+            _displayPriceMethod = method;
             _skuPatched = true;
-            Plugin.Log.LogInfo($"[PLUS] SkuModel.GetDisplayPrice intercepted on {skuType.FullName} — price overridden");
+            Plugin.Log.LogInfo($"[PLUS] SkuModel.GetDisplayPrice intercepted on {skuType.FullName} (static={method.IsStatic}) — membership SKU price overridden");
         }
         catch (Exception e)
         {
@@ -392,9 +413,44 @@ internal static class PlusPricePatch
         }
     }
 
-    // Returns false: skips the original platform-store price query entirely.
-    private static bool PrefixDisplayPrice(ref string __result)
+    // Returns false: skips the original platform-store price query entirely —
+    // but ONLY for the RR+ membership SKU. Any other SKU (or an instance we
+    // cannot positively identify) returns true so the original method runs
+    // untouched. Fail-open: any unexpected error lets the original run, so we
+    // can never break the store UI.
+    private static bool PrefixDisplayPrice(object __instance, ref string __result)
     {
+        bool intercept;
+        try
+        {
+            // A static target has no instance to identify a SKU from; the
+            // membership price UI is the only caller of that shape, so allow it.
+            if (_displayPriceMethod != null && _displayPriceMethod.IsStatic)
+                intercept = true;
+            else
+                intercept = IsRRPlusMembershipSku(__instance);
+        }
+        catch
+        {
+            return true; // fail-open: never break store UI on a check failure
+        }
+
+        if (!intercept)
+        {
+            if (!_loggedPassthroughSeen)
+            {
+                _loggedPassthroughSeen = true;
+                Plugin.Log.LogInfo("[PLUS] GetDisplayPrice called for a non-membership SKU — passing through to original");
+            }
+            return true;
+        }
+
+        if (!_loggedMembershipSeen)
+        {
+            _loggedMembershipSeen = true;
+            Plugin.Log.LogInfo("[PLUS] RR+ membership SKU identified — overriding price");
+        }
+
         try
         {
             __result = GetPriceString();
@@ -414,12 +470,194 @@ internal static class PlusPricePatch
         return false;
     }
 
-    // The Flux Rec+ token price: 3,500 tokens on Saturdays (UTC), 10,000 on all
-    // other days — matching the backend's currentPlusPrice().
+    // TRUE only when the instance is positively identified as the RR+
+    // membership SKU. Conservative by design: unknown or unidentifiable
+    // instances return false (the original runs; the text-sweep fallback still
+    // covers any red error text that appears).
+    private static bool IsRRPlusMembershipSku(object skuModel)
+    {
+        if (skuModel == null)
+            return false;
+
+        try
+        {
+            // Verified chain: SkuModel.get_Sku() returns the underlying Sku.
+            object sku = null;
+            var t = skuModel.GetType();
+            MethodInfo getSku = null;
+            try
+            {
+                getSku = t.GetMethod("get_Sku",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            }
+            catch { }
+
+            if (getSku != null && getSku.GetParameters().Length == 0)
+            {
+                try { sku = getSku.Invoke(skuModel, null); }
+                catch { }
+            }
+
+            // Inspect both the Sku and the SkuModel itself — identifiers may
+            // live on either object depending on the build.
+            if (sku != null && IsMembershipSkuObject(sku))
+                return true;
+            if (IsMembershipSkuObject(skuModel))
+                return true;
+        }
+        catch { }
+        return false;
+    }
+
+    // Checks one object (Sku or SkuModel) for membership identifiers:
+    //  - a "Source" member whose value is 1, or whose enum name mentions
+    //    Membership/Subscription/Plus;
+    //  - a name-ish string member (Name/DisplayName/Title/SkuId/...) that
+    //    looks like the RR+ membership product;
+    //  - a type name that mentions Membership/RRPlus.
+    private static bool IsMembershipSkuObject(object o)
+    {
+        if (o == null)
+            return false;
+
+        try
+        {
+            var t = o.GetType();
+            var typeName = t.Name ?? "";
+            if (typeName.IndexOf("Membership", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                typeName.IndexOf("RRPlus", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            MemberInfo[] members;
+            try
+            {
+                var props = t.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var fields = t.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                members = new MemberInfo[props.Length + fields.Length];
+                Array.Copy(props, members, props.Length);
+                Array.Copy(fields, 0, members, props.Length, fields.Length);
+            }
+            catch { return false; }
+
+            foreach (var m in members)
+            {
+                string name = m.Name ?? "";
+                object value = null;
+                try
+                {
+                    if (m is PropertyInfo pi)
+                    {
+                        if (!pi.CanRead || pi.GetIndexParameters().Length > 0)
+                            continue;
+                        value = pi.GetValue(o, null);
+                    }
+                    else if (m is FieldInfo fi)
+                    {
+                        value = fi.GetValue(o);
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+                catch { continue; }
+
+                if (value == null)
+                    continue;
+
+                // "Source==1" check (per research note): the membership SKU's source.
+                if (name.Equals("Source", StringComparison.OrdinalIgnoreCase) &&
+                    IsMembershipSource(value))
+                    return true;
+
+                // Name-ish string identifiers.
+                if (name.Equals("Name", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("DisplayName", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("Title", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("SkuName", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("SkuId", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("ProductId", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("ProductName", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("Id", StringComparison.OrdinalIgnoreCase))
+                {
+                    string s = value as string;
+                    if (s == null)
+                    {
+                        try { s = value.ToString(); }
+                        catch { s = null; }
+                    }
+                    if (LooksLikeMembershipName(s))
+                        return true;
+                }
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    // The membership SKU source: numeric value 1, or an enum whose name
+    // mentions Membership/Subscription/Plus.
+    private static bool IsMembershipSource(object sourceValue)
+    {
+        if (sourceValue == null)
+            return false;
+
+        try
+        {
+            var svt = sourceValue.GetType();
+            if (svt.IsEnum)
+            {
+                string name = null;
+                try { name = sourceValue.ToString(); }
+                catch { }
+                if (!string.IsNullOrEmpty(name) &&
+                    (name.IndexOf("Membership", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     name.IndexOf("Subscription", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     name.IndexOf("Plus", StringComparison.OrdinalIgnoreCase) >= 0))
+                    return true;
+            }
+            if (sourceValue is IConvertible)
+            {
+                try { return Convert.ToInt64(sourceValue) == 1; }
+                catch { }
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    // Strong membership signals first ("membership", "rr+"), then the
+    // "Rec Room+ / Rec Room Plus" product name. "plus" alone is deliberately
+    // NOT matched — too weak a signal on its own.
+    private static bool LooksLikeMembershipName(string s)
+    {
+        if (string.IsNullOrEmpty(s))
+            return false;
+        var lower = s.ToLowerInvariant();
+        if (lower.Contains("membership"))
+            return true;
+        if (lower.Contains("rr+"))
+            return true;
+        if (lower.Contains("rec room+") || lower.Contains("rec room plus"))
+            return true;
+        return false;
+    }
+
+    // The Flux Rec+ token price string for the membership SKU intercept:
+    // "10,000 Flux Rec Tokens" normally, "3,500 Flux Rec Tokens" on Saturdays
+    // UTC — matching backend pricing. Prefers the backend-fetched price (GET
+    // /api/subscriptionseasons/v1/seasons/current, whose TokenPrice already
+    // accounts for the Saturday discount); falls back to local Saturday logic
+    // if the backend price hasn't been fetched yet.
     private static string GetPriceString()
     {
         try
         {
+            lock (_priceLock)
+            {
+                if (_priceFetched && _cachedPrice > 0)
+                    return string.Format("{0:N0} Flux Rec Tokens", _cachedPrice);
+            }
             return DateTime.UtcNow.DayOfWeek == DayOfWeek.Saturday
                 ? "3,500 Flux Rec Tokens"
                 : "10,000 Flux Rec Tokens";
