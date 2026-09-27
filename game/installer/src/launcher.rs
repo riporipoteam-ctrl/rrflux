@@ -72,6 +72,17 @@ pub fn run_launcher(
 
     // 1b. Self-heal: the Steam bypass must be intact or the game crashes at
     // launch / shows "Failed to initialize Steam Platform". Verify on every
+    // v0.1.53: CLEAN SLATE — delete BepInEx folder to remove broken state
+    // from v0.1.48/49/50. The repair below will reinstall it fresh.
+    // (Game files are NOT touched — no 3.8GB re-download.)
+    {
+        let bepinex_dir = dir.join("BepInEx");
+        if bepinex_dir.exists() {
+            println!("[launcher] Clean slate: removing old BepInEx folder…");
+            let _ = std::fs::remove_dir_all(&bepinex_dir);
+        }
+    }
+
     // --play and repair automatically instead of ever letting the game hit
     // the broken state.
     //

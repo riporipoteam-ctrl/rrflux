@@ -891,6 +891,16 @@ async fn run_install(
     // (or on upgrade, to the existing install).
     patches::apply_client_patches(dir);
 
+    // v0.1.53: CLEAN SLATE — delete the entire BepInEx folder before reinstalling.
+    // This removes all broken state from v0.1.48/49/50 (crashed plugins,
+    // corrupted configs, stale caches). Fresh BepInEx + fresh plugin + fresh config.
+    // (Game files are NOT touched — no 3.8GB re-download.)
+    let bepinex_dir = dir.join("BepInEx");
+    if bepinex_dir.exists() {
+        println!("[clean] Removing old BepInEx folder for clean reinstall…");
+        let _ = std::fs::remove_dir_all(&bepinex_dir);
+    }
+
     // 2. BepInEx.
     let bepinex_zip = dir.join("bepinex.zip");
     download(
