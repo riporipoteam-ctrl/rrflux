@@ -351,8 +351,10 @@ pub async fn download_segmented(
                     };
                     let have_mb = d as f64 / 1_048_576.0;
                     let total_mb = total as f64 / 1_048_576.0;
-                    p.set_text(format!(
-                        "Downloading game files… {have_mb:.0}/{total_mb:.0} MB ({mbps:.1} MB/s{eta})"
+                    // v0.2.0: speed/ETA go on the dedicated detail line so the
+                    // stage text stays stable.
+                    p.set_detail(format!(
+                        "{have_mb:.0} / {total_mb:.0} MB \u{2022} {mbps:.1} MB/s{eta}"
                     ));
                 }
             }

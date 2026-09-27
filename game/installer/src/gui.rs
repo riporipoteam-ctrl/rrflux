@@ -24,6 +24,9 @@ pub struct GuiMsg {
     /// Stage line, e.g. "Downloading game files…".
     /// The special value "done" (after trimming) closes the window at once.
     pub stage: String,
+    /// Detail line, e.g. "1,234 / 3,800 MB • 12.5 MB/s • ETA 4:32".
+    /// Empty string leaves the current detail text untouched.
+    pub detail: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +83,7 @@ mod imp {
         bar: HWND,
         pct_label: HWND,
         stage_label: HWND,
+        detail_label: HWND,
         title_label: HWND,
         footer: HWND,
         bg_brush: HBRUSH,
@@ -148,6 +152,7 @@ mod imp {
             bar: HWND::default(),
             pct_label: HWND::default(),
             stage_label: HWND::default(),
+            detail_label: HWND::default(),
             title_label: HWND::default(),
             footer: HWND::default(),
             bg_brush,
@@ -220,6 +225,8 @@ mod imp {
                         if ctl == st.footer {
                             DIM
                         } else if ctl == st.stage_label {
+                            LIGHT
+                        } else if ctl == st.detail_label {
                             LIGHT
                         } else {
                             WHITE
@@ -345,6 +352,7 @@ mod imp {
         //   stage line      y=150 h=20
         //   progress bar    y=178 h=20
         //   percent         y=206 h=34
+        //   detail line     y=248 h=20   (speed / ETA / byte counts)
         //   footer          y=300 h=18
         let title = create_child(
             hwnd,
@@ -390,6 +398,19 @@ mod imp {
             34,
             hi,
         );
+        // v0.2.0: live detail line — speed / ETA / byte counts, e.g.
+        // "Downloading: 1,234 / 3,800 MB • 12.5 MB/s • ETA 4:32".
+        let detail = create_child(
+            hwnd,
+            w!("STATIC"),
+            w!(""),
+            WINDOW_STYLE(SS_CENTER.0),
+            20,
+            248,
+            440,
+            20,
+            hi,
+        );
         let footer = create_child(
             hwnd,
             w!("STATIC"),
@@ -401,14 +422,15 @@ mod imp {
             18,
             hi,
         );
-        let (title, stage, bar, pct, footer) = match (title, stage, bar, pct, footer) {
-            (Some(a), Some(b), Some(c), Some(d), Some(e)) => (a, b, c, d, e),
+        let (title, stage, bar, pct, detail, footer) = match (title, stage, bar, pct, detail, footer) {
+            (Some(a), Some(b), Some(c), Some(d), Some(e), Some(f)) => (a, b, c, d, e, f),
             _ => return false,
         };
         st.title_label = title;
         st.stage_label = stage;
         st.bar = bar;
         st.pct_label = pct;
+        st.detail_label = detail;
         st.footer = footer;
 
         // Brand typography (fall back to stock font if creation fails).
@@ -418,6 +440,7 @@ mod imp {
         set_font(title, st.font_title);
         set_font(stage, st.font_small);
         set_font(pct, st.font_big);
+        set_font(detail, st.font_small);
         set_font(footer, st.font_small);
 
         // v0.1.55: Show version in footer (e.g., "Ripo Team • v0.1.55")
@@ -472,6 +495,9 @@ mod imp {
                     if !m.stage.is_empty() {
                         set_text(st.stage_label, &m.stage);
                     }
+                    // Detail line: always applied — an empty string clears it
+                    // (stages clear it when they begin).
+                    set_text(st.detail_label, &m.detail);
                     if m.stage.trim() == "done" {
                         close = true;
                         break;

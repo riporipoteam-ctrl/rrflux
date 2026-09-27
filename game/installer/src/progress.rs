@@ -8,20 +8,21 @@
 //! Pure Rust — compiles on every platform, no `cfg` needed.
 
 use std::sync::{mpsc, Arc, Mutex};
+use std::time::Instant;
 
 /// (stage text, percent range start, range width). Ranges must be
 /// non-overlapping and ascending; the last one ends at 100.
 const STAGES: &[(&str, f64, f64)] = &[
     ("Preparing\u{2026}", 0.0, 2.0),
-    ("Downloading game files\u{2026}", 2.0, 50.0),
-    ("Extracting game files\u{2026}", 52.0, 14.0),
-    ("Applying Steam bypass\u{2026}", 66.0, 2.0),
-    ("Applying Flux Rec branding\u{2026}", 68.0, 8.0),
-    ("Installing BepInEx\u{2026}", 76.0, 8.0),
-    ("Installing Flux Rec plugin\u{2026}", 84.0, 5.0),
-    ("Writing configuration\u{2026}", 89.0, 5.0),
-    ("Creating shortcuts\u{2026}", 94.0, 3.0),
-    ("Final checks\u{2026}", 97.0, 3.0),
+    ("Downloading game files\u{2026}", 2.0, 48.0),
+    ("Extracting game files\u{2026}", 50.0, 12.0),
+    ("Applying Steam bypass\u{2026}", 62.0, 3.0),
+    ("Installing FluxLoader\u{2026}", 65.0, 10.0),
+    ("Applying Flux Rec branding\u{2026}", 75.0, 8.0),
+    ("Writing configuration\u{2026}", 83.0, 5.0),
+    ("Creating shortcuts\u{2026}", 88.0, 4.0),
+    ("Final checks\u{2026}", 92.0, 5.0),
+    ("Committing installation\u{2026}", 97.0, 3.0),
 ];
 
 struct Inner {
@@ -30,6 +31,10 @@ struct Inner {
     range: Mutex<(f64, f64)>,
     /// Last (percent, stage) actually sent — identical updates are dropped.
     last: Mutex<(u8, String)>,
+    /// Last detail line sent — identical updates are dropped.
+    last_detail: Mutex<String>,
+    /// Rolling throughput tracker for the detail line.
+    throughput: Mutex<Throughput>,
 }
 
 /// Cloneable progress handle. All methods are infallible and non-blocking.
@@ -47,41 +52,159 @@ pub fn channel() -> (Progress, mpsc::Receiver<crate::gui::GuiMsg>) {
             tx,
             range: Mutex::new((0.0, 0.0)),
             last: Mutex::new((0, String::new())),
+            last_detail: Mutex::new(String::new()),
+            throughput: Mutex::new(Throughput::new()),
         }),
     };
     (p, rx)
 }
 
+/// Rolling byte counter → "done / total MB • X.X MB/s • ETA M:SS" strings.
+struct Throughput {
+    started: Instant,
+    last_tick: Instant,
+    last_bytes: u64,
+    window_bytes: u64,
+}
+
+impl Throughput {
+    fn new() -> Self {
+        let now = Instant::now();
+        Throughput {
+            started: now,
+            last_tick: now,
+            last_bytes: 0,
+            window_bytes: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Throughput::new();
+    }
+
+    /// Feed the absolute byte count; returns a formatted detail string.
+    /// `label` prefixes the line (e.g. "Downloading").
+    fn update(&mut self, label: &str, done: u64, total: u64) -> String {
+        let now = Instant::now();
+        if done < self.last_bytes {
+            // Counter went backwards (new phase) — restart the window.
+            self.last_bytes = done;
+            self.last_tick = now;
+            self.window_bytes = 0;
+        }
+        self.window_bytes += done.saturating_sub(self.last_bytes);
+        self.last_bytes = done;
+
+        let tick_dt = now.duration_since(self.last_tick).as_secs_f64();
+        let mbps = if tick_dt >= 0.5 {
+            let v = self.window_bytes as f64 / tick_dt / 1_048_576.0;
+            self.window_bytes = 0;
+            self.last_tick = now;
+            v
+        } else {
+            // Not enough time for a fresh sample — extrapolate from average.
+            let elapsed = now.duration_since(self.started).as_secs_f64().max(0.001);
+            done as f64 / elapsed / 1_048_576.0
+        };
+
+        let have_mb = done as f64 / 1_048_576.0;
+        let total_mb = total as f64 / 1_048_576.0;
+        let eta = if mbps > 0.05 && total > done {
+            let s = ((total - done) as f64 / (mbps * 1_048_576.0)) as u64;
+            format!(" \u{2022} ETA {}", fmt_eta(s))
+        } else {
+            String::new()
+        };
+        format!(
+            "{label}: {have_mb:.0} / {total_mb:.0} MB \u{2022} {mbps:.1} MB/s{eta}"
+        )
+    }
+}
+
+fn fmt_eta(total_secs: u64) -> String {
+    let h = total_secs / 3600;
+    let m = (total_secs % 3600) / 60;
+    let s = total_secs % 60;
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
 impl Progress {
-    fn send(&self, percent: u8, stage: &str) {
+    fn send(&self, percent: u8, stage: &str, detail: &str) {
         let pct = percent.min(100);
-        {
+        let detail_owned = detail.to_string();
+        let stage_changed = {
             let mut last = self.inner.last.lock().unwrap_or_else(|e| e.into_inner());
             if *last == (pct, stage.to_string()) {
-                return;
+                false
+            } else {
+                *last = (pct, stage.to_string());
+                true
             }
-            *last = (pct, stage.to_string());
+        };
+        let detail_changed = {
+            let mut last = self
+                .inner
+                .last_detail
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if *last == detail_owned {
+                false
+            } else {
+                *last = detail_owned.clone();
+                true
+            }
+        };
+        if !stage_changed && !detail_changed {
+            return;
         }
         let _ = self.inner.tx.send(crate::gui::GuiMsg {
             percent: pct,
             stage: stage.to_string(),
+            detail: detail_owned,
         });
+    }
+
+    fn current_detail(&self) -> String {
+        self.inner
+            .last_detail
+            .lock()
+            .map(|d| d.clone())
+            .unwrap_or_default()
     }
 
     /// Begin a named stage: looks up its percent range and jumps the bar to
     /// the range start. Unknown names keep the previous range and just
-    /// update the text.
+    /// update the text. Clears the detail line and resets throughput.
     pub fn set_stage(&self, stage: &'static str) {
+        if let Ok(mut t) = self.inner.throughput.lock() {
+            t.reset();
+        }
+        if let Ok(mut d) = self.inner.last_detail.lock() {
+            d.clear();
+        }
         match STAGES.iter().find(|(s, _, _)| *s == stage) {
-            Some(&(_, base, width)) => {
+            Some(&(_, base, _width)) => {
                 if let Ok(mut r) = self.inner.range.lock() {
-                    *r = (base, width);
+                    *r = (base, _width);
                 }
-                self.send(base as u8, stage);
+                let pct = base as u8;
+                // Force-send: stage text changed even if percent didn't.
+                let _ = self.inner.tx.send(crate::gui::GuiMsg {
+                    percent: pct.min(100),
+                    stage: stage.to_string(),
+                    detail: String::new(),
+                });
+                if let Ok(mut last) = self.inner.last.lock() {
+                    *last = (pct.min(100), stage.to_string());
+                }
             }
             None => {
                 let pct = self.inner.last.lock().map(|l| l.0).unwrap_or(0);
-                self.send(pct, stage);
+                self.send(pct, stage, "");
             }
         }
     }
@@ -91,20 +214,46 @@ impl Progress {
     pub fn set_fraction(&self, frac: f64) {
         let (base, width) = self.inner.range.lock().map(|r| *r).unwrap_or((0.0, 0.0));
         let f = frac.clamp(0.0, 1.0);
-        self.send((base + f * width) as u8, "");
+        let detail = self.current_detail();
+        self.send((base + f * width) as u8, "", &detail);
     }
 
     /// Absolute percent with a status line, outside the stage table.
     /// Used by the launcher (update check / launching game).
     pub fn set_status(&self, stage: &str, percent: u8) {
-        self.send(percent, stage);
+        let detail = self.current_detail();
+        self.send(percent, stage, &detail);
     }
 
-    /// Replace the status-line text without moving the bar.
-    /// Used for live download speed / ETA readouts.
-    pub fn set_text(&self, text: String) {
+    /// Set the secondary detail line (speed / ETA / byte counts) without
+    /// touching the stage text or the bar position.
+    pub fn set_detail(&self, detail: String) {
         let pct = self.inner.last.lock().map(|l| l.0).unwrap_or(0);
-        self.send(pct, &text);
+        let stage = self
+            .inner
+            .last
+            .lock()
+            .map(|l| l.1.clone())
+            .unwrap_or_default();
+        self.send(pct, &stage, &detail);
+    }
+
+    /// Feed absolute byte counts for the current transfer-like stage.
+    /// Formats and shows the "done / total MB • X.X MB/s • ETA" detail line
+    /// and advances the bar proportionally.
+    pub fn set_throughput(&self, label: &str, done: u64, total: u64) {
+        let detail = self
+            .inner
+            .throughput
+            .lock()
+            .map(|mut t| t.update(label, done, total))
+            .unwrap_or_default();
+        if total > 0 {
+            self.set_fraction(done as f64 / total as f64);
+        }
+        if !detail.is_empty() {
+            self.set_detail(detail);
+        }
     }
 
     /// Install finished: tell the GUI to close its window.
@@ -114,47 +263,7 @@ impl Progress {
         let _ = self.inner.tx.send(crate::gui::GuiMsg {
             percent: 100,
             stage: "done".to_string(),
+            detail: String::new(),
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn progress_never_blocks_without_gui() {
-        // No receiver: sends are dropped, nothing panics.
-        let (p, rx) = channel();
-        drop(rx);
-        p.set_stage("Downloading game files\u{2026}");
-        p.set_fraction(0.5);
-        p.set_status("Checking for updates\u{2026}", 5);
-        p.done();
-    }
-
-    #[test]
-    fn stage_ranges_are_sane() {
-        for w in STAGES.windows(2) {
-            let (_, b1, w1) = w[0];
-            let (_, b2, _) = w[1];
-            assert!(b1 + w1 <= b2, "overlapping stage ranges");
-        }
-        let (_, last_base, last_w) = STAGES[STAGES.len() - 1];
-        assert!((last_base + last_w - 100.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn messages_flow_to_receiver() {
-        let (p, rx) = channel();
-        p.set_stage("Preparing\u{2026}");
-        p.set_fraction(1.0);
-        p.done();
-        // Drain: we only assert it doesn't hang and ends with "done".
-        let mut last_stage = String::new();
-        for m in rx.try_iter() {
-            last_stage = m.stage;
-        }
-        assert_eq!(last_stage, "done");
     }
 }

@@ -42,6 +42,8 @@ use std::time::{Duration, Instant};
 mod assets;
 mod bypass;
 mod defender; // AV hardening (2026-09-24): Defender exclusions, quarantine self-heal, Unblock-File
+mod fluxloader; // v0.2.0: FluxLoader install (BepInEx replacement)
+mod transaction; // v0.2.0: transactional staging, atomic swap, rollback
 mod guide; // one-time guided Windows Security exclusion setup (2026-09-25)
 mod gui;
 mod launcher;
@@ -63,13 +65,8 @@ const CLIENT_ZIP_MIRRORS: &[&str] = &[
 const CLIENT_ZIP_MD5: &str = "4c4a94624eba99028bb36445ccb03253";
 const BEPINEX_URL: &str = "https://github.com/BepInEx/BepInEx/releases/download/v6.0.0-pre.2/BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip";
 const BEPINEX_SIZE: u64 = 34_146_254;
-pub(crate) const PLUGIN_URL: &str =
-    "https://github.com/recflare/patch/releases/download/20230414.2/RecNetPlugin.dll";
-pub(crate) const PLUGIN_SIZE: u64 = 45_056;
-/// v0.1.19: The Flux Rec 2023 plugin (Ultra graphics, forced new Watch UI,
-/// presence fix) embedded directly. The upstream 20230414.2 release lacks
-/// these patches, so we ship our own build instead of downloading.
-pub(crate) const EMBEDDED_PLUGIN: &[u8] = include_bytes!("../assets/RecNetPlugin.dll");
+// (v0.2.0: the old direct plugin download constants are retired — the
+// FluxLoader plugin build is embedded in fluxloader.rs as RECNET_PLUGIN_DLL.)
 /// Flux Rec logo bundle: gzipped patched Addressables UI bundle (loading
 /// screen logos replaced). Hosted on our Hugging Face dataset; verified by
 /// MD5 before use, then gunzipped over the stock bundle.
@@ -190,7 +187,7 @@ pub(crate) fn resolve_install_dir(
     default.to_path_buf()
 }
 
-fn md5_of_file(path: &Path) -> Result<String, String> {
+pub(crate) fn md5_of_file(path: &Path) -> Result<String, String> {
     let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mut reader = std::io::BufReader::with_capacity(1024 * 1024, f);
     let mut ctx = md5::Context::new();
@@ -198,7 +195,7 @@ fn md5_of_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", ctx.compute()))
 }
 
-fn file_ok(path: &Path, expected_md5: Option<&str>, expected_size: Option<u64>) -> bool {
+pub(crate) fn file_ok(path: &Path, expected_md5: Option<&str>, expected_size: Option<u64>) -> bool {
     let meta = match std::fs::metadata(path) {
         Ok(m) => m,
         Err(_) => return false,
@@ -426,48 +423,6 @@ fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Result<(), Stri
     let n = archive.len();
     archive.extract(dest_dir).map_err(|e| e.to_string())?;
     println!("[{label}] extracted {n} entries.");
-    Ok(())
-}
-
-fn write_plugin_config(dir: &Path, ns_host: &str, rt: &str, voice: &str, chat: &str) -> Result<(), String> {
-    let cfg_dir = dir.join("BepInEx").join("config");
-    std::fs::create_dir_all(&cfg_dir).map_err(|e| e.to_string())?;
-    let cfg = format!(
-        "## Flux Rec — RecNet plugin config (plugin GUID net.rec.plugin, v1.0.0)\n\
-         ## Values baked in at packaging time; override at install time with\n\
-         ## --ns-host / --photon-rt / --photon-voice / --photon-chat or the\n\
-         ## FLUXREC_NS_HOST / FLUXREC_PHOTON_RT / FLUXREC_PHOTON_VOICE / FLUXREC_PHOTON_CHAT env vars.\n\
-         \n\
-         [Server]\n\
-         RecNet NameServer Host = {ns_host}\n\
-         \n\
-         [Photon]\n\
-         App Id Realtime = {rt}\n\
-         App Id Voice = {voice}\n\
-         App Id Chat = {chat}\n\
-         \n\
-         [Advanced]\n\
-         Enabled Advanced Settings = false\n\
-         Suppress DUID Mismatch = true\n\
-         Debug = false\n\
-         \n\
-         [Watch]\n\
-         Force New Watch UI = true\n\
-         \n\
-         [Graphics]\n\
-         Enable Ultra Graphics = true\n\
-         \n\
-         [Presence]\n\
-         Fix Appear Online To Mapping = false\n\
-         \n\
-         [Signing]\n\
-         Disable Signature Verification = true\n\
-         \n\
-         [Analytics]\n\
-         Disable Telemetry = true\n"
-    );
-    std::fs::write(cfg_dir.join("net.rec.plugin.cfg"), cfg).map_err(|e| e.to_string())?;
-    println!("[config] wrote BepInEx/config/net.rec.plugin.cfg (ns host: {ns_host}).");
     Ok(())
 }
 
@@ -831,160 +786,326 @@ async fn run_install(
     progress: &progress::Progress,
 ) -> Result<(), String> {
     progress.set_stage("Preparing…");
-    // v0.1.54: FULL NUKE — delete EVERYTHING and reinstall from scratch.
-    // Armin requested a complete redo: all files, all config, all state.
-    // This deletes the entire game directory (3.8GB will be re-downloaded).
-    if dir.exists() {
-        println!("[nuke] Deleting entire game directory for full clean reinstall…");
-        progress.set_stage("Removing old installation…");
-        let _ = std::fs::remove_dir_all(dir);
+    // Clean staging/backup leftovers from crashed previous runs.
+    if let Some(parent) = dir.parent() {
+        if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
+            transaction::cleanup_leftovers(parent, name);
+        }
     }
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder()
-        .user_agent("FluxRec-Setup/0.1.0")
+        .user_agent("FluxRec-Setup/0.2.0")
         .connect_timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
 
-    // 1. Game client. UPGRADE MODE: if the game is already installed
-    // (RecRoom.exe present), skip the ~3.8GB download + extract entirely —
-    // every step below still runs in the same order, so setup repairs and
-    // refreshes everything else in place. The game dir is never wiped.
-    let skip_client_download = should_skip_client_download(dir);
-    if skip_client_download {
-        println!(
-            "[upgrade] game already installed at {} — skipping client download.",
-            dir.display()
-        );
-        progress.set_stage("Skipping game files (already installed)…");
-    } else {
-        let client_zip = dir.join("client.zip");
-        download_mirrored(
+    // v0.2.0: TRANSACTIONAL install. Fresh installs build the complete tree
+    // in a staging directory and atomically swap it into place; upgrades
+    // refresh components in place with per-file backups and rollback.
+    // The live directory is NEVER deleted first.
+    if find_game_exe(dir).is_none() {
+        println!("[install] fresh install — building in staging.");
+        fresh_install(
+            dir,
             &client,
-            CLIENT_ZIP_MIRRORS,
-            &client_zip,
-            Some(CLIENT_ZIP_MD5),
-            None,
-            "client",
-            Some((progress, "Downloading game files…")),
+            ns_host,
+            photon_rt,
+            photon_voice,
+            photon_chat,
+            progress,
         )
-        .await?;
-        // AV hardening (defender.rs): strip the Mark of the Web from the
-        // archive before extracting it.
-        defender::unblock_file(&client_zip);
-        progress.set_stage("Extracting game files…");
-        extract_zip(&client_zip, dir, "client")?;
-        let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
+        .await
+    } else {
+        println!("[install] upgrade — refreshing components in place with rollback.");
+        upgrade_install(
+            dir,
+            &client,
+            ns_host,
+            photon_rt,
+            photon_voice,
+            photon_chat,
+            progress,
+        )
+        .await
     }
+}
 
-    // 1a. Steam bypass FIRST: the game cannot boot without this, and no
-    // later step may ever prevent it from being in place. Pipeline:
-    // VC++ 2022 runtime (the vs22-built emulator DLL crashes without it)
-    // -> Goldberg emulator (proven) -> minimal stub fallback.
-    // Never hard-fails the whole install on the bypass alone: the stub
-    // keeps the game bootable even if the emulator cannot be fetched.
-    let bypass_method = bypass::apply_steam_bypass(&client, dir, progress).await?;
+/// Fresh install: build the complete tree inside a staging directory, verify
+/// it strictly, then atomically swap it into place. Any failure aborts the
+/// staging tree and leaves the machine untouched.
+async fn fresh_install(
+    dir: &Path,
+    client: &reqwest::Client,
+    ns_host: &str,
+    photon_rt: &str,
+    photon_voice: &str,
+    photon_chat: &str,
+    progress: &progress::Progress,
+) -> Result<(), String> {
+    let staging = transaction::Staging::begin(dir).map_err(|e| e.to_string())?;
+    let target = staging.path().to_path_buf();
+    let build = build_full_install(
+        &target,
+        client,
+        ns_host,
+        photon_rt,
+        photon_voice,
+        photon_chat,
+        progress,
+    )
+    .await;
+    if let Err(e) = build {
+        staging.abort();
+        return Err(format!("fresh install failed (live directory untouched): {e}"));
+    }
+    progress.set_stage("Committing installation…");
+    progress.set_detail("Swapping new installation into place…".to_string());
+    staging.commit().map_err(|e| e.to_string())?;
+    // Post-commit steps against the live dir — fail-soft, the game itself
+    // is already installed and verified.
+    finish_live_dir(dir, ns_host, progress);
+    progress.set_stage("Final checks…");
+    verify_install(dir)?;
+    persist_install_dir(dir);
+    println!("[install] fresh install committed and verified.");
+    Ok(())
+}
+
+/// Upgrade: refresh managed components in place. Every overwritten file is
+/// backed up first; any failure restores the backups so the previous
+/// working install is never left half-upgraded.
+async fn upgrade_install(
+    dir: &Path,
+    client: &reqwest::Client,
+    ns_host: &str,
+    photon_rt: &str,
+    photon_voice: &str,
+    photon_chat: &str,
+    progress: &progress::Progress,
+) -> Result<(), String> {
+    let mut backups = transaction::BackupSet::new();
+    let refresh = refresh_components(
+        dir,
+        client,
+        &mut backups,
+        ns_host,
+        photon_rt,
+        photon_voice,
+        photon_chat,
+        progress,
+    )
+    .await;
+    match refresh {
+        Ok(()) => {
+            backups.commit();
+            finish_live_dir(dir, ns_host, progress);
+            progress.set_stage("Final checks…");
+            verify_install(dir)?;
+            persist_install_dir(dir);
+            println!("[install] upgrade completed and verified.");
+            Ok(())
+        }
+        Err(e) => {
+            backups.rollback();
+            Err(format!("upgrade failed — rolled back to previous install: {e}"))
+        }
+    }
+}
+
+/// Build the complete installation tree inside `target` (staging dir or the
+/// live dir for upgrades that need the client). Strict: any error aborts.
+async fn build_full_install(
+    target: &Path,
+    client: &reqwest::Client,
+    ns_host: &str,
+    photon_rt: &str,
+    photon_voice: &str,
+    photon_chat: &str,
+    progress: &progress::Progress,
+) -> Result<(), String> {
+    // 1. Game client (~3.8GB).
+    let client_zip = target.join("client.zip");
+    download_mirrored(
+        client,
+        CLIENT_ZIP_MIRRORS,
+        &client_zip,
+        Some(CLIENT_ZIP_MD5),
+        None,
+        "client",
+        Some((progress, "Downloading game files…")),
+    )
+    .await?;
+    // AV hardening (defender.rs): strip the Mark of the Web from the
+    // archive before extracting it.
+    defender::unblock_file(&client_zip);
+    progress.set_stage("Extracting game files…");
+    progress.set_detail("Extracting 7,136 game files…".to_string());
+    extract_zip(&client_zip, target, "client")?;
+    let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
+    progress.set_detail(String::new());
+
+    apply_common_components(
+        target,
+        client,
+        &mut transaction::BackupSet::new(),
+        ns_host,
+        photon_rt,
+        photon_voice,
+        photon_chat,
+        progress,
+    )
+    .await
+}
+
+/// Refresh managed components in an existing install. `backups` protects
+/// every file that gets overwritten.
+async fn refresh_components(
+    dir: &Path,
+    client: &reqwest::Client,
+    backups: &mut transaction::BackupSet,
+    ns_host: &str,
+    photon_rt: &str,
+    photon_voice: &str,
+    photon_chat: &str,
+    progress: &progress::Progress,
+) -> Result<(), String> {
+    // Protect the Steam bypass files before the pipeline touches them.
+    let plug = dir
+        .join("RecRoom_Data")
+        .join("Plugins")
+        .join("x86_64");
+    for rel in [
+        "steam_api64.dll",
+        "steam_settings/steam_appid.txt",
+        "steam_settings/steam_interfaces.txt",
+    ] {
+        // Best-effort: a missing file just means the bypass reinstalls it.
+        let _ = backups.protect(&plug.join(rel));
+    }
+    apply_common_components(
+        dir,
+        client,
+        backups,
+        ns_host,
+        photon_rt,
+        photon_voice,
+        photon_chat,
+        progress,
+    )
+    .await
+}
+
+/// Steps shared by fresh installs and upgrades: Steam bypass, branding,
+/// client patches, FluxLoader. In fresh mode `target` is the staging dir
+/// (the backups set is a throwaway — staging abort covers failures); in
+/// upgrade mode it is the live dir and `backups` is the caller's set, so a
+/// later failure rolls back these changes too.
+async fn apply_common_components(
+    target: &Path,
+    client: &reqwest::Client,
+    backups: &mut transaction::BackupSet,
+    ns_host: &str,
+    photon_rt: &str,
+    photon_voice: &str,
+    photon_chat: &str,
+    progress: &progress::Progress,
+) -> Result<(), String> {
+    // 2. Steam bypass FIRST: the game cannot boot without this, and no
+    // later step may ever prevent it from being in place.
+    let bypass_method = bypass::apply_steam_bypass(client, target, progress).await?;
     println!("[install] Steam bypass in place: {bypass_method:?}.");
 
-    // 1b. Flux Rec logo bundle: patched loading-screen bundle over the stock one.
-    // Never triggers a full client re-download: applies in place, stock backed up once.
+    // 3. Flux Rec logo bundle: patched loading-screen bundle over the stock one.
     // FAIL-SOFT: the logo is cosmetic. If it fails for any reason, warn and
     // continue — the game must always end up fully installed and playable.
-    if let Err(e) = apply_logo_bundle(&client, dir, progress).await {
+    progress.set_stage("Applying Flux Rec branding…");
+    if let Err(e) = apply_logo_bundle(client, target, progress).await {
         eprintln!("[logo] WARNING: logo bundle step failed ({}); continuing without it.", e);
     }
 
-    // 1c. Flux Rec client patches: welcome screen text, YouTube video IDs.
-    // Same-length byte replacements, fail-soft. Applied after game extraction
-    // (or on upgrade, to the existing install).
-    patches::apply_client_patches(dir);
+    // 4. Flux Rec client patches: welcome screen text, YouTube video IDs.
+    // Same-length byte replacements, fail-soft.
+    patches::apply_client_patches(target);
 
-    // v0.1.53: CLEAN SLATE — delete the entire BepInEx folder before reinstalling.
-    // This removes all broken state from v0.1.48/49/50 (crashed plugins,
-    // corrupted configs, stale caches). Fresh BepInEx + fresh plugin + fresh config.
-    // (Game files are NOT touched — no 3.8GB re-download.)
-    let bepinex_dir = dir.join("BepInEx");
-    if bepinex_dir.exists() {
-        println!("[clean] Removing old BepInEx folder for clean reinstall…");
-        let _ = std::fs::remove_dir_all(&bepinex_dir);
+    // 5. FluxLoader (replaces BepInEx). Needs the BepInEx zip ONLY as the
+    // source of the trimmed CoreCLR runtime, and only when dotnet/ is
+    // missing (fresh installs always need it).
+    progress.set_stage("Installing FluxLoader…");
+    let need_dotnet = !target.join("dotnet").join("coreclr.dll").exists();
+    let bepinex_zip: Option<std::path::PathBuf> = if need_dotnet {
+        Some(fetch_bepinex_zip(client, progress).await?)
+    } else {
+        None
+    };
+    fluxloader::install_fluxloader(
+        target,
+        bepinex_zip.as_deref(),
+        backups,
+        ns_host,
+        photon_rt,
+        photon_voice,
+        photon_chat,
+        progress,
+    )?;
+    // Clean up the temp BepInEx zip (it was only ever a dotnet/ source).
+    if let Some(zip) = bepinex_zip {
+        let _ = std::fs::remove_file(zip);
     }
 
-    // 2. BepInEx.
-    let bepinex_zip = dir.join("bepinex.zip");
+    // 6. Plugin config + hosts entry + console policy live in
+    // fluxloader::install_fluxloader (step 6) and finish_live_dir.
+    progress.set_stage("Writing configuration…");
+    println!("[install] configuration written.");
+    Ok(())
+}
+
+/// Download the BepInEx zip to the temp dir (it is only ever a source for
+/// the trimmed CoreCLR runtime subset-extract). Returns the zip path.
+pub(crate) async fn fetch_bepinex_zip(
+    client: &reqwest::Client,
+    progress: &progress::Progress,
+) -> Result<std::path::PathBuf, String> {
+    let dest = std::env::temp_dir().join("fluxrec-bepinex.zip");
+    // Reuse a valid cached copy when present.
+    if crate::file_ok(&dest, None, Some(BEPINEX_SIZE)) {
+        println!("[bepinex] reusing cached zip.");
+        return Ok(dest);
+    }
     download(
-        &client,
+        client,
         BEPINEX_URL,
-        &bepinex_zip,
+        &dest,
         None,
         Some(BEPINEX_SIZE),
         "bepinex",
-        Some((progress, "Installing BepInEx…")),
+        Some((progress, "Installing FluxLoader…")),
     )
     .await?;
-    // AV hardening (defender.rs): strip the Mark of the Web from the archive.
-    defender::unblock_file(&bepinex_zip);
-    extract_zip(&bepinex_zip, dir, "bepinex")?;
-    let _ = std::fs::remove_file(&bepinex_zip);
+    defender::unblock_file(&dest);
+    Ok(dest)
+}
 
-    // 3. Redirect plugin. v0.1.19: embedded directly (no download) — the
-    // upstream release lacks Ultra/WatchUI/Presence patches. Fail-soft: warn
-    // and continue so a write hiccup can never leave the game without its
-    // Steam bypass.
-    let plugins_dir = dir.join("BepInEx").join("plugins");
-    let plugin_path = plugins_dir.join("RecNetPlugin.dll");
-    let plugin_res: Result<(), String> = (|| {
-        std::fs::create_dir_all(&plugins_dir).map_err(|e| e.to_string())?;
-        std::fs::write(&plugin_path, EMBEDDED_PLUGIN).map_err(|e| e.to_string())?;
-        // v0.1.52: DELETE the broken PlayButtonFix.dll from v0.1.48/49/50.
-        // It crashes BepInEx and prevents the game from connecting.
-        // This cleanup ensures a clean state.
-        let play_fix_path = plugins_dir.join("PlayButtonFix.dll");
-        let _ = std::fs::remove_file(&play_fix_path);
-        Ok(())
-    })();
-    if let Err(e) = plugin_res {
-        eprintln!("[plugin] WARNING: plugin step failed ({}); continuing.", e);
-    } else {
-        // Unblock the plugin DLL (defender.rs): files that came from the
-        // internet carry the Zone.Identifier "Mark of the Web", and .NET
-        // can refuse to load them. Remove the flag so BepInEx loads the plugin.
-        defender::unblock_file(&plugin_path);
-    }
-
-    // 4. Plugin config (ns host + Photon IDs baked at packaging time).
-    // Fail-soft for the same reason as above.
-    progress.set_stage("Writing configuration…");
-    if let Err(e) = write_plugin_config(dir, ns_host, photon_rt, photon_voice, photon_chat) {
-        eprintln!("[config] WARNING: plugin config step failed ({}); continuing.", e);
-    }
-    // 4a. Hosts entry for ns.rec.net: the client resolves this hostname itself
-    // via System.Net.Dns, bypassing the plugin's HTTP redirect. On ISPs where
-    // the dead hostname doesn't resolve, the game hangs at "Connecting to
-    // server..." — this maps it to the backend IP. Idempotent, fail-soft.
+/// Post-install steps against the live dir: hosts entry, shortcuts,
+/// Defender exclusions. All fail-soft — the game is installed already.
+fn finish_live_dir(dir: &Path, ns_host: &str, progress: &progress::Progress) {
+    // Hosts entry for ns.rec.net: the client resolves this hostname itself
+    // via System.Net.Dns, bypassing the plugin's HTTP redirect. Idempotent,
+    // fail-soft.
     ensure_ns_hosts_entry(ns_host);
-    // 4b. Keep the BepInEx console window off at game launch. This is the
-    // REAL kill switch: BepInEx 6.0.0-pre.2 defaults Logging.Console/Enabled
-    // to true and AllocConsoles its own window inside the game process, so
-    // no spawn flag can stop it. Corrective: repairs stale Enabled=true
-    // from earlier installs (the old additive-only writer left those behind
-    // forever); infallible per the stealth.rs contract.
-    stealth::ensure_bepinex_console_disabled(dir);
-
-    // 6. Shortcuts. Fail-soft: missing shortcuts never break the game.
+    // Shortcuts. Fail-soft: missing shortcuts never break the game.
     progress.set_stage("Creating shortcuts…");
     if let Err(e) = create_shortcuts(dir) {
         eprintln!("[shortcut] WARNING: shortcut step failed ({}); continuing.", e);
     }
-
-    // 6b. Defender exclusion (defender.rs, 2026-09-24): Windows Security
+    // Defender exclusion (defender.rs, 2026-09-24): Windows Security
     // quarantined a game file on Armin's PC, hanging the game at
     // "Connecting to server...". Exclude the game dir so it can't happen
     // again. Idempotent, fail-soft, silent.
     defender::ensure_defender_exclusions(dir);
+}
 
-    // 7. Final verification: report exactly what is (and isn't) in place,
-    // so a broken install is never silent.
-    progress.set_stage("Final checks…");
+/// Strict final verification: a broken install is NEVER silent.
+/// Fails hard — the caller rolls back / aborts on error.
+fn verify_install(dir: &Path) -> Result<(), String> {
     let mut missing = Vec::new();
     if find_game_exe(dir).is_none() {
         missing.push("RecRoom.exe");
@@ -1000,23 +1121,31 @@ async fn run_install(
     if !steam_settings.join("steam_interfaces.txt").exists() {
         missing.push("steam_settings/steam_interfaces.txt (Steam bypass)");
     }
-    if !dir.join("BepInEx").exists() {
-        missing.push("BepInEx");
-    }
-    if !plugins_dir.join("RecNetPlugin.dll").exists() {
-        missing.push("RecNetPlugin.dll");
+    // FluxLoader (v0.2.0) — every piece required.
+    for rel in [
+        "winhttp.dll (Doorstop proxy)",
+        "doorstop_config.ini",
+        "dotnet/coreclr.dll (CoreCLR runtime)",
+        "FluxLoader/core/FluxLoader.Bootstrap.dll",
+        "FluxLoader/interop/Assembly-CSharp.dll",
+        "FluxLoader/plugins/RecNetPlugin.dll",
+        "FluxLoader/config/net.rec.plugin.cfg",
+    ] {
+        // Strip the human-readable suffix for the actual path check.
+        let path_part = rel.split(" (").next().unwrap_or(rel);
+        if !dir.join(path_part).exists() {
+            missing.push(rel);
+        }
     }
     if missing.is_empty() {
         println!("[verify] all critical files present: game is ready.");
+        Ok(())
     } else {
-        eprintln!("[verify] WARNING: missing: {}.", missing.join(", "));
+        Err(format!(
+            "installation verification FAILED, missing: {}.",
+            missing.join(", ")
+        ))
     }
-
-    // Remember the install dir for future runs (launcher + later setup
-    // invocations without --dir). Fail-soft; see persist_install_dir.
-    persist_install_dir(dir);
-
-    Ok(())
 }
 
 /// Steam bypass via the Goldberg emulator (gbe_fork) — the exact approach

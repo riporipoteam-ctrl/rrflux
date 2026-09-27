@@ -129,25 +129,43 @@ jobs:
           if (-not $p.HasExited) { Write-Host "INSTALL TIMEOUT — killing"; $p.Kill() }
           else { Write-Host "installer exit code:" $p.ExitCode }
 
-      - name: Verify install layout
+      - name: Verify install layout (FluxLoader, v0.2.0)
         shell: pwsh
         run: |
           $checks = @(
             "D:\FluxRec\RecRoom.exe",
             "D:\FluxRec\FluxRecLauncher.exe",
-            "D:\FluxRec\BepInEx\plugins\RecNetPlugin.dll",
-            "D:\FluxRec\BepInEx\config\net.rec.plugin.cfg",
+            "D:\FluxRec\winhttp.dll",
+            "D:\FluxRec\doorstop_config.ini",
+            "D:\FluxRec\dotnet\coreclr.dll",
+            "D:\FluxRec\FluxLoader\core\FluxLoader.Bootstrap.dll",
+            "D:\FluxRec\FluxLoader\interop\Assembly-CSharp.dll",
+            "D:\FluxRec\FluxLoader\plugins\RecNetPlugin.dll",
+            "D:\FluxRec\FluxLoader\config\net.rec.plugin.cfg",
             "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_api64.dll",
             "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_appid.txt",
             "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_interfaces.txt"
           )
+          $failed = $false
           foreach ($c in $checks) {
-            if (Test-Path $c) { Write-Host "OK  $c" } else { Write-Host "MISSING  $c" }
+            if (Test-Path $c) { Write-Host "OK  $c" } else { Write-Host "::error::MISSING  $c"; $failed = $true }
+          }
+          # The old BepInEx tree must be gone entirely (dotnet now lives at the game root).
+          foreach ($stale in @("D:\FluxRec\BepInEx", "D:\FluxRec\BepInEx\plugins", "D:\FluxRec\BepInEx\config", "D:\FluxRec\BepInEx\core")) {
+            if (Test-Path $stale) { Write-Host "::error::STALE  $stale still present"; $failed = $true }
+            else { Write-Host "OK  no $stale" }
           }
           $appid = Get-Content "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_appid.txt" -Raw -ErrorAction SilentlyContinue
           Write-Host "steam_appid.txt content: [$appid]"
-          if (Test-Path "D:\FluxRec\steam_appid.txt") { Write-Host "WARN: legacy root steam_appid.txt still present" }
+          if ($appid.Trim() -ne "471710") { Write-Host "::error::steam_appid.txt is not 471710"; $failed = $true }
+          if (Test-Path "D:\FluxRec\steam_appid.txt") { Write-Host "::error::legacy root steam_appid.txt still present"; $failed = $true }
           else { Write-Host "OK  no legacy root steam_appid.txt" }
+          $ini = Get-Content "D:\FluxRec\doorstop_config.ini" -Raw -ErrorAction SilentlyContinue
+          if ($ini -notmatch "FluxLoader\\core\\FluxLoader.Bootstrap.dll") { Write-Host "::error::doorstop_config.ini missing target_assembly"; $failed = $true }
+          else { Write-Host "OK  doorstop_config.ini targets FluxLoader bootstrap" }
+          if ($ini -notmatch "coreclr_path=dotnet\\coreclr.dll") { Write-Host "::error::doorstop_config.ini missing coreclr_path"; $failed = $true }
+          else { Write-Host "OK  doorstop_config.ini sets CoreCLR path" }
+          if ($failed) { exit 1 }
 
       - name: Launch via FluxRecLauncher --play
         shell: pwsh
@@ -190,3 +208,21 @@ jobs:
         with:
           name: installer-proof-shots
           path: D:\shots\*.png
+
+      - name: Collect FluxLoader + plugin logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path D:\logs | Out-Null
+          foreach ($src in @("D:\FluxRec\FluxLoader\logs", "D:\FluxRec\BepInEx\LogOutput.log")) {
+            if (Test-Path $src) { Copy-Item $src D:\logs -Recurse -Force; Write-Host "collected $src" }
+            else { Write-Host "no $src" }
+          }
+          Get-ChildItem D:\logs -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize | Out-String | Write-Host
+
+      - name: Upload FluxLoader logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-proof-logs
+          path: D:\logs\

@@ -168,7 +168,9 @@ fn find_update(releases: &[serde_json::Value], current: (u64, u64, u64)) -> Upda
 }
 
 /// Download the update asset to `dest` with progress ("Downloading
-/// update\u{2026}"). Verifies a non-empty file; the caller spawns it.
+/// update…"). Verifies the file is a plausible installer: non-empty, sane
+/// size, and a real PE executable (MZ header) — a truncated or HTML error
+/// page download can never be spawned. The caller spawns it.
 pub async fn download_update(
     url: &str,
     dest: &Path,
@@ -201,13 +203,29 @@ pub async fn download_update(
         if total > 0 {
             let pct = 8 + (done as f64 / total as f64 * 72.0) as u8;
             progress.set_status("Downloading update\u{2026}", pct.min(80));
+            // v0.2.0: live MB/s + ETA on the detail line.
+            progress.set_throughput("Downloading update", done, total);
         }
     }
     drop(file);
+    // v0.2.0: structural verification — the old check was "non-empty" only.
     let meta = std::fs::metadata(dest).map_err(|e| e.to_string())?;
-    if meta.len() == 0 {
+    if meta.len() < 5_000_000 {
         let _ = std::fs::remove_file(dest);
-        return Err("update download: empty file".to_string());
+        return Err(format!(
+            "update download: file too small ({} bytes) — truncated?",
+            meta.len()
+        ));
+    }
+    {
+        use std::io::Read as _;
+        let mut f = std::fs::File::open(dest).map_err(|e| e.to_string())?;
+        let mut magic = [0u8; 2];
+        f.read_exact(&mut magic).map_err(|e| e.to_string())?;
+        if magic != [b'M', b'Z'] {
+            let _ = std::fs::remove_file(dest);
+            return Err("update download: not a Windows executable (bad MZ header)".to_string());
+        }
     }
     Ok(())
 }

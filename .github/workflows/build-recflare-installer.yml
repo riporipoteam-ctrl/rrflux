@@ -44,11 +44,16 @@ jobs:
           # skipped release creation in v0.1.4.
           gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --prerelease --title "Flux Rec setup (RecFlare pipeline) v$ver" --notes "Zero-touch installer: downloads the 2023 Rec Room client, BepInEx and the RecNet redirect plugin, writes config, no Steam needed."
+            gh release create $tag --prerelease --title "Flux Rec setup (RecFlare pipeline) v$ver" --notes "Zero-touch installer: downloads the 2023 Rec Room client, installs the Steam bypass, FluxLoader (BepInEx replacement) and the RecNet redirect plugin, writes config, no Steam needed. Transactional install with rollback."
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
           }
           gh release upload $tag "game\installer\target\release\FluxRec-Setup.exe" --clobber
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+          # SHA-256 checksum for the setup EXE (used by future updater verification).
+          $hash = (Get-FileHash "game\installer\target\release\FluxRec-Setup.exe" -Algorithm SHA256).Hash.ToLower()
+          "FluxRec-Setup.exe $hash" | Out-File "game\installer\target\release\SHA256SUMS.txt" -Encoding ascii
+          gh release upload $tag "game\installer\target\release\SHA256SUMS.txt" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload (checksums) failed" }
 
       - name: Upload setup.exe
         uses: actions/upload-artifact@v4
