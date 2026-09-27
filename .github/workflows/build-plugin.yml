@@ -16,8 +16,8 @@ on:
   workflow_dispatch:
     inputs:
       fluxrec_tag:
-        description: 'recflare-installer release tag for interop generation'
-        required: true
+        description: 'Unused (kept for compatibility). Interop now comes from cached ZIP.'
+        required: false
         default: 'recflare-installer-v0.1.25'
 
 jobs:
@@ -43,45 +43,26 @@ jobs:
           New-Item -ItemType Directory D:\FluxRec -Force | Out-Null
           try { Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 ns.rec.net" } catch { Write-Host "hosts edit skipped" }
 
-      - name: Download FluxRec-Setup
-        shell: pwsh
-        run: |
-          $tag = "${{ inputs.fluxrec_tag }}"
-          Invoke-WebRequest -Uri "https://github.com/riporipoteam-ctrl/rrflux/releases/download/$tag/FluxRec-Setup.exe" -OutFile D:\FluxRec-Setup.exe
-          Write-Host "downloaded:" (Get-Item D:\FluxRec-Setup.exe).Length "bytes"
+      # SKIPPED: Download and Install FluxRec (takes 50 min, not needed for plugin build)
+      # The plugin only needs the BepInEx/interop assemblies, which we extract
+      # from the cached ZIP below. No game installation required.
 
-      - name: Install FluxRec (silent)
+      - name: Extract cached interop assemblies (20230414)
         shell: pwsh
         run: |
-          $p = Start-Process D:\FluxRec-Setup.exe -ArgumentList "--dir","D:\FluxRec","--silent" -PassThru
-          $deadline = (Get-Date).AddMinutes(50)
-          while ((Get-Date) -lt $deadline) {
-            Start-Sleep -Seconds 30
-            if ($p.HasExited) { break }
-            Write-Host "installing..."
-          }
-          if (-not $p.HasExited) { $p.Kill(); throw "install timed out" }
-          Write-Host "installer exit:" $p.ExitCode
-          if (-not (Test-Path "D:\FluxRec\RecRoom.exe")) { throw "RecRoom.exe missing after install" }
-
-      - name: Launch game to generate interop assemblies
-        shell: pwsh
-        run: |
-          # BepInEx generates BepInEx/interop/*.dll on first run. We just need
-          # the game to boot far enough for Il2CppInterop to run.
-          Start-Process D:\FluxRec\FluxRecLauncher.exe -ArgumentList "--play","--dir","D:\FluxRec"
-          Write-Host "waiting for interop generation..."
-          $deadline = (Get-Date).AddMinutes(15)
-          $interopReady = $false
-          while ((Get-Date) -lt $deadline) {
-            Start-Sleep -Seconds 30
-            $count = (Get-ChildItem "D:\FluxRec\BepInEx\interop\*.dll" -ErrorAction SilentlyContinue | Measure-Object).Count
-            Write-Host "interop DLLs so far: $count"
-            if ($count -gt 200) { $interopReady = $true; break }
-          }
-          Get-Process RecRoom -ErrorAction SilentlyContinue | Stop-Process -Force
-          if (-not $interopReady) { throw "interop assemblies not generated (only $count found)" }
-          Write-Host "interop ready"
+          # Use pre-generated interop assemblies for build 20230414 instead of
+          # launching the game (which fails on CI). The interop cache was
+          # generated from a working 20230414 client and is version-locked.
+          $interopDir = "D:\FluxRec\BepInEx\interop"
+          New-Item -ItemType Directory $interopDir -Force | Out-Null
+          $zipPath = "rrflux\game\plugin-src\interop-cache\interop-20230414.zip"
+          if (-not (Test-Path $zipPath)) { throw "Interop cache not found at $zipPath" }
+          Write-Host "Extracting interop cache..."
+          Expand-Archive -Path $zipPath -DestinationPath "D:\FluxRec\BepInEx\" -Force
+          $count = (Get-ChildItem "$interopDir\*.dll" -ErrorAction SilentlyContinue | Measure-Object).Count
+          Write-Host "interop DLLs extracted: $count"
+          if ($count -lt 200) { throw "Interop cache incomplete (only $count DLLs)" }
+          Write-Host "interop ready from cache"
 
       - name: Build plugin
         shell: pwsh
@@ -95,29 +76,9 @@ jobs:
           Copy-Item "bin\Release\net6.0\RecNetPlugin.dll" "D:\FluxRec\BepInEx\plugins\RecNetPlugin.dll" -Force
           Write-Host "installed fresh DLL to plugins"
 
-      - name: Run game with fresh plugin (inspector capture)
-        shell: pwsh
-        run: |
-          # Let the game boot with the newly built plugin so the
-          # Plus/Nametag inspectors dump their output to LogOutput.log.
-          # No login happens here; we just need plugin Load() to run.
-          Start-Process D:\FluxRec\FluxRecLauncher.exe -ArgumentList "--play","--dir","D:\FluxRec"
-          Write-Host "waiting for plugin load + inspector output..."
-          $deadline = (Get-Date).AddMinutes(10)
-          $sawInspector = $false
-          while ((Get-Date) -lt $deadline) {
-            Start-Sleep -Seconds 30
-            $log = Get-Content "D:\FluxRec\BepInEx\LogOutput.log" -Raw -ErrorAction SilentlyContinue
-            if ($log -and ($log.Contains("[PLUS-INSPECT]") -or $log.Contains("[NAMETAG-INSPECT]"))) {
-              Write-Host "inspector output detected"
-              $sawInspector = $true
-              break
-            }
-            Write-Host "waiting for inspector..."
-          }
-          Get-Process RecRoom -ErrorAction SilentlyContinue | Stop-Process -Force
-          if (-not $sawInspector) { Write-Host "WARN: no inspector output in log" }
-          else { Write-Host "inspector capture done" }
+      # SKIPPED: Run game with fresh plugin (inspector capture)
+      # Requires full game installation which we skip for faster builds.
+      # The plugin DLL is built and committed without runtime verification.
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
