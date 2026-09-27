@@ -410,14 +410,14 @@ async fn repair_plugin_dll(
         return false;
     }
     let dest = plugins_dir.join("RecNetPlugin.dll");
-    // Remove any quarantined remnant (e.g. a 0-byte stub) so the write
-    // below actually replaces it instead of skipping as "already present".
-    let _ = std::fs::remove_file(&dest);
+    // v0.1.50: DO NOT delete first — if the write fails after deletion,
+    // the file is gone and we can't recover. Just overwrite directly.
+    // (The old code deleted then wrote; a failed write left nothing.)
     progress.set_stage("Repairing Flux Rec plugin…");
     // v0.1.19: use the embedded plugin (no download — upstream lacks our patches).
     // v0.1.49: also repair PlayButtonFix.dll (Play button visibility fix).
     let play_fix_dest = plugins_dir.join("PlayButtonFix.dll");
-    let _ = std::fs::remove_file(&play_fix_dest);
+    // Don't delete PlayButtonFix either — just overwrite.
     let play_fix_ok = std::fs::write(&play_fix_dest, crate::EMBEDDED_PLAY_BUTTON_FIX).is_ok();
     if play_fix_ok {
         unblock_file(&play_fix_dest);
