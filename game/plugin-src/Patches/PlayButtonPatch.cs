@@ -1,15 +1,21 @@
-// Adds a "Play" button to the home icon row by cloning the Create icon and
-// rewiring its click to Play navigation. v0.1.36 rewrite (retargeted to the
-// REAL home UI from the user's 2026-09-27 screenshots).
+// Adds a "Play" tab to the Watch home tab row by cloning the Rooms tab and
+// rewiring its click to Play navigation. v0.1.35 rewrite (retargeted).
 //
-// Why this shape:
-//  - The v0.1.35 research was WRONG: the home screen is an ICON GRID, not the
-//    HomeTop5TabsModel tab row. The top row is Create | Store | Events |
-//    Clubs | Challenges | Backpack (uGUI icon buttons with text labels). The
-//    Create icon IS a uGUI Button — the plugin finds it by label, clones it
-//    into the same row, relabels the clone "Play", and replaces its onClick
-//    with Play navigation. Same prefab, same style — visually consistent.
-//  - The clone's original onClick listeners (which open the Create menu) are
+// Why this shape (and why the old "Create button" hunt is gone):
+//  - Research for v0.1.35 confirmed there is NO Create tab on the RRUI home
+//    screen (the home tabs are Rooms/Clubs/Items/Inventions/Creators under
+//    HomeTop5TabsModel, enum EKNOKKDNHFP) and the legacy createRoomButton is
+//    a Button3D, not a uGUI Button — so hunting a "Create" uGUI Button could
+//    never succeed. The old file targeted a button that does not exist.
+//    There is deliberately NO "Create" label search anywhere in this file.
+//  - The home screen is 100% code-built at runtime via RRUI (Rec Room's UI
+//    framework) — there are no home-screen prefabs to edit. The plugin
+//    clones the Rooms tab (same prefab, same style, same row), inserts the
+//    clone as its next sibling and relabels it "Play". Visual consistency
+//    with the game's design language is guaranteed because it is literally
+//    the same tab GameObject. This mirrors FluxConnectButton's proven
+//    clone + relabel + click-handler pattern.
+//  - The clone's original onClick listeners (which open the Rooms tab) are
 //    removed and replaced with a single listener wired through
 //    DelegateSupport.ConvertDelegate — our OWN fresh handler, never a
 //    wrapped game callback, so the v0.1.30 Delegate.CreateDelegate hang
@@ -24,18 +30,24 @@
 //    diagnostics (nav enum ELCPGOKLPLO, Play = 8) instead of silently dying.
 //
 // Hard rules honored:
-//  - The source icon itself is untouched: the plugin only ADDS a sibling.
-//  - Idempotent: the clone is only added once per icon row (name check), so
+//  - The source tab itself is untouched: the plugin only ADDS a sibling.
+//  - Idempotent: the clone is only added once per tab row (name check), so
 //    scene reloads and repeated Apply() calls never duplicate it.
-//  - The clone is named "<source>_FluxPlayTab": it carries the _FluxPlayTab
-//    identity that HomeLabelsPatch already skips, so the "Play" label is
-//    never clobbered regardless of Apply() ordering between the two patches.
-//  - The button is a pure navigation trigger: it never registers with any
-//    tab model, so it cannot corrupt UI navigation state.
+//  - The clone is named "<source>_FluxPlayTab_Play": it carries the
+//    _FluxPlayTab identity AND ends with the "_Play" suffix that
+//    HomeLabelsPatch already skips, so the "Play" label is never clobbered
+//    regardless of Apply() ordering between the two patches (HomeLabelsPatch
+//    is owned by another patch and is not edited from here).
+//  - The tab is a pure navigation trigger: it never registers with
+//    TabsModel<T>.GoToPage, so it cannot corrupt tab navigation state.
 //
-// Discovery: every active uGUI Button is checked for a child label reading
-// "Create" (case-insensitive, trimmed); the hit whose parent row also holds
-// a "Store" or "Events" button wins (sanity check for the home icon row).
+// Discovery is label-assisted but never label-dependent. PRIMARY: the Watch
+// home tab row resolved via the unobfuscated HomeTop5TabsModel type (the
+// same anchor HomeLabelsPatch uses) — prefer the child whose visible label
+// reads "Rooms", else take the first active child carrying a uGUI Button
+// (tabs are ordered Rooms=0, Clubs=1, Items=2, Inventions=3, Creators=4).
+// FALLBACK: a visible-label "Rooms" search over all active uGUI Buttons,
+// preferring buttons under a Home/Watch ancestor.
 //
 // IL2CPP rules: click handlers go through
 // DelegateSupport.ConvertDelegate<UnityAction>(new Action(...)) — NEVER
@@ -61,20 +73,16 @@ namespace RecNetPlugin.Patches;
 internal static class PlayButtonPatch
 {
     // The clone's distinguishing name fragment. The full clone name is
-    // "<source>_FluxPlayTab": the "_FluxPlayTab" part is this feature's
-    // identity (mirrors the _FluxConnectTab pattern) and is what
-    // HomeLabelsPatch already skips — so the "Play" label is never clobbered
-    // regardless of Apply() ordering between the two patches.
+    // "<sourceTabName>_FluxPlayTab_Play": the "_FluxPlayTab" part is this
+    // feature's identity (mirrors the _FluxConnectTab pattern), and the
+    // trailing "_Play" part is what HomeLabelsPatch already skips — so the
+    // "Play" label survives HomeLabelsPatch's renames whichever patch runs
+    // first.
     private const string CloneNameFragment = "_FluxPlayTab";
-    private const string CloneNameSuffix = "_FluxPlayTab";
+    private const string CloneNameSuffix = "_FluxPlayTab_Play";
     private const string ConnectCloneSuffix = "_FluxConnectTab";
     private const string CloneLabel = "Play";
-    // The home icon row (per the user's 2026-09-27 screenshots) is:
-    // Create | Store | Events | Clubs | Challenges | Backpack. We find the
-    // Create icon by its label, then sanity-check the row by looking for a
-    // Store or Events sibling.
-    private const string CreateLabel = "Create";
-    private static readonly string[] RowSiblingLabels = { "Store", "Events" };
+    private const string RoomsLabel = "Rooms";
 
     // Retry budget is TIME-based, not attempt-based. The Watch home tab row
     // finishes building asynchronously inside the menu scene (post-login),
@@ -102,7 +110,7 @@ internal static class PlayButtonPatch
     private static string _navProbeSummary;           // diagnostic fallback when the method is absent
 
     // True once there is nothing left to do: feature disabled in config, the
-    // Play button was added, or the retry budget ran out. The UiDiscoveryRetry
+    // Play tab was added, or the retry budget ran out. The UiDiscoveryRetry
     // driver stops ticking this patch once settled.
     internal static bool IsSettled =>
         !Plugin.EnablePlayButton.Value || _tabDone || _gaveUp;
@@ -121,7 +129,7 @@ internal static class PlayButtonPatch
         if (_firstAttemptUtc == DateTime.MinValue)
         {
             _firstAttemptUtc = DateTime.UtcNow;
-            Plugin.Log.LogInfo("[PLAY] looking for the Create icon on the home screen " +
+            Plugin.Log.LogInfo("[PLAY] looking for the Rooms tab on the home screen " +
                 $"(retry budget {MaxRetryTime.TotalMinutes:F0} minutes)");
         }
 
@@ -158,8 +166,8 @@ internal static class PlayButtonPatch
             return;
         _lastProgressLogUtc = now;
         var elapsed = now - _firstAttemptUtc;
-        Plugin.Log.LogWarning($"[PLAY] still looking for the Create icon " +
-            $"(attempt {_attempts}, {elapsed.TotalSeconds:F0}s elapsed). {DescribeIconRow()}");
+        Plugin.Log.LogWarning($"[PLAY] still looking for the Rooms tab " +
+            $"(attempt {_attempts}, {elapsed.TotalSeconds:F0}s elapsed). {DescribeTabs()}");
     }
 
     // Final give-up: Warning level, states exactly what was searched for,
@@ -167,62 +175,55 @@ internal static class PlayButtonPatch
     private static void LogGiveUp()
     {
         var elapsed = DateTime.UtcNow - _firstAttemptUtc;
-        Plugin.Log.LogWarning("[PLAY] GAVE UP adding the Play button after " +
+        Plugin.Log.LogWarning("[PLAY] GAVE UP adding the Play tab after " +
             $"{_attempts} attempts over {elapsed.TotalMinutes:F1} minutes. " +
-            "Searched: every active uGUI Button in the scene for a child label " +
-            "'Create' (case-insensitive, trimmed), preferring buttons whose " +
-            "parent row also contains a 'Store' or 'Events' button (the home " +
-            "icon row per the user's screenshots: Create | Store | Events | " +
-            "Clubs | Challenges | Backpack). " +
-            "Scene contents at give-up: " + DescribeIconRow());
+            "Searched: (1) the Watch home tab row via the unobfuscated HomeTop5TabsModel " +
+            "type — first active child carrying a uGUI Button, preferring the child " +
+            "whose visible label reads 'Rooms' (skipping our own _FluxPlayTab clone " +
+            "and the _FluxConnectTab clone); " +
+            "(2) every active uGUI Button in the scene for a child label 'Rooms' " +
+            "(case-insensitive), preferring buttons under a Home/Watch ancestor. " +
+            "Note: there is deliberately NO 'Create' button search — research " +
+            "confirmed no Create tab exists on the RRUI home and the legacy " +
+            "createRoomButton is a Button3D, not a uGUI Button. " +
+            "Scene contents at give-up: " + DescribeTabs());
     }
 
-    // Diagnostic snapshot: is there a "Create"-labeled button anywhere, what
-    // does its row container hold, and which button labels exist at all.
-    private static string DescribeIconRow()
+    // Diagnostic snapshot: is the HomeTop5TabsModel type/instance present,
+    // what does the tab row contain, and which button labels exist at all.
+    private static string DescribeTabs()
     {
         try
         {
-            var createBtn = FindCreateButtonRaw();
-            string rowInfo;
-            if (createBtn == null)
+            var modelType = FindTypeByName("HomeTop5TabsModel");
+            if (modelType == null)
+                return "HomeTop5TabsModel type not found in loaded assemblies; " + DescribeSceneLabels();
+
+            var row = FirstGameObjectOfType(modelType)?.transform;
+            if (row == null)
+                return "HomeTop5TabsModel type present but no live instance in the scene; " + DescribeSceneLabels();
+
+            var children = new List<string>();
+            int buttons = 0;
+            for (int i = 0; i < row.childCount && children.Count < 25; i++)
             {
-                rowInfo = "no 'Create'-labeled uGUI Button found in the scene; ";
+                var child = row.GetChild(i);
+                if (child == null)
+                    continue;
+                var go = child.gameObject;
+                if (go == null)
+                    continue;
+                var label = ReadFirstLabel(go);
+                children.Add($"'{go.name}' label='{label ?? "<none>"}' active={go.activeInHierarchy}");
+                if (HasButton(go))
+                    buttons++;
             }
-            else
-            {
-                var parent = createBtn.transform.parent;
-                if (parent == null)
-                {
-                    rowInfo = $"Create button '{createBtn.name}' found but has no parent; ";
-                }
-                else
-                {
-                    var children = new List<string>();
-                    int buttons = 0;
-                    for (int i = 0; i < parent.childCount && children.Count < 25; i++)
-                    {
-                        var child = parent.GetChild(i);
-                        if (child == null)
-                            continue;
-                        var go = child.gameObject;
-                        if (go == null)
-                            continue;
-                        var label = ReadFirstLabel(go);
-                        children.Add($"'{go.name}' label='{label ?? "<none>"}' active={go.activeInHierarchy}");
-                        if (HasButton(go))
-                            buttons++;
-                    }
-                    rowInfo = $"Create button '{createBtn.name}' found; parent row '{parent.name}' " +
-                        $"has {parent.childCount} children ({buttons} carrying uGUI Buttons): " +
-                        $"[{string.Join(", ", children)}]; ";
-                }
-            }
-            return rowInfo + DescribeSceneLabels();
+            return $"HomeTop5TabsModel row '{row.name}' found with {row.childCount} children " +
+                $"({buttons} carrying uGUI Buttons): [{string.Join(", ", children)}]; " + DescribeSceneLabels();
         }
         catch (Exception e)
         {
-            return $"icon-row scan failed: {e.Message}";
+            return $"tab scan failed: {e.Message}";
         }
     }
 
@@ -260,25 +261,20 @@ internal static class PlayButtonPatch
         }
     }
 
-    // Find the Create icon and clone it into a "Play" button right beside it.
+    // Find the Rooms tab and clone it into a "Play" tab right beside it.
     private static void EnsurePlayTab()
     {
-        var source = FindCreateIcon();
+        var source = FindRoomsTab();
         if (source == null)
         {
-            Plugin.Log.LogDebug("[PLAY] Create icon not found yet");
+            Plugin.Log.LogDebug("[PLAY] Rooms tab not found yet");
             return;
         }
 
-        // Resolve the row container and the Create tile root. The Create
-        // Button may sit directly in the row or nested inside a tile wrapper
-        // — ascend to the first ancestor whose children hold the Create +
-        // Store/Events button set, then clone the tile (the child of that
-        // container holding the Create button), not the raw button.
-        var rowContainer = FindRowContainer(source);
-        if (rowContainer == null)
+        var parent = source.transform.parent;
+        if (parent == null)
         {
-            // Structural mismatch: the icon was found but has no row to clone
+            // Structural mismatch: the tab was found but has no row to clone
             // into. Retrying won't fix this — give up loudly with the full
             // diagnostic snapshot so the log shows what went wrong.
             _gaveUp = true;
@@ -286,108 +282,104 @@ internal static class PlayButtonPatch
             return;
         }
 
-        var tileRoot = FindTileRoot(source, rowContainer);
-        if (tileRoot == null)
-            tileRoot = source; // fallback: clone the button itself
-
         // Already added? (a sibling already carrying our clone identity)
-        for (int i = 0; i < rowContainer.childCount; i++)
+        for (int i = 0; i < parent.childCount; i++)
         {
-            var child = rowContainer.GetChild(i);
+            var child = parent.GetChild(i);
             if (child != null && IsOurClone(child.gameObject))
             {
                 _tabDone = true;
-                Plugin.Log.LogDebug("[PLAY] Play button already present");
+                Plugin.Log.LogDebug("[PLAY] Play tab already present");
                 return;
             }
         }
 
-        if (CloneAsPlay(tileRoot, rowContainer))
+        if (CloneAsPlay(source))
             _tabDone = true;
     }
 
-    // Ascend from the Create button to the icon-row container: the first
-    // ancestor (starting with the direct parent) whose children contain the
-    // Create + Store/Events button set. Falls back to the direct parent.
-    private static Transform FindRowContainer(GameObject createButton)
-    {
-        try
-        {
-            var t = createButton.transform.parent;
-            int depth = 0;
-            while (t != null && depth < 6)
-            {
-                if (RowHasIconSet(t))
-                    return t;
-                t = t.parent;
-                depth++;
-            }
-        }
-        catch { }
-        return createButton.transform.parent;
-    }
-
-    // True when the container's children include buttons labeled Create and
-    // (Store or Events) — the home icon row signature. Checks one wrapper
-    // level down so tiles nested in layout groups still match.
-    private static bool RowHasIconSet(Transform container)
-    {
-        try
-        {
-            bool hasCreate = false, hasSibling = false;
-            for (int i = 0; i < container.childCount; i++)
-            {
-                var child = container.GetChild(i);
-                if (child == null)
-                    continue;
-                var go = child.gameObject;
-                if (HasLabel(go, CreateLabel))
-                    hasCreate = true;
-                if (HasLabel(go, "Store") || HasLabel(go, "Events"))
-                    hasSibling = true;
-                if (hasCreate && hasSibling)
-                    return true;
-            }
-        }
-        catch { }
-        return false;
-    }
-
-    // The tile root: the child of the row container that holds the Create
-    // button (walk up from the button until the parent is the container).
-    private static GameObject FindTileRoot(GameObject createButton, Transform rowContainer)
-    {
-        try
-        {
-            var t = createButton.transform;
-            int depth = 0;
-            while (t != null && t.parent != rowContainer && depth < 8)
-            {
-                t = t.parent;
-                depth++;
-            }
-            if (t != null && t.parent == rowContainer)
-                return t.gameObject;
-        }
-        catch { }
-        return null;
-    }
-
     // True when go is this feature's clone: its name contains the
-    // _FluxPlayTab fragment (covers the full "<source>_FluxPlayTab"
+    // _FluxPlayTab fragment (covers the full "<source>_FluxPlayTab_Play"
     // clone name). A stock game object will never contain this fragment.
     private static bool IsOurClone(GameObject go)
     {
         return go != null && (go.name ?? string.Empty).Contains(CloneNameFragment);
     }
 
-    // Locate the Create icon on the home icon row. Scans every active uGUI
-    // Button for a child label reading "Create" (case-insensitive, trimmed),
-    // preferring buttons whose parent row also contains a "Store" or "Events"
-    // button — the home icon row per the user's screenshots
-    // (Create | Store | Events | Clubs | Challenges | Backpack). Never
-    // returns our own Play clone or the Connect clone.
-    private static GameObject FindCreateIcon()
+    // Locate the Rooms tab. PRIMARY: the Watch home tab row resolved via the
+    // unobfuscated HomeTop5TabsModel type (same anchor HomeLabelsPatch uses).
+    // FALLBACK: a visible-label "Rooms" search over all active uGUI Buttons.
+    private static GameObject FindRoomsTab()
+    {
+        var byModel = FindRoomsTabByModel();
+        if (byModel != null)
+            return byModel;
+        return FindRoomsTabByLabel();
+    }
+
+    // Model-based tab discovery: find the Watch home tab row through the
+    // unobfuscated HomeTop5TabsModel type. Label-assisted, not
+    // label-dependent: prefer the child whose visible label reads "Rooms",
+    // else take the first active child carrying a uGUI Button (the tabs are
+    // ordered Rooms=0, Clubs=1, Items=2, Inventions=3, Creators=4 per
+    // EKNOKKDNHFP). Never clones our own Play tab or the Connect tab.
+    private static GameObject FindRoomsTabByModel()
+    {
+        var modelType = FindTypeByName("HomeTop5TabsModel");
+        if (modelType == null)
+        {
+            Plugin.Log.LogDebug("[PLAY] HomeTop5TabsModel type not found yet");
+            return null;
+        }
+        var row = FirstGameObjectOfType(modelType)?.transform;
+        if (row == null)
+        {
+            Plugin.Log.LogDebug("[PLAY] HomeTop5TabsModel instance not in the scene yet");
+            return null;
+        }
+
+        GameObject firstButtonChild = null;
+        for (int i = 0; i < row.childCount; i++)
+        {
+            var child = row.GetChild(i);
+            if (child == null)
+                continue;
+            var go = child.gameObject;
+            if (go == null || !go.activeInHierarchy)
+                continue;
+            // Never clone our own Play tab or the Connect tab (both live in
+            // the same row).
+            if (IsOurClone(go) ||
+                (go.name ?? string.Empty).EndsWith(ConnectCloneSuffix, StringComparison.Ordinal))
+                continue;
+            if (!HasButton(go))
+                continue;
+            if (firstButtonChild == null)
+                firstButtonChild = go;
+            var label = ReadFirstLabel(go);
+            if (!string.IsNullOrEmpty(label) &&
+                label.Equals(RoomsLabel, StringComparison.OrdinalIgnoreCase))
+            {
+                Plugin.Log.LogInfo($"[PLAY] found Rooms tab via HomeTop5TabsModel (label match): '{go.name}'");
+                return go;
+            }
+        }
+
+        if (firstButtonChild != null)
+        {
+            Plugin.Log.LogInfo("[PLAY] found Rooms tab via HomeTop5TabsModel (first tab button, " +
+                $"label='{ReadFirstLabel(firstButtonChild) ?? "<none>"}'): '{firstButtonChild.name}'");
+            return firstButtonChild;
+        }
+
+        Plugin.Log.LogDebug($"[PLAY] HomeTop5TabsModel row '{row.name}' found but no tab button child yet");
+        return null;
+    }
+
+    // Fallback: any active uGUI Button whose child label reads "Rooms",
+    // preferring buttons under a Home/Watch ancestor (the Watch tab row)
+    // over same-labeled buttons in other menus.
+    private static GameObject FindRoomsTabByLabel()
     {
         var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
             new[] { typeof(Type) });
@@ -399,8 +391,7 @@ internal static class PlayButtonPatch
             return null;
 
         GameObject best = null;
-        bool bestIsHomeRow = false;
-        int scanned = 0;
+        bool bestIsHome = false;
         foreach (var o in all)
         {
             // Il2Cpp downcasts must go through TryCast, never a direct cast.
@@ -410,103 +401,24 @@ internal static class PlayButtonPatch
             var go = button.gameObject;
             if (go == null || !go.activeInHierarchy)
                 continue;
-            scanned++;
             if (IsOurClone(go))
                 continue;
-            if (!HasLabel(go, CreateLabel))
+            if (!HasLabel(go, RoomsLabel))
                 continue;
 
-            bool isHomeRow = IsHomeIconRow(go);
-            Plugin.Log.LogDebug($"[PLAY] candidate Create button '{go.name}' " +
-                $"(path: {GetPath(go)}, homeRow={isHomeRow})");
-            if (best == null || (isHomeRow && !bestIsHomeRow))
+            bool isHome = IsUnderHome(go);
+            if (best == null || (isHome && !bestIsHome))
             {
                 best = go;
-                bestIsHomeRow = isHomeRow;
-                if (isHomeRow)
-                    break; // home-row Create is the one we want
+                bestIsHome = isHome;
+                if (isHome)
+                    break; // Watch/home Rooms is the one we want
             }
         }
 
-        if (scanned > 0)
-            Plugin.Log.LogDebug($"[PLAY] scanned {scanned} active uGUI Buttons for the Create icon");
         if (best != null)
-            Plugin.Log.LogInfo($"[PLAY] found Create icon: '{best.name}' (homeRow={bestIsHomeRow})");
+            Plugin.Log.LogInfo($"[PLAY] found Rooms tab by label: '{best.name}'");
         return best;
-    }
-
-    // Raw scan used by diagnostics: first active "Create"-labeled button, no
-    // row sanity check, no logging (the caller logs).
-    private static GameObject FindCreateButtonRaw()
-    {
-        try
-        {
-            var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
-                new[] { typeof(Type) });
-            if (find == null)
-                return null;
-            var all = (IEnumerable)find.Invoke(null, new object[] { typeof(Button) });
-            if (all == null)
-                return null;
-            foreach (var o in all)
-            {
-                var button = ((UnityEngine.Object)o).TryCast<Button>();
-                if (button == null)
-                    continue;
-                var go = button.gameObject;
-                if (go == null || !go.activeInHierarchy)
-                    continue;
-                if (HasLabel(go, CreateLabel))
-                    return go;
-            }
-        }
-        catch { }
-        return null;
-    }
-
-    // True when go's parent row contains a sibling button labeled "Store" or
-    // "Events" — the signature of the home icon row from the screenshots.
-    private static bool IsHomeIconRow(GameObject go)
-    {
-        try
-        {
-            var parent = go.transform.parent;
-            if (parent == null)
-                return false;
-            for (int i = 0; i < parent.childCount; i++)
-            {
-                var child = parent.GetChild(i);
-                if (child == null)
-                    continue;
-                var cgo = child.gameObject;
-                if (cgo == null || cgo == go || !cgo.activeInHierarchy)
-                    continue;
-                if (!HasButton(cgo))
-                    continue;
-                foreach (var siblingLabel in RowSiblingLabels)
-                {
-                    if (HasLabel(cgo, siblingLabel))
-                        return true;
-                }
-            }
-        }
-        catch { }
-        return false;
-    }
-
-    // Short hierarchy path for the log, e.g. "Canvas/Home/IconRow/Create".
-    private static string GetPath(GameObject go)
-    {
-        try
-        {
-            var parts = new List<string>();
-            var t = go.transform;
-            for (int i = 0; i < 6 && t != null; i++, t = t.parent)
-                parts.Add(t.name ?? "?");
-            parts.Reverse();
-            return string.Join("/", parts);
-        }
-        catch { return go.name ?? "?"; }
     }
 
     private static bool HasButton(GameObject go)
@@ -519,9 +431,6 @@ internal static class PlayButtonPatch
 
     private static bool IsUnderHome(GameObject go)
     {
-        // Kept for potential future use; the Create-icon discovery uses
-        // IsHomeIconRow (sibling-label check) instead of ancestor-name
-        // matching, which proved unreliable.
         var t = go.transform.parent;
         while (t != null)
         {
@@ -667,10 +576,9 @@ internal static class PlayButtonPatch
         return null;
     }
 
-    // Clone the Create tile into the Play button inside the row container.
-    // Returns true when the clone was placed (idempotency is handled by the
-    // caller).
-    private static bool CloneAsPlay(GameObject sourceGo, Transform rowContainer)
+    // Clone the Rooms tab into the Play tab. Returns true when the clone was
+    // placed (idempotency is handled by the caller).
+    private static bool CloneAsPlay(GameObject sourceGo)
     {
         var cloneObj = UnityEngine.Object.Instantiate(sourceGo);
         var cloneGo = cloneObj.TryCast<GameObject>();
@@ -680,10 +588,10 @@ internal static class PlayButtonPatch
             return false;
         }
 
-        cloneGo.transform.SetParent(rowContainer, false);
+        cloneGo.transform.SetParent(sourceGo.transform.parent, false);
         cloneGo.transform.SetSiblingIndex(sourceGo.transform.GetSiblingIndex() + 1);
-        // _FluxPlayTab identity — HomeLabelsPatch already skips names
-        // containing this fragment, so the "Play" label survives.
+        // _FluxPlayTab identity + trailing _Play so HomeLabelsPatch's
+        // existing suffix skip leaves the "Play" label alone.
         cloneGo.name = sourceGo.name + CloneNameSuffix;
 
         // Relabel the source label -> "Play" (uGUI Text; TMPro fallback via
@@ -692,13 +600,13 @@ internal static class PlayButtonPatch
         if (!string.IsNullOrEmpty(sourceLabel))
             RelabelClone(cloneGo, sourceLabel, CloneLabel);
         else
-            Plugin.Log.LogWarning("[PLAY] no label Text found on the source icon — Play button keeps its label");
+            Plugin.Log.LogWarning("[PLAY] no label Text found on the source tab — Play tab keeps its label");
 
-        // Replace the Create-menu click handler with Play navigation.
+        // Replace the tab-switch click handler with Play navigation.
         ReplaceClickHandler(cloneGo);
 
-        Plugin.Log.LogInfo($"[PLAY] added Play button '{cloneGo.name}' next to '{sourceGo.name}' " +
-            $"(parent '{rowContainer.name}', sibling index {cloneGo.transform.GetSiblingIndex()}, " +
+        Plugin.Log.LogInfo($"[PLAY] added Play tab '{cloneGo.name}' next to '{sourceGo.name}' " +
+            $"(parent '{sourceGo.transform.parent?.name}', sibling index {cloneGo.transform.GetSiblingIndex()}, " +
             $"active={cloneGo.activeInHierarchy}, label='{ReadFirstLabel(cloneGo) ?? "<none>"}')");
         return true;
     }
@@ -732,7 +640,7 @@ internal static class PlayButtonPatch
             var tmproType = tmproAsm?.GetType("TMPro.TextMeshProUGUI");
             if (tmproType == null)
             {
-                Plugin.Log.LogWarning("[PLAY] no label Text found on the Play button — Play button keeps its label");
+                Plugin.Log.LogWarning("[PLAY] no label Text found on the Play tab — Play tab keeps its label");
                 return;
             }
             var getTexts = typeof(GameObject).GetMethod("GetComponentsInChildren",
@@ -749,7 +657,7 @@ internal static class PlayButtonPatch
                     return;
                 }
             }
-            Plugin.Log.LogWarning("[PLAY] no matching label found on the clone — Play button keeps its label");
+            Plugin.Log.LogWarning("[PLAY] no matching label found on the clone — Play tab keeps its label");
         }
         catch (Exception e)
         {
@@ -792,14 +700,14 @@ internal static class PlayButtonPatch
         var playAction = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UnityAction>(
             new Action(OnPlayClicked));
         button.onClick.AddListener(playAction);
-        Plugin.Log.LogInfo("[PLAY] Play button wired to WatchUI.ShowScreenAndGoToPlay");
+        Plugin.Log.LogInfo("[PLAY] Play tab wired to WatchUI.ShowScreenAndGoToPlay");
     }
 
     private static void OnPlayClicked()
     {
         try
         {
-            Plugin.Log.LogInfo("[PLAY] Play button pressed");
+            Plugin.Log.LogInfo("[PLAY] Play tab pressed");
             if (TryPlayNavigation())
                 return;
             Plugin.Log.LogWarning("[PLAY] Play pressed but the nav call did not fire — see diagnostics above");
