@@ -168,6 +168,10 @@ jobs:
           if ($ini -notmatch "coreclr_path=dotnet\\coreclr.dll") { Write-Host "::error::doorstop_config.ini missing coreclr_path"; $failed = $true }
           else { Write-Host "OK  doorstop_config.ini sets CoreCLR path" }
           if ($failed) { exit 1 }
+          # Enable plugin debug logging for this proof run (HTTP trace in RecNetPlugin.log)
+          $cfg = "D:\FluxRec\FluxLoader\config\net.rec.plugin.cfg"
+          (Get-Content $cfg -Raw) -replace "Debug = false", "Debug = true" | Set-Content $cfg
+          Write-Host "enabled plugin Debug for proof run"
 
       - name: Launch via FluxRecLauncher --play
         shell: pwsh
@@ -220,10 +224,14 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path D:\logs | Out-Null
-          foreach ($src in @("D:\FluxRec\FluxLoader\logs", "D:\FluxRec\BepInEx\LogOutput.log")) {
+          # FluxLoader bootstrap log (written by Entrypoint.cs)
+          foreach ($src in @("D:\FluxRec\FluxLoader\fluxloader.log", "D:\FluxRec\FluxLoader\logs")) {
             if (Test-Path $src) { Copy-Item $src D:\logs -Recurse -Force; Write-Host "collected $src" }
             else { Write-Host "no $src" }
           }
+          # RecNetPlugin log (FluxLogger writes to FluxLoader\logs\RecNetPlugin.log)
+          $pluglog = "D:\FluxRec\FluxLoader\logs\RecNetPlugin.log"
+          if (Test-Path $pluglog) { Write-Host "plugin log size: $((Get-Item $pluglog).Length) bytes" }
           Get-ChildItem D:\logs -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize | Out-String | Write-Host
 
       - name: Upload FluxLoader logs
