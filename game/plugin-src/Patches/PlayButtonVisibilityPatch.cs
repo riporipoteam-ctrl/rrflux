@@ -28,6 +28,8 @@ internal static class PlayButtonVisibilityPatch
         "HideIfSortableTransformNotInludedInTestGroup", // Note: "Inluded" typo is in the binary
         "HideIfLayerParamTrue",
         "HideIfLayerParamFalse",
+        "HideIfNotInDisplayOrderConfig", // Additional Statsig hide variant
+        "HideIfLayerParamsFalse", // Plural variant
     };
 
     public static void Apply()
@@ -68,40 +70,51 @@ internal static class PlayButtonVisibilityPatch
                 if (t == null)
                     continue;
 
-                // Look for the hide component types
-                foreach (var pattern in HideMethodPatterns)
+                // Search METHODS directly by name pattern (types are obfuscated,
+                // but method names like HideIfSortableTransformNotInludedInTestGroup
+                // are preserved in metadata)
+                MethodInfo[] methods;
+                try
                 {
-                    if (!t.Name.Contains(pattern))
+                    methods = t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+                }
+                catch { continue; }
+
+                foreach (var m in methods)
+                {
+                    if (m == null)
                         continue;
 
-                    // Find the method that does the hiding (likely OnEnable, Update, or similar)
-                    // We'll patch all methods that might trigger the hide
-                    var methods = t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
-                    foreach (var m in methods)
+                    // Check if method name matches any hide pattern
+                    bool isHideMethod = false;
+                    foreach (var pattern in HideMethodPatterns)
                     {
-                        // Skip if already patched
-                        string key = $"{t.FullName}.{m.Name}";
-                        if (Patched.Contains(key))
-                            continue;
-
-                        // Patch methods that could hide the UI
-                        // The safest is to patch the type's main behavior method
-                        // For now, we'll log what we find and patch conservatively
-                        if (m.Name == "OnEnable" || m.Name == "Start" || m.Name == "Update" || m.Name.Contains("Hide"))
+                        if (m.Name.Contains(pattern))
                         {
-                            try
-                            {
-                                var prefix = new HarmonyMethod(typeof(PlayButtonVisibilityPatch).GetMethod(nameof(DisableHidePrefix),
-                                    BindingFlags.Static | BindingFlags.NonPublic));
-                                harmony.Patch(m, prefix: prefix);
-                                Patched.Add(key);
-                                Plugin.Log.LogInfo($"[PLAY-VIS] patched {key} -> never hides");
-                            }
-                            catch (Exception e)
-                            {
-                                Plugin.Log.LogDebug($"[PLAY-VIS] skip {key}: {e.Message}");
-                            }
+                            isHideMethod = true;
+                            break;
                         }
+                    }
+
+                    if (!isHideMethod)
+                        continue;
+
+                    // Skip if already patched
+                    string key = $"{t.FullName}.{m.Name}";
+                    if (Patched.Contains(key))
+                        continue;
+
+                    try
+                    {
+                        var prefix = new HarmonyMethod(typeof(PlayButtonVisibilityPatch).GetMethod(nameof(DisableHidePrefix),
+                            BindingFlags.Static | BindingFlags.NonPublic));
+                        harmony.Patch(m, prefix: prefix);
+                        Patched.Add(key);
+                        Plugin.Log.LogInfo($"[PLAY-VIS] patched {key} -> never hides");
+                    }
+                    catch (Exception e)
+                    {
+                        Plugin.Log.LogDebug($"[PLAY-VIS] skip {key}: {e.Message}");
                     }
                 }
             }
