@@ -528,7 +528,7 @@ internal static class PlusPricePatch
 
             // Inspect both the Sku and the SkuModel itself — identifiers may
             // live on either object depending on the build.
-            string skuDiag, modelDiag;
+            string skuDiag = null, modelDiag = null;
             if (sku != null && IsMembershipSkuObject(sku, out skuDiag))
             {
                 diagReason = "Sku matched: " + skuDiag;
