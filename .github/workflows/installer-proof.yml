@@ -28,11 +28,13 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 120
     steps:
-      - name: Prep dirs + hosts entry
+      - name: Prep dirs
         shell: pwsh
         run: |
           New-Item -ItemType Directory D:\shots -Force | Out-Null
-          try { Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 ns.rec.net" } catch { Write-Host "hosts edit skipped: $_" }
+          # NOTE: no hosts override — the game must reach the real backend
+          # (ns.ripo-ripoteam.workers.dev via the plugin's redirect) to get
+          # past "Connecting to server" to the login/account picker.
 
       - name: Download FluxRec-Setup
         shell: pwsh
