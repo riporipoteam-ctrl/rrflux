@@ -142,7 +142,8 @@ internal static class UiDiscoveryRetry
                 // tick: a patch only stops being ticked while its own
                 // IsSettled is true, and re-arming (scene change, or the
                 // patch's settled check going false) resumes its retries.
-                TickPatch(0, () => PlayButtonPatch.IsSettled, () => PlayButtonPatch.Apply());
+                // DISABLED v0.1.45: PlayButtonPatch causing black screen crash.
+                // TickPatch(0, () => PlayButtonPatch.IsSettled, () => PlayButtonPatch.Apply());
                 TickPatch(1, () => FluxConnectButton.IsSettled, () => FluxConnectButton.Apply());
                 TickPatch(2, () => UltraGraphicsPatch.IsSettled, () => UltraGraphicsPatch.Apply());
                 TickPatch(3, () => IsHomeLogoSettled(), () => HomeLogoPatch.Apply());

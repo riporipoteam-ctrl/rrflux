@@ -103,7 +103,8 @@ public class Plugin : BasePlugin
 
         // Statsig-gate force-on: retried from OnSceneLoaded until every getter is patched, since
         // the declaring type may live in an assembly that isn't loaded yet at plugin Load().
-        Patches.WatchUIPatch.Apply();
+        // DISABLED v0.1.45: Causing black screen crash. Re-enable after fixing.
+        // Patches.WatchUIPatch.Apply();
 
         // Developer flag force-on: retried from OnSceneLoaded until patched, since
         // SessionManager may not be loaded yet at plugin Load().
@@ -143,7 +144,8 @@ public class Plugin : BasePlugin
 
         // Play button beside Create on the home screen (clone + relabel):
         // retried from OnSceneLoaded until the home screen exists (no-op once done).
-        Patches.PlayButtonPatch.Apply();
+        // DISABLED v0.1.45: Causing black screen crash. Re-enable after fixing.
+        // Patches.PlayButtonPatch.Apply();
 
         // Play button visibility: DISABLED - the Statsig hide patch did not work
         // on the 2023 client (v0.1.39). Reverting to legacy UI approach instead.
@@ -193,7 +195,8 @@ public class Plugin : BasePlugin
         Patches.UnityTelemetryPatch.Apply();
 
         // Retry until every Statsig watch gate is patched (no-op once done).
-        Patches.WatchUIPatch.Apply();
+        // DISABLED v0.1.45: Causing black screen crash. Re-enable after fixing.
+        // Patches.WatchUIPatch.Apply();
 
         // Retry the developer flag force until patched (no-op once done).
         Patches.DeveloperPatch.Apply();
@@ -232,7 +235,8 @@ public class Plugin : BasePlugin
         Patches.HomeLabelsPatch.Apply();
 
         // Retry the Play button clone until the home screen exists (no-op once done).
-        Patches.PlayButtonPatch.Apply();
+        // DISABLED v0.1.45: Causing black screen crash. Re-enable after fixing.
+        // Patches.PlayButtonPatch.Apply();
 
         // CheatManager boots us out of rooms when it runs, but it's ALSO the DUID service the DI
         // container resolves for account creation / login (destroying it removes that service).
