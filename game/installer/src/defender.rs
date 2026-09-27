@@ -415,13 +415,9 @@ async fn repair_plugin_dll(
     // (The old code deleted then wrote; a failed write left nothing.)
     progress.set_stage("Repairing Flux Rec plugin…");
     // v0.1.19: use the embedded plugin (no download — upstream lacks our patches).
-    // v0.1.49: also repair PlayButtonFix.dll (Play button visibility fix).
+    // v0.1.52: DELETE the broken PlayButtonFix.dll (was crashing BepInEx).
     let play_fix_dest = plugins_dir.join("PlayButtonFix.dll");
-    // Don't delete PlayButtonFix either — just overwrite.
-    let play_fix_ok = std::fs::write(&play_fix_dest, crate::EMBEDDED_PLAY_BUTTON_FIX).is_ok();
-    if play_fix_ok {
-        unblock_file(&play_fix_dest);
-    }
+    let _ = std::fs::remove_file(&play_fix_dest);
     match std::fs::write(&dest, crate::EMBEDDED_PLUGIN) {
         Ok(()) => {
             unblock_file(&dest);

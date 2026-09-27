@@ -70,11 +70,6 @@ pub(crate) const PLUGIN_SIZE: u64 = 45_056;
 /// presence fix) embedded directly. The upstream 20230414.2 release lacks
 /// these patches, so we ship our own build instead of downloading.
 pub(crate) const EMBEDDED_PLUGIN: &[u8] = include_bytes!("../assets/RecNetPlugin.dll");
-/// Play button visibility fix: standalone BepInEx plugin that disables the
-/// Statsig-based Hide components on the RRUI home screen, making the Play
-/// button (and other icons) visible. Built separately because the full plugin
-/// requires game interop assemblies not available in CI.
-pub(crate) const EMBEDDED_PLAY_BUTTON_FIX: &[u8] = include_bytes!("../assets/PlayButtonFix.dll");
 /// Flux Rec logo bundle: gzipped patched Addressables UI bundle (loading
 /// screen logos replaced). Hosted on our Hugging Face dataset; verified by
 /// MD5 before use, then gunzipped over the stock bundle.
@@ -922,10 +917,11 @@ async fn run_install(
     let plugin_res: Result<(), String> = (|| {
         std::fs::create_dir_all(&plugins_dir).map_err(|e| e.to_string())?;
         std::fs::write(&plugin_path, EMBEDDED_PLUGIN).map_err(|e| e.to_string())?;
-        // Play button visibility fix (v0.1.48+): standalone plugin that
-        // disables Statsig Hide components on the RRUI home screen.
+        // v0.1.52: DELETE the broken PlayButtonFix.dll from v0.1.48/49/50.
+        // It crashes BepInEx and prevents the game from connecting.
+        // This cleanup ensures a clean state.
         let play_fix_path = plugins_dir.join("PlayButtonFix.dll");
-        std::fs::write(&play_fix_path, EMBEDDED_PLAY_BUTTON_FIX).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(&play_fix_path);
         Ok(())
     })();
     if let Err(e) = plugin_res {
