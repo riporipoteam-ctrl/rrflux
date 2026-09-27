@@ -19,7 +19,8 @@ dist/
 # Downloaded game builds (large; fetched by tooling, not git)
 build/
 *.zip
-
+# Exception: FluxLoader interop is embedded via include_bytes! and must be committed.
+!game/installer/assets/fluxloader-interop-20230414.zip
 # OS / editor noise
 .DS_Store
 Thumbs.db
