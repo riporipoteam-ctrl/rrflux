@@ -181,8 +181,8 @@ jobs:
             if (-not (Get-Process RecRoom -ErrorAction SilentlyContinue)) { Write-Host "no RecRoom process yet..." }
           }
           if (-not $booted) { Write-Host "::error::PROOF FAILED — RecRoom window never appeared (launcher may be stuck)"; exit 1 }
-          Write-Host "waiting 5 minutes for boot past 'Connecting to server' to login/account picker..."
-          Start-Sleep -Seconds 300
+          Write-Host "waiting 90s for boot past Steam init..."
+          Start-Sleep -Seconds 90
 
       - name: Screenshot boot state
         shell: pwsh
@@ -199,12 +199,8 @@ jobs:
           Shot boot
           $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($p) { Write-Host "RecRoom still running (id $($p.Id))" } else { Write-Host "::error::PROOF FAILED — RecRoom not running at screenshot time"; exit 1 }
-          Start-Sleep -Seconds 60
+          Start-Sleep -Seconds 45
           Shot boot2
-          Start-Sleep -Seconds 60
-          Shot boot3
-          $p2 = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($p2) { Write-Host "RecRoom still running at final shot (id $($p2.Id))" } else { Write-Host "WARN: RecRoom exited before final shot" }
 
       - name: Upload screenshots
         if: always()
