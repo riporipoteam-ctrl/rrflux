@@ -29,6 +29,7 @@
 // Delegate.CreateDelegate anywhere near here.
 using System;
 using System.Text;
+using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 
 namespace RecNetPlugin.Patches;
@@ -50,6 +51,14 @@ internal static class UiDiscoveryRetry
             _driver = new GameObject("FluxRecUiDiscoveryRetry");
             _driver.hideFlags = HideFlags.HideAndDontSave;
             UnityEngine.Object.DontDestroyOnLoad(_driver);
+            // FIX: Register the MonoBehaviour type with Il2Cpp BEFORE AddComponent.
+            // Without this, the generic AddComponent<T>() throws
+            // MethodInfoStoreGeneric_AddComponent_Public_T_0 type initializer
+            // exception on IL2CPP. Every other patch (FluxPairingPatch,
+            // PlusBalancePatch, etc.) does this registration; UiDiscoveryRetry
+            // was the only one missing it, which broke the retry driver and
+            // prevented PlayButtonPatch from ever finding the Create button.
+            ClassInjector.RegisterTypeInIl2Cpp<RetryBehaviour>();
             _behaviour = _driver.AddComponent<RetryBehaviour>();
             Plugin.Log.LogDebug("[RETRY] UI discovery retry driver started (5 patches)");
         }

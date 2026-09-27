@@ -6,19 +6,36 @@ using HarmonyLib;
 
 namespace RecNetPlugin.Patches;
 
-// Forces the 2023 client's OLD Watch UI (legacy) on, bypassing Statsig entirely.
+// Forces the 2023 client's new Watch UI (RRUI) on, bypassing Statsig entirely.
 //
-// Why this exists: The new Watch UI (RRUI) cannot be modified reliably —
-// the Play button injection fails because the UI discovery crashes.
-// The OLD UI has a tab row (Rooms/Clubs/Items/Inventions/Creators) that
-// our PlayButtonPatch can clone successfully.
+// Why this exists: the 2023 client fetches Statsig gate values directly from
+// https://statsigapi.net/v1 — not from our backend — and our backend serves
+// UseStatSig=false with an empty key, so every gate falls back to its code
+// default (false) and the client renders the legacy watch UI. There is no
+// backend lever for this: we don't have Rec Room's Statsig client key, and we
+// can't serve a valid cert for statsigapi.net. So we force the client-side
+// gate getters to true instead.
 //
 // How it works: at load (retried on scene load until it sticks), scan all
-// loaded assemblies for the type declaring each gate getter. Force them to
-// FALSE to get the legacy watch UI with the tab row.
+// loaded assemblies for the type declaring each gate getter. The declaring
+// type's name is obfuscated and re-rolled per build, but the getter method
+// names are NOT obfuscated, so we resolve by method name, not type name. All
+// five element-level getters are forced together — forcing only the home
+// getter would leave the notifications/events/people tabs on the legacy UI.
+//
+// Do NOT extend this to get_IsOnRRUIStandalonePage or
+// get_ShouldUseRRUINotificationsScreen: those are read-only state queries,
+// not gates.
 //
 // One knob, see [Watch] in the .cfg:
-//   Force New Watch UI -> LEGACY (default false).
+//   Force New Watch UI -> THE FIX (default true).
+//
+// Caveat: forcing the gates makes the client render the RRUI watch, but if any
+// RRUI data source (routes prefill, tab content) depends on a backend endpoint
+// we haven't implemented, tabs can render empty. If the new watch shows but a
+// tab is empty after this patch, that's a backend content gap to investigate
+// with real client traffic — not a gate problem. The knob exists to fall back
+// to the legacy watch in that case.
 internal static class WatchUIPatch
 {
     // Gate getter method names to force true. Resolved by name because the
@@ -43,11 +60,7 @@ internal static class WatchUIPatch
     // loaded yet when BepInEx runs Load().
     public static void Apply()
     {
-        // If user wants the new UI, don't force the old one
-        if (Plugin.ForceNewWatchUI.Value)
-            return;
-            
-        if (_done || _attempts >= MaxAttempts)
+        if (_done || !Plugin.ForceNewWatchUI.Value || _attempts >= MaxAttempts)
             return;
 
         _attempts++;
@@ -64,17 +77,17 @@ internal static class WatchUIPatch
 
         _done = GateGetters.All(g => Patched.Contains(g));
         if (_done)
-            Plugin.Log.LogInfo($"[WATCH] legacy watch UI forced on ({Patched.Count} getters patched to false)");
+            Plugin.Log.LogInfo($"[WATCH] new watch UI forced on ({Patched.Count} getters patched)");
         else if (_attempts >= MaxAttempts)
             Plugin.Log.LogWarning(
                 $"[WATCH] gave up after {_attempts} attempts — patched: {string.Join(",", Patched)}. " +
-                "The getter names may have changed in this build.");
+                "Legacy watch UI remains. The getter names may have changed in this build.");
     }
 
     private static void PatchGates()
     {
         var harmony = new Harmony("net.rec.plugin.watchui");
-        var prefix = new HarmonyMethod(typeof(WatchUIPatch).GetMethod(nameof(ForceFalsePrefix),
+        var prefix = new HarmonyMethod(typeof(WatchUIPatch).GetMethod(nameof(ForceTruePrefix),
             BindingFlags.Static | BindingFlags.NonPublic));
 
         foreach (var getter in GateGetters)
@@ -91,7 +104,7 @@ internal static class WatchUIPatch
 
             harmony.Patch(method, prefix: prefix);
             Patched.Add(getter);
-            Plugin.Log.LogInfo($"[WATCH] patched {type.FullName}.{getter} -> false (legacy UI)");
+            Plugin.Log.LogInfo($"[WATCH] patched {type.FullName}.{getter} -> true");
         }
     }
 
@@ -123,10 +136,10 @@ internal static class WatchUIPatch
         return (null, null);
     }
 
-    // The actual gate: force false (legacy UI), skip the original (which would consult Statsig).
-    private static bool ForceFalsePrefix(ref bool __result)
+    // The actual gate: force true, skip the original (which would consult Statsig).
+    private static bool ForceTruePrefix(ref bool __result)
     {
-        __result = false;
+        __result = true;
         return false;
     }
 }
