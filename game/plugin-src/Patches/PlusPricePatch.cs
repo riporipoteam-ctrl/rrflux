@@ -418,22 +418,38 @@ internal static class PlusPricePatch
     // cannot positively identify) returns true so the original method runs
     // untouched. Fail-open: any unexpected error lets the original run, so we
     // can never break the store UI.
+    //
+    // v0.1.36: throttled per-call diagnostics — every 30s the prefix logs
+    // whether it fired and what the SKU looked like, so the log proves
+    // whether the hook is installed and why the filter passes/fails.
+    private static DateTime _lastPrefixDiagUtc = DateTime.MinValue;
+    private static readonly TimeSpan PrefixDiagInterval = TimeSpan.FromSeconds(30);
+
     private static bool PrefixDisplayPrice(object __instance, ref string __result)
     {
         bool intercept;
+        string diagReason;
         try
         {
             // A static target has no instance to identify a SKU from; the
             // membership price UI is the only caller of that shape, so allow it.
             if (_displayPriceMethod != null && _displayPriceMethod.IsStatic)
+            {
                 intercept = true;
+                diagReason = "static target";
+            }
             else
-                intercept = IsRRPlusMembershipSku(__instance);
+            {
+                intercept = IsRRPlusMembershipSku(__instance, out diagReason);
+            }
         }
-        catch
+        catch (Exception e)
         {
+            MaybeLogPrefixDiag(false, "exception: " + e.Message);
             return true; // fail-open: never break store UI on a check failure
         }
+
+        MaybeLogPrefixDiag(intercept, diagReason);
 
         if (!intercept)
         {
@@ -470,12 +486,24 @@ internal static class PlusPricePatch
         return false;
     }
 
+    // Throttled per-call diagnostic for the SKU filter.
+    private static void MaybeLogPrefixDiag(bool intercept, string reason)
+    {
+        var now = DateTime.UtcNow;
+        if (now - _lastPrefixDiagUtc < PrefixDiagInterval)
+            return;
+        _lastPrefixDiagUtc = now;
+        Plugin.Log.LogInfo($"[PLUS] GetDisplayPrice hook fired: intercept={intercept} ({reason})");
+    }
+
     // TRUE only when the instance is positively identified as the RR+
     // membership SKU. Conservative by design: unknown or unidentifiable
     // instances return false (the original runs; the text-sweep fallback still
-    // covers any red error text that appears).
-    private static bool IsRRPlusMembershipSku(object skuModel)
+    // covers any red error text that appears). diagReason explains the
+    // decision for the log.
+    private static bool IsRRPlusMembershipSku(object skuModel, out string diagReason)
     {
+        diagReason = "null instance";
         if (skuModel == null)
             return false;
 
@@ -500,12 +528,24 @@ internal static class PlusPricePatch
 
             // Inspect both the Sku and the SkuModel itself — identifiers may
             // live on either object depending on the build.
-            if (sku != null && IsMembershipSkuObject(sku))
+            string skuDiag, modelDiag;
+            if (sku != null && IsMembershipSkuObject(sku, out skuDiag))
+            {
+                diagReason = "Sku matched: " + skuDiag;
                 return true;
-            if (IsMembershipSkuObject(skuModel))
+            }
+            if (IsMembershipSkuObject(skuModel, out modelDiag))
+            {
+                diagReason = "SkuModel matched: " + modelDiag;
                 return true;
+            }
+            diagReason = "no membership identifiers (sku: " +
+                (skuDiag ?? "n/a") + "; model: " + (modelDiag ?? "n/a") + ")";
         }
-        catch { }
+        catch (Exception e)
+        {
+            diagReason = "check exception: " + e.Message;
+        }
         return false;
     }
 
@@ -515,8 +555,10 @@ internal static class PlusPricePatch
     //  - a name-ish string member (Name/DisplayName/Title/SkuId/...) that
     //    looks like the RR+ membership product;
     //  - a type name that mentions Membership/RRPlus.
-    private static bool IsMembershipSkuObject(object o)
+    // diag describes what was seen (for the throttled hook log).
+    private static bool IsMembershipSkuObject(object o, out string diag)
     {
+        diag = "null";
         if (o == null)
             return false;
 
@@ -526,7 +568,10 @@ internal static class PlusPricePatch
             var typeName = t.Name ?? "";
             if (typeName.IndexOf("Membership", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 typeName.IndexOf("RRPlus", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                diag = "type name '" + typeName + "'";
                 return true;
+            }
 
             MemberInfo[] members;
             try
@@ -537,8 +582,9 @@ internal static class PlusPricePatch
                 Array.Copy(props, members, props.Length);
                 Array.Copy(fields, 0, members, props.Length, fields.Length);
             }
-            catch { return false; }
+            catch { diag = "member enum failed"; return false; }
 
+            var seen = new List<string>();
             foreach (var m in members)
             {
                 string name = m.Name ?? "";
@@ -566,9 +612,16 @@ internal static class PlusPricePatch
                     continue;
 
                 // "Source==1" check (per research note): the membership SKU's source.
-                if (name.Equals("Source", StringComparison.OrdinalIgnoreCase) &&
-                    IsMembershipSource(value))
-                    return true;
+                if (name.Equals("Source", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (IsMembershipSource(value))
+                    {
+                        diag = "Source matched (" + SafeToString(value) + ")";
+                        return true;
+                    }
+                    seen.Add("Source=" + SafeToString(value));
+                    continue;
+                }
 
                 // Name-ish string identifiers.
                 if (name.Equals("Name", StringComparison.OrdinalIgnoreCase) ||
@@ -587,12 +640,27 @@ internal static class PlusPricePatch
                         catch { s = null; }
                     }
                     if (LooksLikeMembershipName(s))
+                    {
+                        diag = name + "='" + s + "'";
                         return true;
+                    }
+                    if (seen.Count < 6)
+                        seen.Add(name + "='" + (s ?? "?") + "'");
                 }
             }
+            diag = "type '" + typeName + "' [" + string.Join(", ", seen.ToArray()) + "]";
         }
-        catch { }
+        catch (Exception e)
+        {
+            diag = "exception: " + e.Message;
+        }
         return false;
+    }
+
+    private static string SafeToString(object v)
+    {
+        try { return v?.ToString() ?? "?"; }
+        catch { return "?"; }
     }
 
     // The membership SKU source: numeric value 1, or an enum whose name
@@ -953,6 +1021,10 @@ internal static class PlusPricePatch
 
     private class PriceQueuePump : MonoBehaviour
     {
+        // Throttle for the fallback Plus-page scan (the SetActive hook may
+        // not fire under IL2CPP).
+        private float _nextPageScanAt;
+
         void Update()
         {
             // Pump main-thread queue (HTTP callbacks arrive on background threads).
@@ -976,6 +1048,28 @@ internal static class PlusPricePatch
             }
             catch { }
 
+            // Fallback page detection (v0.1.36): the SetActive Harmony hook
+            // may never fire under IL2CPP, so if no page is being re-scanned,
+            // look for a visible Plus page every 2s and start the re-scan.
+            try
+            {
+                if (_activePlusPage == null && Time.unscaledTime >= _nextPageScanAt)
+                {
+                    _nextPageScanAt = Time.unscaledTime + 2f;
+                    var page = FindActivePlusPage();
+                    if (page != null)
+                    {
+                        Plugin.Log.LogInfo($"[PLUS-PRICE] Plus page detected by fallback scan: {page.name}");
+                        if (!_priceFetched)
+                            EnsurePriceFetched();
+                        _activePlusPage = page;
+                        _rescanUntil = Time.time + RescanWindowSeconds;
+                        ReplacePriceText(page);
+                    }
+                }
+            }
+            catch { }
+
             // Re-scan the active Plus page for the error text. This catches
             // async Steam price failures that land after the load method returns.
             try
@@ -990,5 +1084,38 @@ internal static class PlusPricePatch
             }
             catch { }
         }
+    }
+
+    // Finds a VISIBLE Plus/Membership page root for the fallback scan.
+    private static GameObject FindActivePlusPage()
+    {
+        try
+        {
+            var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
+                new[] { typeof(Type) });
+            if (find == null)
+                return null;
+            var all = (System.Collections.IEnumerable)find.Invoke(null,
+                new object[] { typeof(GameObject) });
+            if (all == null)
+                return null;
+            foreach (var o in all)
+            {
+                var go = ((UnityEngine.Object)o).TryCast<GameObject>();
+                if (go == null || !go.activeInHierarchy)
+                    continue;
+                var name = go.name;
+                if (string.IsNullOrEmpty(name))
+                    continue;
+                if (name.IndexOf("Plus", StringComparison.OrdinalIgnoreCase) < 0 &&
+                    name.IndexOf("Membership", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                if (name.Equals("FluxPlusPricePump", StringComparison.Ordinal))
+                    continue;
+                return go;
+            }
+        }
+        catch { }
+        return null;
     }
 }

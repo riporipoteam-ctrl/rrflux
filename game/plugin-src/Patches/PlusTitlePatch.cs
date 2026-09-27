@@ -77,6 +77,8 @@ internal static class PlusTitlePatch
     private static bool _sweepActive;
     private static float _sweepEndsAt;   // unscaled time the 30s window closes
     private static float _nextSweepAt;   // unscaled time of the next 2s tick
+    // Throttle for the fallback Plus-page scan (same 2s cadence as the sweep).
+    private static float _nextFallbackScanAt;
     private static readonly List<GameObject> _pageRoots = new();
     private static readonly object _rootsLock = new();
 
@@ -153,19 +155,75 @@ internal static class PlusTitlePatch
         catch { }
     }
 
+    // Fallback Plus-page detection for the pump: finds an ACTIVE GameObject
+    // whose name contains "Plus" or "Membership" (e.g. the membership page
+    // root). Used when the SetActive Harmony hook doesn't fire under IL2CPP.
+    // Returns null when no Plus page is currently visible.
+    private static GameObject FindActivePlusPage()
+    {
+        try
+        {
+            var find = typeof(UnityEngine.Object).GetMethod("FindObjectsOfType",
+                new[] { typeof(Type) });
+            if (find == null)
+                return null;
+            var all = (System.Collections.IEnumerable)find.Invoke(null,
+                new object[] { typeof(GameObject) });
+            if (all == null)
+                return null;
+            foreach (var o in all)
+            {
+                var go = ((UnityEngine.Object)o).TryCast<GameObject>();
+                if (go == null || !go.activeInHierarchy)
+                    continue;
+                var name = go.name;
+                if (string.IsNullOrEmpty(name))
+                    continue;
+                if (name.IndexOf("Plus", StringComparison.OrdinalIgnoreCase) < 0 &&
+                    name.IndexOf("Membership", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                // Skip our own pump object.
+                if (name.Equals(PumpObjectName, StringComparison.Ordinal))
+                    continue;
+                return go;
+            }
+        }
+        catch { }
+        return null;
+    }
+
     // Called from the pump's Update. Runs the 2s tick while the 30s window
     // is open, then stops itself (zero cost afterwards). Re-arms on the
     // next page open via OnPlusPageOpened.
+    //
+    // v0.1.36: the SetActive Harmony hook may never fire under IL2CPP (the
+    // game can call the native SetActive directly, bypassing the managed
+    // wrapper we patched). As a fallback, every tick also scans for an
+    // ACTIVE Plus page by name and auto-arms the sweep when one appears.
     private static void PumpTick()
     {
         try
         {
-            if (!_sweepActive)
-                return;
             if (!Plugin.EnableFluxPlus.Value)
             {
                 _sweepActive = false;
                 return;
+            }
+
+            // Fallback page detection (throttled to the 2s cadence): if no
+            // sweep is active, look for a visible Plus page and arm the
+            // sweep ourselves.
+            if (!_sweepActive)
+            {
+                var now2 = Time.unscaledTime;
+                if (now2 < _nextFallbackScanAt)
+                    return;
+                _nextFallbackScanAt = now2 + SweepIntervalSeconds;
+                var plusPage = FindActivePlusPage();
+                if (plusPage != null)
+                    OnPlusPageOpened(plusPage);
+                else
+                    return; // nothing to do this tick
             }
 
             var now = Time.unscaledTime;
@@ -188,6 +246,7 @@ internal static class PlusTitlePatch
             _nextSweepAt = now + SweepIntervalSeconds;
 
             int repaired = 0;
+            int scanned = 0;
             GameObject[] roots;
             lock (_rootsLock)
             {
@@ -197,12 +256,18 @@ internal static class PlusTitlePatch
             {
                 try
                 {
-                    repaired += RepairTitles(root);
+                    int before = repaired;
+                    repaired += RepairTitles(root, out int rootScanned);
+                    scanned += rootScanned;
+                    if (repaired > before)
+                        Plugin.Log.LogDebug($"[PLUS] sweep tick on '{root.name}': scanned {rootScanned}, repaired {repaired - before}");
                 }
                 catch { } // destroyed page root — next tick or window-close cleans up
             }
 
-            // Self-throttled: log only when a repair actually happened.
+            // Log every tick at Debug (scan counts prove the sweep is alive);
+            // Info only when a repair actually happened.
+            Plugin.Log.LogDebug($"[PLUS] sweep tick: scanned {scanned} text components across {roots.Length} root(s), repaired {repaired}");
             if (repaired > 0)
                 Plugin.Log.LogInfo($"[PLUS] Repaired {repaired} titles");
         }
@@ -210,9 +275,12 @@ internal static class PlusTitlePatch
     }
 
     // Repairs every Text / TMP_Text under the page root. Longest-first
-    // replacements make this idempotent.
-    private static int RepairTitles(GameObject root)
+    // replacements make this idempotent. Reports how many text components
+    // were scanned via scannedOut (diagnostic: proves the sweep is alive
+    // even when nothing needs repair).
+    private static int RepairTitles(GameObject root, out int scannedOut)
     {
+        scannedOut = 0;
         if (root == null)
             return 0;
 
@@ -232,6 +300,7 @@ internal static class PlusTitlePatch
                     var txt = t.TryCast<Text>();
                     if (txt == null)
                         continue;
+                    scannedOut++;
                     var fixed_ = ApplyReplacements(txt.text);
                     if (fixed_ != null)
                     {
@@ -267,6 +336,7 @@ internal static class PlusTitlePatch
                     new object[] { _tmproTextType, true });
                 foreach (var c in comps)
                 {
+                    scannedOut++;
                     var cur = _tmproTextProp.GetValue(c, null) as string;
                     var fixed_ = ApplyReplacements(cur);
                     if (fixed_ != null)
