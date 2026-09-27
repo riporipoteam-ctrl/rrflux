@@ -58,7 +58,8 @@ jobs:
           $zipPath = "rrflux\game\plugin-src\interop-cache\interop-20230414.zip"
           if (-not (Test-Path $zipPath)) { throw "Interop cache not found at $zipPath" }
           Write-Host "Extracting interop cache..."
-          Expand-Archive -Path $zipPath -DestinationPath "D:\FluxRec\BepInEx\" -Force
+          # ZIP contains DLLs at root, extract directly to interop folder
+          Expand-Archive -Path $zipPath -DestinationPath $interopDir -Force
           $count = (Get-ChildItem "$interopDir\*.dll" -ErrorAction SilentlyContinue | Measure-Object).Count
           Write-Host "interop DLLs extracted: $count"
           if ($count -lt 200) { throw "Interop cache incomplete (only $count DLLs)" }
