@@ -92,17 +92,9 @@ namespace Doorstop
                 };
                 watcher.Start();
 
-                // Block Doorstop until plugins are loaded. The watcher signals
-                // via _pluginsReady. Timeout after 3 minutes — if the watcher
-                // died, let the game boot unpatched rather than hang forever.
-                if (!_pluginsReady.Wait(TimeSpan.FromMinutes(3)))
-                {
-                    Log("WARNING: timed out waiting for plugins; game will boot without patches.");
-                }
-                else
-                {
-                    Log("Plugins ready; releasing game boot.");
-                }
+                // Don't block — let the game boot while the watcher loads plugins
+                // in the background. (Blocking here deadlocks: the IL2CPP domain
+                // needs Unity to initialize, which needs Start() to return.)
             }
             catch (Exception ex)
             {
@@ -111,12 +103,6 @@ namespace Doorstop
                 try { Log("FATAL during Start(): " + ex); } catch { /* truly nothing left */ }
             }
         }
-
-        /// <summary>
-        /// Signaled by the watcher thread once LoadPlugins() completes
-        /// (successfully or not). Start() blocks on this.
-        /// </summary>
-        private static readonly ManualResetEventSlim _pluginsReady = new(false);
 
         // ------------------------------------------------------------------
         // Dependency resolution
@@ -207,11 +193,6 @@ namespace Doorstop
             {
                 // The watcher thread must never take the process down with it.
                 try { Log("FATAL in watcher thread: " + ex); } catch { }
-            }
-            finally
-            {
-                // Always release Start(), even on failure — the game must boot.
-                try { _pluginsReady.Set(); } catch { }
             }
         }
 
