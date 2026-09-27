@@ -831,6 +831,14 @@ async fn run_install(
     progress: &progress::Progress,
 ) -> Result<(), String> {
     progress.set_stage("Preparing…");
+    // v0.1.54: FULL NUKE — delete EVERYTHING and reinstall from scratch.
+    // Armin requested a complete redo: all files, all config, all state.
+    // This deletes the entire game directory (3.8GB will be re-downloaded).
+    if dir.exists() {
+        println!("[nuke] Deleting entire game directory for full clean reinstall…");
+        progress.set_stage("Removing old installation…");
+        let _ = std::fs::remove_dir_all(dir);
+    }
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder()
         .user_agent("FluxRec-Setup/0.1.0")
