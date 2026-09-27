@@ -420,6 +420,16 @@ mod imp {
         set_font(pct, st.font_big);
         set_font(footer, st.font_small);
 
+        // v0.1.55: Show version in footer (e.g., "Ripo Team • v0.1.55")
+        // env!("CARGO_PKG_VERSION") is baked in at compile time from Cargo.toml
+        {
+            let version_text = format!("Ripo Team • v{}", env!("CARGO_PKG_VERSION"));
+            let wide: Vec<u16> = version_text.encode_utf16().chain(std::iter::once(0)).collect();
+            unsafe {
+                SetWindowTextW(footer, PCWSTR(wide.as_ptr()));
+            }
+        }
+
         // Native progress range 0..100 + Flux blue fill on dark track.
         SendMessageW(bar, PBM_SETRANGE, WPARAM(0), LPARAM(0x0064_0000));
         SendMessageW(bar, PBM_SETPOS, WPARAM(0), LPARAM(0));
