@@ -131,47 +131,90 @@ jobs:
           if (-not $p.HasExited) { Write-Host "INSTALL TIMEOUT — killing"; $p.Kill() }
           else { Write-Host "installer exit code:" $p.ExitCode }
 
-      - name: Verify install layout (FluxLoader, v0.2.0)
+      - name: Verify install layout
         shell: pwsh
         run: |
-          $checks = @(
-            "D:\FluxRec\RecRoom.exe",
-            "D:\FluxRec\FluxRecLauncher.exe",
-            "D:\FluxRec\winhttp.dll",
-            "D:\FluxRec\doorstop_config.ini",
-            "D:\FluxRec\dotnet\coreclr.dll",
-            "D:\FluxRec\FluxLoader\core\FluxLoader.Bootstrap.dll",
-            "D:\FluxRec\FluxLoader\interop\Assembly-CSharp.dll",
-            "D:\FluxRec\FluxLoader\plugins\RecNetPlugin.dll",
-            "D:\FluxRec\FluxLoader\config\net.rec.plugin.cfg",
-            "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_api64.dll",
-            "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_appid.txt",
-            "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_interfaces.txt"
-          )
-          $failed = $false
-          foreach ($c in $checks) {
-            if (Test-Path $c) { Write-Host "OK  $c" } else { Write-Host "::error::MISSING  $c"; $failed = $true }
+          $tag = "${{ inputs.tag }}"
+          $isFluxLoader = $tag -match "v0\.2"
+          Write-Host "Testing tag: $tag (FluxLoader: $isFluxLoader)"
+          
+          if ($isFluxLoader) {
+            # FluxLoader v0.2.x checks
+            $checks = @(
+              "D:\FluxRec\RecRoom.exe",
+              "D:\FluxRec\FluxRecLauncher.exe",
+              "D:\FluxRec\winhttp.dll",
+              "D:\FluxRec\doorstop_config.ini",
+              "D:\FluxRec\dotnet\coreclr.dll",
+              "D:\FluxRec\FluxLoader\core\FluxLoader.Bootstrap.dll",
+              "D:\FluxRec\FluxLoader\interop\Assembly-CSharp.dll",
+              "D:\FluxRec\FluxLoader\plugins\RecNetPlugin.dll",
+              "D:\FluxRec\FluxLoader\config\net.rec.plugin.cfg",
+              "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_api64.dll",
+              "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_appid.txt",
+              "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_interfaces.txt"
+            )
+            $failed = $false
+            foreach ($c in $checks) {
+              if (Test-Path $c) { Write-Host "OK  $c" } else { Write-Host "::error::MISSING  $c"; $failed = $true }
+            }
+            # The old BepInEx tree must be gone entirely (dotnet now lives at the game root).
+            foreach ($stale in @("D:\FluxRec\BepInEx", "D:\FluxRec\BepInEx\plugins", "D:\FluxRec\BepInEx\config", "D:\FluxRec\BepInEx\core")) {
+              if (Test-Path $stale) { Write-Host "::error::STALE  $stale still present"; $failed = $true }
+              else { Write-Host "OK  no $stale" }
+            }
+            $appid = Get-Content "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_appid.txt" -Raw -ErrorAction SilentlyContinue
+            Write-Host "steam_appid.txt content: [$appid]"
+            if ($appid.Trim() -ne "471710") { Write-Host "::error::steam_appid.txt is not 471710"; $failed = $true }
+            if (Test-Path "D:\FluxRec\steam_appid.txt") { Write-Host "::error::legacy root steam_appid.txt still present"; $failed = $true }
+            else { Write-Host "OK  no legacy root steam_appid.txt" }
+            $ini = Get-Content "D:\FluxRec\doorstop_config.ini" -Raw -ErrorAction SilentlyContinue
+            if ($ini -notmatch "FluxLoader\\core\\FluxLoader.Bootstrap.dll") { Write-Host "::error::doorstop_config.ini missing target_assembly"; $failed = $true }
+            else { Write-Host "OK  doorstop_config.ini targets FluxLoader bootstrap" }
+            if ($ini -notmatch "coreclr_path=dotnet\\coreclr.dll") { Write-Host "::error::doorstop_config.ini missing coreclr_path"; $failed = $true }
+            else { Write-Host "OK  doorstop_config.ini sets CoreCLR path" }
+            if ($failed) { exit 1 }
+            # Enable plugin debug logging for this proof run (HTTP trace in RecNetPlugin.log)
+            $cfg = "D:\FluxRec\FluxLoader\config\net.rec.plugin.cfg"
+            (Get-Content $cfg -Raw) -replace "Debug = false", "Debug = true" | Set-Content $cfg
+            Write-Host "enabled plugin Debug for proof run"
+          } else {
+            # BepInEx v0.1.x checks
+            $checks = @(
+              "D:\FluxRec\RecRoom.exe",
+              "D:\FluxRec\FluxRecLauncher.exe",
+              "D:\FluxRec\winhttp.dll",
+              "D:\FluxRec\doorstop_config.ini",
+              "D:\FluxRec\BepInEx\core\BepInEx.Core.dll",
+              "D:\FluxRec\BepInEx\plugins\RecNetPlugin.dll",
+              "D:\FluxRec\BepInEx\config\net.rec.plugin.cfg",
+              "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_api64.dll",
+              "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_appid.txt",
+              "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_interfaces.txt"
+            )
+            $failed = $false
+            foreach ($c in $checks) {
+              if (Test-Path $c) { Write-Host "OK  $c" } else { Write-Host "::error::MISSING  $c"; $failed = $true }
+            }
+            # FluxLoader tree must NOT be present for v0.1.x
+            if (Test-Path "D:\FluxRec\FluxLoader") { Write-Host "::error::STALE D:\FluxRec\FluxLoader still present"; $failed = $true }
+            else { Write-Host "OK  no D:\FluxRec\FluxLoader" }
+            $appid = Get-Content "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_appid.txt" -Raw -ErrorAction SilentlyContinue
+            Write-Host "steam_appid.txt content: [$appid]"
+            if ($appid.Trim() -ne "471710") { Write-Host "::error::steam_appid.txt is not 471710"; $failed = $true }
+            if (Test-Path "D:\FluxRec\steam_appid.txt") { Write-Host "::error::legacy root steam_appid.txt still present"; $failed = $true }
+            else { Write-Host "OK  no legacy root steam_appid.txt" }
+            $ini = Get-Content "D:\FluxRec\doorstop_config.ini" -Raw -ErrorAction SilentlyContinue
+            if ($ini -notmatch "BepInEx") { Write-Host "WARN: doorstop_config.ini may not target BepInEx"; }
+            else { Write-Host "OK  doorstop_config.ini targets BepInEx" }
+            if ($failed) { exit 1 }
+            # Enable plugin debug logging
+            $cfg = "D:\FluxRec\BepInEx\config\net.rec.plugin.cfg"
+            if (Test-Path $cfg) {
+              (Get-Content $cfg -Raw) -replace "Debug = false", "Debug = true" | Set-Content $cfg
+              Write-Host "enabled plugin Debug for proof run"
+            }
           }
-          # The old BepInEx tree must be gone entirely (dotnet now lives at the game root).
-          foreach ($stale in @("D:\FluxRec\BepInEx", "D:\FluxRec\BepInEx\plugins", "D:\FluxRec\BepInEx\config", "D:\FluxRec\BepInEx\core")) {
-            if (Test-Path $stale) { Write-Host "::error::STALE  $stale still present"; $failed = $true }
-            else { Write-Host "OK  no $stale" }
-          }
-          $appid = Get-Content "D:\FluxRec\RecRoom_Data\Plugins\x86_64\steam_settings\steam_appid.txt" -Raw -ErrorAction SilentlyContinue
-          Write-Host "steam_appid.txt content: [$appid]"
-          if ($appid.Trim() -ne "471710") { Write-Host "::error::steam_appid.txt is not 471710"; $failed = $true }
-          if (Test-Path "D:\FluxRec\steam_appid.txt") { Write-Host "::error::legacy root steam_appid.txt still present"; $failed = $true }
-          else { Write-Host "OK  no legacy root steam_appid.txt" }
-          $ini = Get-Content "D:\FluxRec\doorstop_config.ini" -Raw -ErrorAction SilentlyContinue
-          if ($ini -notmatch "FluxLoader\\core\\FluxLoader.Bootstrap.dll") { Write-Host "::error::doorstop_config.ini missing target_assembly"; $failed = $true }
-          else { Write-Host "OK  doorstop_config.ini targets FluxLoader bootstrap" }
-          if ($ini -notmatch "coreclr_path=dotnet\\coreclr.dll") { Write-Host "::error::doorstop_config.ini missing coreclr_path"; $failed = $true }
-          else { Write-Host "OK  doorstop_config.ini sets CoreCLR path" }
-          if ($failed) { exit 1 }
-          # Enable plugin debug logging for this proof run (HTTP trace in RecNetPlugin.log)
-          $cfg = "D:\FluxRec\FluxLoader\config\net.rec.plugin.cfg"
-          (Get-Content $cfg -Raw) -replace "Debug = false", "Debug = true" | Set-Content $cfg
-          Write-Host "enabled plugin Debug for proof run"
 
       - name: Launch via FluxRecLauncher --play
         shell: pwsh
@@ -219,22 +262,45 @@ jobs:
           name: installer-proof-shots
           path: D:\shots\*.png
 
-      - name: Collect FluxLoader + plugin logs
+      - name: Collect loader + plugin logs
         if: always()
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path D:\logs | Out-Null
-          # FluxLoader bootstrap log (written by Entrypoint.cs)
-          foreach ($src in @("D:\FluxRec\FluxLoader\fluxloader.log", "D:\FluxRec\FluxLoader\logs")) {
-            if (Test-Path $src) { Copy-Item $src D:\logs -Recurse -Force; Write-Host "collected $src" }
-            else { Write-Host "no $src" }
+          $tag = "${{ inputs.tag }}"
+          $isFluxLoader = $tag -match "v0\.2"
+          Write-Host "Collecting logs for tag: $tag (FluxLoader: $isFluxLoader)"
+          
+          if ($isFluxLoader) {
+            Write-Host "=== Checking for FluxLoader files ==="
+            Write-Host "D:\FluxRec\FluxLoader exists: $(Test-Path 'D:\FluxRec\FluxLoader')"
+            if (Test-Path 'D:\FluxRec\FluxLoader') {
+              Get-ChildItem 'D:\FluxRec\FluxLoader' -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize | Out-String | Write-Host
+            }
+            # FluxLoader bootstrap log (written by Entrypoint.cs)
+            foreach ($src in @("D:\FluxRec\FluxLoader\fluxloader.log", "D:\FluxRec\FluxLoader\logs")) {
+              if (Test-Path $src) { Copy-Item $src D:\logs -Recurse -Force; Write-Host "collected $src" }
+              else { Write-Host "no $src" }
+            }
+            # RecNetPlugin log (FluxLogger writes to FluxLoader\logs\RecNetPlugin.log)
+            $pluglog = "D:\FluxRec\FluxLoader\logs\RecNetPlugin.log"
+            if (Test-Path $pluglog) { Write-Host "plugin log size: $((Get-Item $pluglog).Length) bytes" }
+          } else {
+            Write-Host "=== Checking for BepInEx files ==="
+            Write-Host "D:\FluxRec\BepInEx exists: $(Test-Path 'D:\FluxRec\BepInEx')"
+            if (Test-Path 'D:\FluxRec\BepInEx') {
+              Get-ChildItem 'D:\FluxRec\BepInEx' -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize | Out-String | Write-Host
+            }
+            # BepInEx logs
+            foreach ($src in @("D:\FluxRec\BepInEx\LogOutput.log", "D:\FluxRec\BepInEx\config")) {
+              if (Test-Path $src) { Copy-Item $src D:\logs -Recurse -Force; Write-Host "collected $src" }
+              else { Write-Host "no $src" }
+            }
           }
-          # RecNetPlugin log (FluxLogger writes to FluxLoader\logs\RecNetPlugin.log)
-          $pluglog = "D:\FluxRec\FluxLoader\logs\RecNetPlugin.log"
-          if (Test-Path $pluglog) { Write-Host "plugin log size: $((Get-Item $pluglog).Length) bytes" }
+          Write-Host "=== D:\logs contents ==="
           Get-ChildItem D:\logs -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize | Out-String | Write-Host
 
-      - name: Upload FluxLoader logs
+      - name: Upload loader logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
