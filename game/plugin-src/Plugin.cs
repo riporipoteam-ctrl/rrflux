@@ -145,6 +145,14 @@ public class Plugin : BasePlugin
         // retried from OnSceneLoaded until the home screen exists (no-op once done).
         Patches.PlayButtonPatch.Apply();
 
+        // Play button visibility: disables Statsig-based hide components that
+        // prevent the Play button (and logo) from appearing. The RRUI home
+        // screen uses HideIfSortableTransformNotInludedInTestGroup to hide
+        // icons not in the Statsig list; since our backend serves
+        // UseStatSig=false, Play is excluded by default. This patch forces
+        // all icons visible.
+        Patches.PlayButtonVisibilityPatch.Apply();
+
         // Flux home logo above the tab row: retried from OnSceneLoaded until
         // the RRUI home screen exists (no-op once inserted).
         Patches.HomeLogoPatch.Apply();
