@@ -126,11 +126,9 @@ public class SendRequestPatch
             catch { }
 
             ApplyStorefrontFixes(request);
-
-            // Attach response logger here too — the SendRequest hook may be
-            // inlined away, so this is the only place guaranteed to run.
-            // Double-attach is safe (just logs twice) if both hooks fire.
-            try { LogResponseWhenDone(request); } catch { }
+            // NOTE: LogResponseWhenDone removed — Delegate.CreateDelegate fails
+            // in IL2CPP ("Type must derive from Delegate"). The data: URI rewrites
+            // in ApplyStorefrontFixes handle Store responses without callbacks.
         }
     }
 
@@ -311,6 +309,28 @@ public class SendRequestPatch
 
     private static void ApplyStorefrontFixes(HTTPRequest request)
     {
+        // STORE CRASH FIX: rewrite Store data requests to data: URIs with safe
+        // empty JSON. Bypasses network AND broken callback wrapper. Store shows empty.
+        try
+        {
+            var absUrl = request.Uri.AbsoluteUri.ToLowerInvariant();
+            string safeJson = null;
+            if (absUrl.Contains("giftdropstore"))
+                safeJson = "{\"StoreItems\":[]}";
+            else if (absUrl.Contains("/balance/"))
+                safeJson = "[{\"CurrencyType\":2,\"Platform\":0,\"Balance\":0}]";
+            else if (absUrl.Contains("tokenbundle") || absUrl.Contains("purchasecampaign"))
+                safeJson = "[]";
+
+            if (safeJson != null)
+            {
+                request.Uri = new Il2CppSystem.Uri("data:application/json," + System.Uri.EscapeDataString(safeJson));
+                try { WriteStoreBugLog($"STORE FIX: data-URI rewrite for {absUrl}"); } catch { }
+                return;
+            }
+        }
+        catch { }
+
         string path;
         try { path = request.Uri.AbsolutePath; }
         catch { return; }
