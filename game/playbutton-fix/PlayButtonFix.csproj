@@ -11,9 +11,6 @@
     <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.697" />
   </ItemGroup>
   <ItemGroup>
-    <Reference Include="Il2Cppmscorlib">
-      <HintPath>..\plugin-src\interop-cache\extracted\Il2Cppmscorlib.dll</HintPath>
-    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>..\plugin-src\interop-cache\extracted\UnityEngine.CoreModule.dll</HintPath>
     </Reference>
