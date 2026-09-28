@@ -96,117 +96,6 @@ public class SendRequestPatch
         }
     }
 
-    // Second net, one layer down. Every SendRequest overload funnels into SendRequestImpl, and
-    // IL2CPP is free to inline the tiny SendRequest(HTTPRequest) body into its callers — a hook on
-    // it then never fires for those call sites (a Harmony patch that loads clean can still never
-    // run). SendRequestImpl is the last managed-visible chokepoint before the connection, so the
-    // host redirect and storefront rewrites are applied here too. The mutations are idempotent —
-    // re-running on an already-rewritten URL is a no-op — so double-application via both hooks is
-    // safe. Auth capture and debug logging stay only in the SendRequest hook to avoid duplicates.
-    [HarmonyPatch(typeof(HTTPManager), "SendRequestImpl", [typeof(HTTPRequest)])]
-    public class SendRequestImplPatch
-    {
-        private static void Prefix(ref HTTPRequest request)
-        {
-            var host = request.Uri.Host;
-            if (host == OfficialNameServer)
-            {
-                var newHost = new System.Uri(Plugin.ServerHostname.Value).Host;
-                var builder = new Il2CppSystem.UriBuilder(request.Uri) { Host = newHost };
-                request.Uri = builder.Uri;
-            }
-
-            // STOREBUGLOG: record every Store-related outgoing request
-            try
-            {
-                var absUrl = request.Uri.AbsoluteUri;
-                if (IsStoreRequest(absUrl))
-                    WriteStoreBugLog($"STORE REQ: {request.MethodType} {absUrl}");
-            }
-            catch { }
-
-            ApplyStorefrontFixes(request);
-            // NOTE: LogResponseWhenDone removed — Delegate.CreateDelegate fails
-            // in IL2CPP ("Type must derive from Delegate"). The data: URI rewrites
-            // in ApplyStorefrontFixes handle Store responses without callbacks.
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // STOREBUGLOG: file-based Store crash diagnostics.
-    // Writes to STOREBUGLOG.txt in the game folder so Armin can paste it back.
-    private static readonly object _storeBugLogLock = new object();
-    private static string _storeBugLogPath;
-
-    private static string StoreBugLogPath
-    {
-        get
-        {
-            if (_storeBugLogPath == null)
-            {
-                try
-                {
-                    var dir = System.IO.Directory.GetCurrentDirectory();
-                    _storeBugLogPath = System.IO.Path.Combine(dir, "STOREBUGLOG.txt");
-                }
-                catch { _storeBugLogPath = "STOREBUGLOG.txt"; }
-            }
-            return _storeBugLogPath;
-        }
-    }
-
-    // Returns safe empty JSON for Store endpoints, or null if the URL should
-    // pass through unmodified. This prevents crashes from 404s, null data,
-    // or unexpected response shapes — the Store shows empty instead of crashing.
-    private static string GetSafeStoreResponse(string url)
-    {
-        if (string.IsNullOrEmpty(url)) return null;
-        var lower = url.ToLowerInvariant();
-
-        // Gift-drop storefront catalogs: expect {"StoreItems": [...]}
-        if (lower.Contains("giftdropstore"))
-            return "{\"StoreItems\":[]}";
-
-        // Balance: expect [{"CurrencyType":2,"Platform":0,"Balance":0}]
-        if (lower.Contains("/balance/"))
-            return "[{\"CurrencyType\":2,\"Platform\":0,\"Balance\":0}]";
-
-        // List-type storefront endpoints: expect []
-        if (lower.Contains("toptoday") || lower.Contains("objectives") ||
-            lower.Contains("wishlist") || lower.Contains("adcarouselitems"))
-            return "[]";
-
-        // Token bundles / purchase campaigns: expect []
-        if (lower.Contains("tokenbundle") || lower.Contains("purchasecampaign"))
-            return "[]";
-
-        // Custom avatar items: let through (not a crash source per logs)
-        return null;
-    }
-
-    private static bool IsStoreRequest(string url)
-    {
-        if (string.IsNullOrEmpty(url)) return false;
-        url = url.ToLowerInvariant();
-        return url.Contains("storefront") || url.Contains("store") ||
-               url.Contains("giftdropstore") || url.Contains("tokenbundle") ||
-               url.Contains("purchasecampaign") || url.Contains("algorithmiclist") ||
-               url.Contains("customavataritem");
-    }
-
-    private static void WriteStoreBugLog(string message)
-    {
-        try
-        {
-            lock (_storeBugLogLock)
-            {
-                var line = $"[{System.DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{System.Environment.NewLine}";
-                System.IO.File.AppendAllText(StoreBugLogPath, line);
-            }
-        }
-        catch { /* never crash the game over logging */ }
-    }
-
     // ------------------------------------------------------------------
     // Storefront endpoint compatibility (comprehensive, 2026-09-26,
     // re-verified live 2026-09-26 ~19:00 CEST against the deployed econ
@@ -273,15 +162,6 @@ public class SendRequestPatch
         // token purchase flow reads and charges (FluxPlusPatch,
         // PlusBuyDialog, PlusBalancePatch all use /api/storefronts/v4/balance/2).
         ("/api/storefronts/v2/balance", "/api/storefronts/v4/balance/2"),
-        // Store page-open fetches: toptoday and objectives 404 on the live
-        // backend (stubs exist in econ.app.ts but were never deployed). The
-        // client pairs them with adcarouselitems in a WhenAll; a 404 faults
-        // the pair and the page renders empty then crashes on the UI tick.
-        // adcarouselitems is live and returns [] — the exact stub shape —
-        // so rewriting here gives the identical result with no backend deploy.
-        ("/api/storefronts/v1/toptoday", "/api/storefronts/v1/adcarouselitems"),
-        ("/api/storefronts/v1/objectives", "/api/storefronts/v1/adcarouselitems"),
-        ("/api/storefronts/v1/wishlist", "/api/storefronts/v1/adcarouselitems"),
     };
 
     // Client-called storefront paths with no backend equivalent. The buy*/trial*
@@ -300,6 +180,8 @@ public class SendRequestPatch
         "/api/storefronts/v1/buyRoomKey",
         "/api/storefronts/v1/trialInvention",
         "/api/storefronts/v1/trialInvention/duration",
+        "/api/storefronts/v1/toptoday",
+        "/api/storefronts/v1/objectives",
         "/api/storefronts/v2/buyElite",
         "/api/storefronts/v2/buyTier",
     };
@@ -309,28 +191,6 @@ public class SendRequestPatch
 
     private static void ApplyStorefrontFixes(HTTPRequest request)
     {
-        // STORE CRASH FIX: rewrite Store data requests to data: URIs with safe
-        // empty JSON. Bypasses network AND broken callback wrapper. Store shows empty.
-        try
-        {
-            var absUrl = request.Uri.AbsoluteUri.ToLowerInvariant();
-            string safeJson = null;
-            if (absUrl.Contains("giftdropstore"))
-                safeJson = "{\"StoreItems\":[]}";
-            else if (absUrl.Contains("/balance/"))
-                safeJson = "[{\"CurrencyType\":2,\"Platform\":0,\"Balance\":0}]";
-            else if (absUrl.Contains("tokenbundle") || absUrl.Contains("purchasecampaign"))
-                safeJson = "[]";
-
-            if (safeJson != null)
-            {
-                request.Uri = new Il2CppSystem.Uri("data:application/json," + System.Uri.EscapeDataString(safeJson));
-                try { WriteStoreBugLog($"STORE FIX: data-URI rewrite for {absUrl}"); } catch { }
-                return;
-            }
-        }
-        catch { }
-
         string path;
         try { path = request.Uri.AbsolutePath; }
         catch { return; }
@@ -352,7 +212,6 @@ public class SendRequestPatch
                 var builder = new Il2CppSystem.UriBuilder(request.Uri) { Path = to };
                 request.Uri = builder.Uri;
                 Plugin.Log.LogInfo($"[HTTP] rewrote {from} -> {to} (storefront compat)");
-                WriteStoreBugLog($"STORE REWRITE: {from} -> {to}");
             }
             catch (Exception e)
             {
@@ -385,49 +244,11 @@ public class SendRequestPatch
         {
             var original = request.Callback;
             var url = request.Uri.AbsoluteUri;
-            // STOREBUGLOG diagnostic: confirm logger attachment
-            try { if (IsStoreRequest(url)) WriteStoreBugLog($"STORE HOOK: attached response logger for {url}"); } catch { }
 
             // NOTE: Was DelegateSupport.ConvertDelegate<OnRequestFinishedDelegate>(action).
             // See DeviceIdResponsePatch.cs for why CreateDelegate is used here.
             var logAction = (Action<HTTPRequest, HTTPResponse>)((req, resp) =>
                 {
-                    // STORE FIX: replace Store responses with safe empty data so the
-                    // client can't crash on 404s, nulls, or bad shapes. Uses the same
-                    // technique as DeviceIdResponsePatch (proven to work).
-                    try
-                    {
-                        if (resp != null && IsStoreRequest(url))
-                        {
-                            string safeBody = GetSafeStoreResponse(url);
-                            if (safeBody != null)
-                            {
-                                var bytes = System.Text.Encoding.UTF8.GetBytes(safeBody);
-                                resp.Data = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<byte>(bytes);
-                                resp.dataAsText = safeBody;
-                                resp.StatusCode = 200;
-                                WriteStoreBugLog($"STORE FIX: replaced response for {url} with safe empty data");
-                            }
-                            else
-                            {
-                                // Log what we got (for diagnostics)
-                                string rtext;
-                                try
-                                {
-                                    rtext = resp.DataAsText;
-                                    if (string.IsNullOrEmpty(rtext)) rtext = "<empty>";
-                                    if (rtext.Length > 500) rtext = rtext.Substring(0, 500) + "...";
-                                }
-                                catch { rtext = "<unreadable>"; }
-                                WriteStoreBugLog($"STORE RESP: {url} -> {resp.StatusCode} body={rtext}");
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        try { WriteStoreBugLog($"STORE FIX ERROR: {ex.Message}"); } catch { }
-                    }
-
                     if (resp == null)
                         Plugin.Log.LogWarning($"[HTTP] <- {url} NO RESPONSE (state={req.State})");
                     else
@@ -451,12 +272,10 @@ public class SendRequestPatch
                 });
             request.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
                 typeof(OnRequestFinishedDelegate), logAction.Target, logAction.Method);
-            try { if (IsStoreRequest(url)) WriteStoreBugLog($"STORE HOOK: delegate attached OK for {url}"); } catch { }
         }
         catch (Exception e)
         {
             Plugin.Log.LogError($"[HTTP] failed to attach response logger: {e}");
-            try { WriteStoreBugLog($"STORE HOOK FAILED: {e.Message}"); } catch { }
         }
     }
 
