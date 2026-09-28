@@ -52,6 +52,15 @@ public class Plugin : BasePlugin
     {
         Log = base.Log;
 
+        // STOREBUGLOG: session header so Armin knows where a new run starts
+        try
+        {
+            var logPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "STOREBUGLOG.txt");
+            var header = $"\n===== STOREBUGLOG session started {System.DateTime.Now:yyyy-MM-dd HH:mm:ss} =====\n";
+            System.IO.File.AppendAllText(logPath, header);
+        }
+        catch { }
+
         AppIdRT = Config.Bind("Photon", "App Id Realtime", "", "Photon Realtime App ID");
         AppIdVoice = Config.Bind("Photon", "App Id Voice", "", "Photon Voice App ID");
         AppIdChat = Config.Bind("Photon", "App Id Chat", "", "Photon Chat App ID");

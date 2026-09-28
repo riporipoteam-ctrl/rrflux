@@ -116,8 +116,63 @@ public class SendRequestPatch
                 request.Uri = builder.Uri;
             }
 
+            // STOREBUGLOG: record every Store-related outgoing request
+            try
+            {
+                var absUrl = request.Uri.AbsoluteUri;
+                if (IsStoreRequest(absUrl))
+                    WriteStoreBugLog($"STORE REQ: {request.MethodType} {absUrl}");
+            }
+            catch { }
+
             ApplyStorefrontFixes(request);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // STOREBUGLOG: file-based Store crash diagnostics.
+    // Writes to STOREBUGLOG.txt in the game folder so Armin can paste it back.
+    private static readonly object _storeBugLogLock = new object();
+    private static string _storeBugLogPath;
+
+    private static string StoreBugLogPath
+    {
+        get
+        {
+            if (_storeBugLogPath == null)
+            {
+                try
+                {
+                    var dir = System.IO.Directory.GetCurrentDirectory();
+                    _storeBugLogPath = System.IO.Path.Combine(dir, "STOREBUGLOG.txt");
+                }
+                catch { _storeBugLogPath = "STOREBUGLOG.txt"; }
+            }
+            return _storeBugLogPath;
+        }
+    }
+
+    private static bool IsStoreRequest(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return false;
+        url = url.ToLowerInvariant();
+        return url.Contains("storefront") || url.Contains("store") ||
+               url.Contains("giftdropstore") || url.Contains("tokenbundle") ||
+               url.Contains("purchasecampaign") || url.Contains("algorithmiclist") ||
+               url.Contains("customavataritem");
+    }
+
+    private static void WriteStoreBugLog(string message)
+    {
+        try
+        {
+            lock (_storeBugLogLock)
+            {
+                var line = $"[{System.DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{System.Environment.NewLine}";
+                System.IO.File.AppendAllText(StoreBugLogPath, line);
+            }
+        }
+        catch { /* never crash the game over logging */ }
     }
 
     // ------------------------------------------------------------------
@@ -243,6 +298,7 @@ public class SendRequestPatch
                 var builder = new Il2CppSystem.UriBuilder(request.Uri) { Path = to };
                 request.Uri = builder.Uri;
                 Plugin.Log.LogInfo($"[HTTP] rewrote {from} -> {to} (storefront compat)");
+                WriteStoreBugLog($"STORE REWRITE: {from} -> {to}");
             }
             catch (Exception e)
             {
@@ -280,6 +336,29 @@ public class SendRequestPatch
             // See DeviceIdResponsePatch.cs for why CreateDelegate is used here.
             var logAction = (Action<HTTPRequest, HTTPResponse>)((req, resp) =>
                 {
+                    // STOREBUGLOG: record Store-related responses
+                    try
+                    {
+                        if (IsStoreRequest(url))
+                        {
+                            if (resp == null)
+                                WriteStoreBugLog($"STORE RESP: {url} -> NO RESPONSE (state={req.State})");
+                            else
+                            {
+                                string rtext;
+                                try
+                                {
+                                    rtext = resp.DataAsText;
+                                    if (string.IsNullOrEmpty(rtext)) rtext = "<empty>";
+                                    if (rtext.Length > 2000) rtext = rtext.Substring(0, 2000) + "... <truncated>";
+                                }
+                                catch { rtext = "<unreadable>"; }
+                                WriteStoreBugLog($"STORE RESP: {url} -> {resp.StatusCode} body={rtext}");
+                            }
+                        }
+                    }
+                    catch { }
+
                     if (resp == null)
                         Plugin.Log.LogWarning($"[HTTP] <- {url} NO RESPONSE (state={req.State})");
                     else
