@@ -336,6 +336,8 @@ public class SendRequestPatch
         {
             var original = request.Callback;
             var url = request.Uri.AbsoluteUri;
+            // STOREBUGLOG diagnostic: confirm logger attachment
+            try { if (IsStoreRequest(url)) WriteStoreBugLog($"STORE HOOK: attached response logger for {url}"); } catch { }
 
             // NOTE: Was DelegateSupport.ConvertDelegate<OnRequestFinishedDelegate>(action).
             // See DeviceIdResponsePatch.cs for why CreateDelegate is used here.
@@ -387,10 +389,12 @@ public class SendRequestPatch
                 });
             request.Callback = (OnRequestFinishedDelegate)Delegate.CreateDelegate(
                 typeof(OnRequestFinishedDelegate), logAction.Target, logAction.Method);
+            try { if (IsStoreRequest(url)) WriteStoreBugLog($"STORE HOOK: delegate attached OK for {url}"); } catch { }
         }
         catch (Exception e)
         {
             Plugin.Log.LogError($"[HTTP] failed to attach response logger: {e}");
+            try { WriteStoreBugLog($"STORE HOOK FAILED: {e.Message}"); } catch { }
         }
     }
 
