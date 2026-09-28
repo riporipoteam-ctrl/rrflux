@@ -4,6 +4,7 @@
 # appear in the repo.
 
 name: Build RecFlare installer
+# v0.2.10 trigger
 
 on:
   push:
