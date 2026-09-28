@@ -12,10 +12,10 @@
   </ItemGroup>
   <ItemGroup>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\plugin-src\interop-cache\extracted\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>refs\UnityEngine.CoreModule.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine.UI">
-      <HintPath>..\plugin-src\interop-cache\extracted\UnityEngine.UI.dll</HintPath>
+      <HintPath>refs\UnityEngine.UI.dll</HintPath>
     </Reference>
   </ItemGroup>
 </Project>
