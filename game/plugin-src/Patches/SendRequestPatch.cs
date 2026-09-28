@@ -162,6 +162,14 @@ public class SendRequestPatch
         // token purchase flow reads and charges (FluxPlusPatch,
         // PlusBuyDialog, PlusBalancePatch all use /api/storefronts/v4/balance/2).
         ("/api/storefronts/v2/balance", "/api/storefronts/v4/balance/2"),
+        // Store page-open fetches: toptoday and objectives 404 on the live
+        // backend (stubs exist in econ.app.ts but were never deployed). The
+        // client pairs them with adcarouselitems in a WhenAll; a 404 faults
+        // the pair and the page renders empty then crashes on the UI tick.
+        // adcarouselitems is live and returns [] — the exact stub shape —
+        // so rewriting here gives the identical result with no backend deploy.
+        ("/api/storefronts/v1/toptoday", "/api/storefronts/v1/adcarouselitems"),
+        ("/api/storefronts/v1/objectives", "/api/storefronts/v1/adcarouselitems"),
     };
 
     // Client-called storefront paths with no backend equivalent. The buy*/trial*
@@ -180,8 +188,6 @@ public class SendRequestPatch
         "/api/storefronts/v1/buyRoomKey",
         "/api/storefronts/v1/trialInvention",
         "/api/storefronts/v1/trialInvention/duration",
-        "/api/storefronts/v1/toptoday",
-        "/api/storefronts/v1/objectives",
         "/api/storefronts/v2/buyElite",
         "/api/storefronts/v2/buyTier",
     };
