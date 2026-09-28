@@ -135,7 +135,9 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ inputs.tag }}"
-          $isFluxLoader = $tag -match "v0\.2"
+          # v0.2.6 restored BepInEx (FluxLoader's bootstrap never ran on real
+          # Windows). Only v0.2.0–v0.2.5 use the FluxLoader layout.
+          $isFluxLoader = $tag -match "v0\.2\.[0-5]$"
           Write-Host "Testing tag: $tag (FluxLoader: $isFluxLoader)"
           
           if ($isFluxLoader) {
@@ -268,7 +270,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path D:\logs | Out-Null
           $tag = "${{ inputs.tag }}"
-          $isFluxLoader = $tag -match "v0\.2"
+          # v0.2.6 restored BepInEx — only v0.2.0–v0.2.5 use FluxLoader.
+          $isFluxLoader = $tag -match "v0\.2\.[0-5]$"
           Write-Host "Collecting logs for tag: $tag (FluxLoader: $isFluxLoader)"
           
           if ($isFluxLoader) {

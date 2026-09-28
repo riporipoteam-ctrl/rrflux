@@ -3,11 +3,11 @@
 //! v0.2.0 replaces the old "delete the live directory first" behavior with
 //! a staging pipeline:
 //!
-//! * Fresh install: everything (client extract, bypass, FluxLoader, branding,
+//! * Fresh install: everything (client extract, bypass, BepInEx, branding,
 //!   config, shortcuts) is built inside `<dir>.staging-<pid>` and only
 //!   renamed into place after strict verification passes. Any failure
 //!   deletes the staging directory and leaves the machine untouched.
-//! * Upgrade / update: small managed components (FluxLoader core, plugin,
+//! * Upgrade / update: small managed components (BepInEx, plugin,
 //!   interop, config, bypass files) are replaced in place, but every file
 //!   that is overwritten is first copied to `<file>.fluxrec-bak`. After all
 //!   components verify, the backups are deleted. On any failure the backups

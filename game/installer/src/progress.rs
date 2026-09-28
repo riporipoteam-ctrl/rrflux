@@ -17,7 +17,7 @@ const STAGES: &[(&str, f64, f64)] = &[
     ("Downloading game files\u{2026}", 2.0, 48.0),
     ("Extracting game files\u{2026}", 50.0, 12.0),
     ("Applying Steam bypass\u{2026}", 62.0, 3.0),
-    ("Installing FluxLoader\u{2026}", 65.0, 10.0),
+    ("Installing BepInEx\u{2026}", 65.0, 10.0),
     ("Applying Flux Rec branding\u{2026}", 75.0, 8.0),
     ("Writing configuration\u{2026}", 83.0, 5.0),
     ("Creating shortcuts\u{2026}", 88.0, 4.0),

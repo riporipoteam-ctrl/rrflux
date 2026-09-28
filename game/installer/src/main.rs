@@ -16,7 +16,8 @@
 //      overwrite the stock bundle so the loading screen shows Flux Rec
 //      branding. The stock bundle is backed up as *.bundle.stock once.
 //   2. Download BepInEx 6.0.0-pre.2 (Unity IL2CPP win-x64), extract into the dir.
-//   3. Download RecNetPlugin.dll (20230414.2) into BepInEx/plugins/.
+//   3. Write the embedded RecNetPlugin.dll (RecFlare redirect plugin,
+//      BepInEx build) into BepInEx/plugins/.
 //   4. Write BepInEx/config/net.rec.plugin.cfg — ns host and Photon App IDs
 //      baked in at packaging time from FLUXREC_NS_HOST / FLUXREC_PHOTON_RT /
 //      FLUXREC_PHOTON_VOICE / FLUXREC_PHOTON_CHAT env vars (or pass --ns-host /
@@ -42,7 +43,7 @@ use std::time::{Duration, Instant};
 mod assets;
 mod bypass;
 mod defender; // AV hardening (2026-09-24): Defender exclusions, quarantine self-heal, Unblock-File
-mod fluxloader; // v0.2.0: FluxLoader install (BepInEx replacement)
+mod bepinex; // v0.2.6: BepInEx install restored (FluxLoader removed — bootstrap never ran)
 mod transaction; // v0.2.0: transactional staging, atomic swap, rollback
 mod guide; // one-time guided Windows Security exclusion setup (2026-09-25)
 mod gui;
@@ -65,8 +66,7 @@ const CLIENT_ZIP_MIRRORS: &[&str] = &[
 const CLIENT_ZIP_MD5: &str = "4c4a94624eba99028bb36445ccb03253";
 const BEPINEX_URL: &str = "https://github.com/BepInEx/BepInEx/releases/download/v6.0.0-pre.2/BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip";
 const BEPINEX_SIZE: u64 = 34_146_254;
-// (v0.2.0: the old direct plugin download constants are retired — the
-// FluxLoader plugin build is embedded in fluxloader.rs as RECNET_PLUGIN_DLL.)
+// (v0.2.6: the BepInEx plugin build is embedded in bepinex.rs as RECNET_PLUGIN_DLL.)
 /// Flux Rec logo bundle: gzipped patched Addressables UI bundle (loading
 /// screen logos replaced). Hosted on our Hugging Face dataset; verified by
 /// MD5 before use, then gunzipped over the stock bundle.
@@ -416,7 +416,7 @@ pub(crate) async fn download_mirrored(
     Err(format!("{label}: all {} mirrors failed (last: {last_err})", urls.len()))
 }
 
-fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Result<(), String> {
+pub(crate) fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Result<(), String> {
     println!("[{label}] extracting...");
     let f = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
@@ -995,7 +995,7 @@ async fn refresh_components(
 }
 
 /// Steps shared by fresh installs and upgrades: Steam bypass, branding,
-/// client patches, FluxLoader. In fresh mode `target` is the staging dir
+/// client patches, BepInEx. In fresh mode `target` is the staging dir
 /// (the backups set is a throwaway — staging abort covers failures); in
 /// upgrade mode it is the live dir and `backups` is the caller's set, so a
 /// later failure rolls back these changes too.
@@ -1026,19 +1026,15 @@ async fn apply_common_components(
     // Same-length byte replacements, fail-soft.
     patches::apply_client_patches(target);
 
-    // 5. FluxLoader (replaces BepInEx). Needs the BepInEx zip ONLY as the
-    // source of the trimmed CoreCLR runtime, and only when dotnet/ is
-    // missing (fresh installs always need it).
-    progress.set_stage("Installing FluxLoader…");
-    let need_dotnet = !target.join("dotnet").join("coreclr.dll").exists();
-    let bepinex_zip: Option<std::path::PathBuf> = if need_dotnet {
-        Some(fetch_bepinex_zip(client, progress).await?)
-    } else {
-        None
-    };
-    fluxloader::install_fluxloader(
+    // 5. BepInEx (v0.2.6: restored — the proven loader; FluxLoader's
+    // bootstrap never ran on real Windows). The full BepInEx zip is
+    // extracted; the RecFlare redirect plugin (embedded BepInEx build)
+    // goes into BepInEx/plugins/.
+    progress.set_stage("Installing BepInEx…");
+    let bepinex_zip = fetch_bepinex_zip(client, progress).await?;
+    bepinex::install_bepinex(
         target,
-        bepinex_zip.as_deref(),
+        &bepinex_zip,
         backups,
         ns_host,
         photon_rt,
@@ -1046,20 +1042,18 @@ async fn apply_common_components(
         photon_chat,
         progress,
     )?;
-    // Clean up the temp BepInEx zip (it was only ever a dotnet/ source).
-    if let Some(zip) = bepinex_zip {
-        let _ = std::fs::remove_file(zip);
-    }
+    // Clean up the temp BepInEx zip.
+    let _ = std::fs::remove_file(&bepinex_zip);
 
     // 6. Plugin config + hosts entry + console policy live in
-    // fluxloader::install_fluxloader (step 6) and finish_live_dir.
+    // bepinex::install_bepinex (step 6) and finish_live_dir.
     progress.set_stage("Writing configuration…");
     println!("[install] configuration written.");
     Ok(())
 }
 
-/// Download the BepInEx zip to the temp dir (it is only ever a source for
-/// the trimmed CoreCLR runtime subset-extract). Returns the zip path.
+/// Download the BepInEx zip to the temp dir for the full BepInEx install.
+/// Returns the zip path.
 pub(crate) async fn fetch_bepinex_zip(
     client: &reqwest::Client,
     progress: &progress::Progress,
@@ -1077,7 +1071,7 @@ pub(crate) async fn fetch_bepinex_zip(
         None,
         Some(BEPINEX_SIZE),
         "bepinex",
-        Some((progress, "Installing FluxLoader…")),
+        Some((progress, "Installing BepInEx…")),
     )
     .await?;
     defender::unblock_file(&dest);
@@ -1121,15 +1115,13 @@ fn verify_install(dir: &Path) -> Result<(), String> {
     if !steam_settings.join("steam_interfaces.txt").exists() {
         missing.push("steam_settings/steam_interfaces.txt (Steam bypass)");
     }
-    // FluxLoader (v0.2.0) — every piece required.
+    // BepInEx (v0.2.6) — every piece required.
     for rel in [
         "winhttp.dll (Doorstop proxy)",
         "doorstop_config.ini",
-        "dotnet/coreclr.dll (CoreCLR runtime)",
-        "FluxLoader/core/FluxLoader.Bootstrap.dll",
-        "FluxLoader/interop/Assembly-CSharp.dll",
-        "FluxLoader/plugins/RecNetPlugin.dll",
-        "FluxLoader/config/net.rec.plugin.cfg",
+        "BepInEx/core/BepInEx.Unity.IL2CPP.dll",
+        "BepInEx/plugins/RecNetPlugin.dll",
+        "BepInEx/config/net.rec.plugin.cfg",
     ] {
         // Strip the human-readable suffix for the actual path check.
         let path_part = rel.split(" (").next().unwrap_or(rel);

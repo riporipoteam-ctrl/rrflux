@@ -370,9 +370,9 @@ pub fn verify_quarantine_targets(dir: &Path, _ns_host: &str) -> Vec<QuarantinePr
     let mut problems = Vec::new();
 
     // 1. Redirect plugin — the #1 quarantine target (unsigned .NET DLL).
-    // v0.2.0: FluxLoader layout (BepInEx/plugins is gone).
+    // v0.2.6: BepInEx layout (FluxLoader removed).
     let plugin = dir
-        .join("FluxLoader")
+        .join("BepInEx")
         .join("plugins")
         .join("RecNetPlugin.dll");
     if !std::fs::metadata(&plugin).map(|m| m.len() > 0).unwrap_or(false) {
@@ -409,8 +409,8 @@ async fn repair_plugin_dll(
     dir: &Path,
     progress: &crate::progress::Progress,
 ) -> bool {
-    // v0.2.0: FluxLoader layout — plugins live under FluxLoader/plugins/.
-    let plugins_dir = dir.join("FluxLoader").join("plugins");
+    // v0.2.6: BepInEx layout — plugins live under BepInEx/plugins/.
+    let plugins_dir = dir.join("BepInEx").join("plugins");
     if std::fs::create_dir_all(&plugins_dir).is_err() {
         return false;
     }
@@ -418,8 +418,8 @@ async fn repair_plugin_dll(
     // DO NOT delete first — if the write fails after deletion, the file is
     // gone and we can't recover. Just overwrite directly.
     progress.set_stage("Repairing Flux Rec plugin…");
-    // v0.2.0: use the embedded FluxLoader plugin build.
-    match std::fs::write(&dest, crate::fluxloader::RECNET_PLUGIN_DLL) {
+    // v0.2.6: use the embedded BepInEx plugin build.
+    match std::fs::write(&dest, crate::bepinex::RECNET_PLUGIN_DLL) {
         Ok(()) => {
             unblock_file(&dest);
             std::fs::metadata(&dest)
@@ -488,8 +488,8 @@ pub async fn repair_quarantine_targets(
     }
     // Re-apply the defenses that keep these files alive.
     ensure_defender_exclusions(dir);
-    // v0.2.0: FluxLoader layout.
-    unblock_file(&dir.join("FluxLoader").join("plugins").join("RecNetPlugin.dll"));
+    // v0.2.6: BepInEx layout.
+    unblock_file(&dir.join("BepInEx").join("plugins").join("RecNetPlugin.dll"));
     unblock_file(
         &dir
             .join("RecRoom_Data")
@@ -659,8 +659,8 @@ mod tests {
     fn verify_passes_plugin_when_present() {
         let d = std::env::temp_dir().join("fluxrec-defender-test-present");
         let _ = std::fs::remove_dir_all(&d);
-        // v0.2.0: FluxLoader layout.
-        let plug = d.join("FluxLoader").join("plugins");
+        // v0.2.6: BepInEx layout.
+        let plug = d.join("BepInEx").join("plugins");
         std::fs::create_dir_all(&plug).unwrap();
         std::fs::write(plug.join("RecNetPlugin.dll"), b"fake-dll").unwrap();
         let problems = verify_quarantine_targets(&d, "127.0.0.1");

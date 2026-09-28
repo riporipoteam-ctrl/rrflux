@@ -72,40 +72,38 @@ pub fn run_launcher(
 
     // 1b. Self-heal: the Steam bypass must be intact or the game crashes at
     // launch / shows "Failed to initialize Steam Platform". Verify on every
-    // v0.2.0: FluxLoader self-heal. The old v0.1.53 "clean slate" deleted
-    // BepInEx/ on every launch — that must NEVER happen again: BepInEx/
-    // now holds the shared CoreCLR runtime (dotnet/) that FluxLoader
-    // needs to boot. Instead, verify the loader is intact; if it is
-    // broken, repair it by re-running the FluxLoader install step.
+    // v0.2.6: BepInEx self-heal (FluxLoader removed). Verify the loader is
+    // intact; if it is broken, repair it by re-running the BepInEx install
+    // step.
     {
-        let loader_state = crate::fluxloader::verify_for_launcher(dir);
+        let loader_state = crate::bepinex::verify_for_launcher(dir);
         if let Err(reason) = loader_state {
-            println!("[launcher] FluxLoader broken ({reason}) — repairing.");
-            progress.set_status("Repairing FluxLoader…", 8);
+            println!("[launcher] BepInEx broken ({reason}) — repairing.");
+            progress.set_status("Repairing BepInEx…", 8);
             let client = reqwest::Client::builder()
                 .user_agent("FluxRec-Setup/0.2.0")
                 .connect_timeout(Duration::from_secs(30))
                 .build();
             let repaired = match (&rt, client) {
                 (Ok(r), Ok(c)) => r
-                    .block_on(crate::fluxloader::repair_for_launcher(
+                    .block_on(crate::bepinex::repair_for_launcher(
                         &c, dir, ns_host, photon_rt, photon_voice, photon_chat, &progress,
                     ))
                     .map_err(|e| {
-                        eprintln!("[launcher] FluxLoader repair failed: {e}");
+                        eprintln!("[launcher] BepInEx repair failed: {e}");
                         e
                     })
                     .is_ok(),
                 _ => false,
             };
             if !repaired {
-                progress.set_status("FluxLoader repair failed — please re-run FluxRec-Setup.", 100);
+                progress.set_status("BepInEx repair failed — please re-run FluxRec-Setup.", 100);
                 std::thread::sleep(Duration::from_secs(6));
                 progress.done();
                 let _ = gui_thread.join();
                 std::process::exit(1);
             }
-            println!("[launcher] FluxLoader repaired.");
+            println!("[launcher] BepInEx repaired.");
         }
     }
 
