@@ -22,9 +22,7 @@
 
 using System;
 using System.Linq;
-using System.Reflection;
 using UnityEngine;
-using UnityEngine.Events;
 using UnityEngine.UI;
 
 namespace RecNetPlugin.Patches;
@@ -151,17 +149,9 @@ internal static class HomePlayButtonPatch
             // Relabel to "Play"
             SetButtonLabel(clone, "Play");
 
-            // Wire click to open Play menu (best effort - log if nav not found)
-            var btnComp = clone.GetComponent<Button>();
-            if (btnComp != null)
-            {
-                btnComp.onClick.RemoveAllListeners();
-                var playAction = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UnityAction>(
-                    new Action(() => {
-                        Plugin.Log.LogInfo("[HOME-PLAY] Play button clicked");
-                    }));
-                btnComp.onClick.AddListener(playAction);
-            }
+            // Note: keeping the original onClick (navigates to Create) as a
+            // fallback. The primary path is unhiding the real Play button above.
+            // Custom click wiring via ConvertDelegate requires working interop.
 
             Plugin.Log.LogInfo("[HOME-PLAY] cloned Create button as Play button");
             return true;
