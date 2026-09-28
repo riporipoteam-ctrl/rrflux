@@ -168,15 +168,14 @@ jobs:
           Start-Sleep -Seconds 60
           Shot "06-in-game"
           
-          Write-Host "Trying ESC to skip orientation or open menu..."
-          [System.Windows.Forms.SendKeys]::SendWait("{ESC}")
-          Start-Sleep -Seconds 5
-          Shot "07-after-esc"
+          Write-Host "Clicking ADD LATER on email prompt (if showing)..."
+          ClickAt 770 520
+          Start-Sleep -Seconds 10
+          Shot "07-after-addlater"
           
-          Write-Host "Trying to open Watch via menu - pressing Tab..."
-          [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
-          Start-Sleep -Seconds 5
-          Shot "08-after-tab"
+          Write-Host "Waiting 30s for dorm to load..."
+          Start-Sleep -Seconds 30
+          Shot "08-dorm"
           
           Write-Host "Dorm/Watch test complete."
 
