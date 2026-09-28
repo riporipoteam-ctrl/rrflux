@@ -3,6 +3,11 @@
     <TargetFramework>net6.0</TargetFramework>
     <AssemblyName>PlayButtonFix</AssemblyName>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RestoreAdditionalProjectSources>
+        https://api.nuget.org/v3/index.json;
+        https://nuget.bepinex.dev/v3/index.json;
+        https://nuget.samboy.dev/v3/index.json
+    </RestoreAdditionalProjectSources>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="PlayButtonFixPlugin.cs" />
