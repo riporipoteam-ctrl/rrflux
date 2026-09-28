@@ -189,16 +189,16 @@ public class SendRequestPatch
     private static readonly HashSet<string> _loggedUnmappedStorefronts =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    // Carousel must be an object, not []. Empty array crashes the Store UI.
-    private const string EmptyCarousel = "{\"Items\":[]}";
+    // Original ad carousel with 3 featured items (restored - empty [] crashed Store)
+    private const string OriginalCarousel = "[{\"AdCarouselItemId\":1,\"Description\":\"Fresh shirts for your avatar. Grab the RECS Shirt in White or Green \\u2014 700 tokens each.\",\"ImageName\":\"FluxRecTees.png\",\"PurchasableItemIds\":[475,487],\"Title\":\"Flux Rec Tees\"},{\"AdCarouselItemId\":2,\"Description\":\"Show your bot pride. Robo Logo Shirt in Pink or Blue \\u2014 700 tokens each.\",\"ImageName\":\"RoboLogoShirts.png\",\"PurchasableItemIds\":[477,478],\"Title\":\"Robo Logo Shirts\"},{\"AdCarouselItemId\":3,\"Description\":\"Bold skull tees. KO Skull Shirt in Black or Pink \\u2014 500 tokens each.\",\"ImageName\":\"KOSkullCollection.png\",\"PurchasableItemIds\":[470,481],\"Title\":\"KO Skull Collection\"}]";
 
     private static void ApplyStorefrontFixes(HTTPRequest request)
     {
-        // Fix adcarouselitems: return valid carousel object, not []
+        // Restore adcarouselitems: return original 3-item carousel, not []
         try {
             var _u = request.Uri.AbsoluteUri.ToLowerInvariant();
             if (_u.Contains("adcarouselitems")) {
-                request.Uri = new Il2CppSystem.Uri("data:application/json," + System.Uri.EscapeDataString(EmptyCarousel));
+                request.Uri = new Il2CppSystem.Uri("data:application/json," + System.Uri.EscapeDataString(OriginalCarousel));
                 return;
             }
         } catch { }
