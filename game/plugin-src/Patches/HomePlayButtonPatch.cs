@@ -142,8 +142,10 @@ internal static class HomePlayButtonPatch
 
         try
         {
-            var clone = UnityEngine.Object.Instantiate(source.gameObject, row);
+            var clone = UnityEngine.Object.Instantiate(source.gameObject);
             clone.name = CloneName;
+            // Set parent to the row (proven pattern: instantiate then set parent)
+            clone.transform.SetParent(row, false);
             clone.SetActive(true);
 
             // Relabel to "Play"
