@@ -69,7 +69,7 @@ jobs:
         shell: pwsh
         run: |
           cd rrflux\game\plugin-src
-          dotnet build -c Release -p:GamePath="D:\FluxRec" 2>&1 | Select-Object -Last 30
+          dotnet build -c Release -p:GamePath="D:\FluxRec" 2>&1 | Select-Object -Last 100
           if (-not (Test-Path "bin\Release\net6.0\RecNetPlugin.dll")) { throw "DLL not built" }
           $dll = Get-Item "bin\Release\net6.0\RecNetPlugin.dll"
           Write-Host "built:" $dll.Length "bytes"
