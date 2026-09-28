@@ -133,7 +133,7 @@ jobs:
           Shot "05-after-play"
           Write-Host "Done."
 
-      - name: Navigate to Settings Visuals (if logged in)
+      - name: Enter dorm and test Watch
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Drawing
@@ -145,23 +145,40 @@ jobs:
             $bmp.Save("D:\shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
             $g.Dispose(); $bmp.Dispose(); Write-Host "saved $name.png"
           }
+          function ClickAt($x, $y) {
+            [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($x, $y)
+            Start-Sleep -Milliseconds 400
+            $s = '[DllImport("user32.dll")] public static extern void mouse_event(int f,int x,int y,int d,int e);'
+            $tt = Add-Type -MemberDefinition $s -Name ("MC"+(Get-Random)) -Namespace "W32" -PassThru
+            $tt::mouse_event(0x02, $x, $y, 0, 0)
+            Start-Sleep -Milliseconds 100
+            $tt::mouse_event(0x04, $x, $y, 0, 0)
+            Start-Sleep -Milliseconds 400
+          }
           
           $p = Get-Process RecRoom -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $p) { Write-Host "RecRoom not running, skipping navigation"; exit 0 }
-          
-          # Focus the game window
+          if (-not $p) { Write-Host "::error::RecRoom not running"; exit 1 }
           $wshell = New-Object -ComObject WScript.Shell
           $wshell.AppActivate($p.Id)
           Start-Sleep -Seconds 2
           
-          # Try to open settings - typically Esc or a settings button
-          # We'll try keyboard shortcuts
-          Write-Host "Attempting to open Settings..."
-          [System.Windows.Forms.SendKeys]::SendWait("{ESC}")
-          Start-Sleep -Seconds 3
-          Shot "06-after-esc"
+          Write-Host "Clicking PLAY on account picker to enter dorm..."
+          ClickAt 770 490
+          Write-Host "Waiting 60s for dorm/orientation to load..."
+          Start-Sleep -Seconds 60
+          Shot "06-in-game"
           
-          Write-Host "Navigation attempt complete."
+          Write-Host "Trying ESC to skip orientation or open menu..."
+          [System.Windows.Forms.SendKeys]::SendWait("{ESC}")
+          Start-Sleep -Seconds 5
+          Shot "07-after-esc"
+          
+          Write-Host "Trying to open Watch via menu - pressing Tab..."
+          [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+          Start-Sleep -Seconds 5
+          Shot "08-after-tab"
+          
+          Write-Host "Dorm/Watch test complete."
 
       - name: Upload screenshots
         if: always()
