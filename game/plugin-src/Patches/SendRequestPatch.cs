@@ -96,6 +96,30 @@ public class SendRequestPatch
         }
     }
 
+    // Second net, one layer down. Every SendRequest overload funnels into SendRequestImpl, and
+    // IL2CPP is free to inline the tiny SendRequest(HTTPRequest) body into its callers — a hook on
+    // it then never fires for those call sites (a Harmony patch that loads clean can still never
+    // run). SendRequestImpl is the last managed-visible chokepoint before the connection, so the
+    // host redirect and storefront rewrites are applied here too. The mutations are idempotent —
+    // re-running on an already-rewritten URL is a no-op — so double-application via both hooks is
+    // safe. Auth capture and debug logging stay only in the SendRequest hook to avoid duplicates.
+    [HarmonyPatch(typeof(HTTPManager), "SendRequestImpl", [typeof(HTTPRequest)])]
+    public class SendRequestImplPatch
+    {
+        private static void Prefix(ref HTTPRequest request)
+        {
+            var host = request.Uri.Host;
+            if (host == OfficialNameServer)
+            {
+                var newHost = new System.Uri(Plugin.ServerHostname.Value).Host;
+                var builder = new Il2CppSystem.UriBuilder(request.Uri) { Host = newHost };
+                request.Uri = builder.Uri;
+            }
+
+            ApplyStorefrontFixes(request);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Storefront endpoint compatibility (comprehensive, 2026-09-26,
     // re-verified live 2026-09-26 ~19:00 CEST against the deployed econ
