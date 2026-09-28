@@ -170,6 +170,7 @@ public class SendRequestPatch
         // so rewriting here gives the identical result with no backend deploy.
         ("/api/storefronts/v1/toptoday", "/api/storefronts/v1/adcarouselitems"),
         ("/api/storefronts/v1/objectives", "/api/storefronts/v1/adcarouselitems"),
+        ("/api/storefronts/v1/wishlist", "/api/storefronts/v1/adcarouselitems"),
     };
 
     // Client-called storefront paths with no backend equivalent. The buy*/trial*
