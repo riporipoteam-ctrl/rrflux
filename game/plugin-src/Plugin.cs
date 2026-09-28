@@ -161,6 +161,10 @@ public class Plugin : BasePlugin
         // the Play clone ("_Play" suffix).
         Patches.HomeLabelsPatch.Apply();
 
+        // Play button on the 2023.04.14 home screen icon row: unhides the
+        // existing (hidden) Play button, or clones Create as fallback.
+        Patches.HomePlayButtonPatch.Apply();
+
         // Persistent time-based retry driver for the UI-discovery patches
         // above (Play button, Connect tab, Ultra, home logo, home labels):
         // their targets all build asynchronously INSIDE a scene (home tab
@@ -233,6 +237,9 @@ public class Plugin : BasePlugin
         // Retry the Rooms-labels pass until the home tab row exists (no-op
         // once verified).
         Patches.HomeLabelsPatch.Apply();
+
+        // Retry the home-screen Play button unhide until the icon row exists.
+        Patches.HomePlayButtonPatch.Apply();
 
         // Retry the Play button clone until the home screen exists (no-op once done).
         // DISABLED v0.1.45: Causing black screen crash. Re-enable after fixing.
