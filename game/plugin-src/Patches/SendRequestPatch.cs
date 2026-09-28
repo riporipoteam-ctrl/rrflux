@@ -126,6 +126,11 @@ public class SendRequestPatch
             catch { }
 
             ApplyStorefrontFixes(request);
+
+            // Attach response logger here too — the SendRequest hook may be
+            // inlined away, so this is the only place guaranteed to run.
+            // Double-attach is safe (just logs twice) if both hooks fire.
+            try { LogResponseWhenDone(request); } catch { }
         }
     }
 
