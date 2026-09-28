@@ -157,6 +157,35 @@ public class SendRequestPatch
         }
     }
 
+    // Returns safe empty JSON for Store endpoints, or null if the URL should
+    // pass through unmodified. This prevents crashes from 404s, null data,
+    // or unexpected response shapes — the Store shows empty instead of crashing.
+    private static string GetSafeStoreResponse(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return null;
+        var lower = url.ToLowerInvariant();
+
+        // Gift-drop storefront catalogs: expect {"StoreItems": [...]}
+        if (lower.Contains("giftdropstore"))
+            return "{\"StoreItems\":[]}";
+
+        // Balance: expect [{"CurrencyType":2,"Platform":0,"Balance":0}]
+        if (lower.Contains("/balance/"))
+            return "[{\"CurrencyType\":2,\"Platform\":0,\"Balance\":0}]";
+
+        // List-type storefront endpoints: expect []
+        if (lower.Contains("toptoday") || lower.Contains("objectives") ||
+            lower.Contains("wishlist") || lower.Contains("adcarouselitems"))
+            return "[]";
+
+        // Token bundles / purchase campaigns: expect []
+        if (lower.Contains("tokenbundle") || lower.Contains("purchasecampaign"))
+            return "[]";
+
+        // Custom avatar items: let through (not a crash source per logs)
+        return null;
+    }
+
     private static bool IsStoreRequest(string url)
     {
         if (string.IsNullOrEmpty(url)) return false;
@@ -343,28 +372,41 @@ public class SendRequestPatch
             // See DeviceIdResponsePatch.cs for why CreateDelegate is used here.
             var logAction = (Action<HTTPRequest, HTTPResponse>)((req, resp) =>
                 {
-                    // STOREBUGLOG: record Store-related responses
+                    // STORE FIX: replace Store responses with safe empty data so the
+                    // client can't crash on 404s, nulls, or bad shapes. Uses the same
+                    // technique as DeviceIdResponsePatch (proven to work).
                     try
                     {
-                        if (IsStoreRequest(url))
+                        if (resp != null && IsStoreRequest(url))
                         {
-                            if (resp == null)
-                                WriteStoreBugLog($"STORE RESP: {url} -> NO RESPONSE (state={req.State})");
+                            string safeBody = GetSafeStoreResponse(url);
+                            if (safeBody != null)
+                            {
+                                var bytes = System.Text.Encoding.UTF8.GetBytes(safeBody);
+                                resp.Data = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<byte>(bytes);
+                                resp.dataAsText = safeBody;
+                                resp.StatusCode = 200;
+                                WriteStoreBugLog($"STORE FIX: replaced response for {url} with safe empty data");
+                            }
                             else
                             {
+                                // Log what we got (for diagnostics)
                                 string rtext;
                                 try
                                 {
                                     rtext = resp.DataAsText;
                                     if (string.IsNullOrEmpty(rtext)) rtext = "<empty>";
-                                    if (rtext.Length > 2000) rtext = rtext.Substring(0, 2000) + "... <truncated>";
+                                    if (rtext.Length > 500) rtext = rtext.Substring(0, 500) + "...";
                                 }
                                 catch { rtext = "<unreadable>"; }
                                 WriteStoreBugLog($"STORE RESP: {url} -> {resp.StatusCode} body={rtext}");
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        try { WriteStoreBugLog($"STORE FIX ERROR: {ex.Message}"); } catch { }
+                    }
 
                     if (resp == null)
                         Plugin.Log.LogWarning($"[HTTP] <- {url} NO RESPONSE (state={req.State})");
