@@ -1,0 +1,39 @@
+name: Build PlayButtonFix plugin
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
+      - name: Extract interop cache
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "game\plugin-src\interop-cache\extracted" | Out-Null
+          Expand-Archive -Path "game\plugin-src\interop-cache\interop-20230414.zip" -DestinationPath "game\plugin-src\interop-cache\extracted" -Force
+          Get-ChildItem "game\plugin-src\interop-cache\extracted\*.dll" | Measure-Object | Select-Object -ExpandProperty Count
+
+      - name: Build PlayButtonFix
+        shell: pwsh
+        run: |
+          cd game\playbutton-fix
+          dotnet build -c Release 2>&1 | Select-Object -Last 40
+          if (-not (Test-Path "bin\Release\net6.0\PlayButtonFix.dll")) { throw "DLL not built" }
+          $dll = Get-Item "bin\Release\net6.0\PlayButtonFix.dll"
+          Write-Host "built:" $dll.Length "bytes"
+
+      - name: Upload DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlayButtonFix
+          path: game\playbutton-fix\bin\Release\net6.0\PlayButtonFix.dll
