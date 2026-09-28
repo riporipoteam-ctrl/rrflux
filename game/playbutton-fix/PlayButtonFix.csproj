@@ -16,8 +16,14 @@
     <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.*" IncludeAssets="compile" />
   </ItemGroup>
   <ItemGroup>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>refs\Il2Cppmscorlib.dll</HintPath>
+    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>refs\UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>refs\UnityEngine.UIModule.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>refs\UnityEngine.UI.dll</HintPath>
