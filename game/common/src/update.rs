@@ -30,22 +30,32 @@ fn is_launcher_managed(path: &str) -> bool {
     LAUNCHER_MANAGED.iter().any(|m| *m == path)
 }
 
-/// Keep only entries that still need fetching. Files present with the
-/// manifest's size are done; missing files stay; files present with the
-/// WRONG size are deleted so the downloader fetches them fresh. (The old
-/// exists()-only check silently dropped wrong-sized files here, so a
-/// damaged file was never re-downloaded and the update "failed" forever.)
+/// Keep only entries that still need fetching. Files missing on disk stay;
+/// files present with the WRONG size are deleted so the downloader fetches
+/// them fresh; files present with the right size are HASHED against the
+/// manifest before being trusted. (The old size-only check silently dropped
+/// changed-but-same-size files here — the manifest diff had correctly
+/// flagged them by hash, and then this function threw that work away, so a
+/// changed file that happened to keep its byte size was NEVER re-downloaded
+/// and the auto-update "succeeded" without delivering it.)
 fn retain_still_needed(to_download: &mut Vec<FileEntry>, game_dir: &Path) {
     to_download.retain(|f| {
         let dest = game_dir.join(&f.path);
         match std::fs::metadata(&dest) {
             Err(_) => true,
             Ok(md) => {
-                let bad = f.size.map(|s| md.len() != s).unwrap_or(false);
-                if bad {
+                let size_bad = f.size.map(|s| md.len() != s).unwrap_or(false);
+                if size_bad {
                     let _ = std::fs::remove_file(&dest);
+                    return true;
                 }
-                bad
+                if f.sha256.is_empty() {
+                    return false; // no hash recorded; size is all we have
+                }
+                match crate::download::sha256_of_file(&dest) {
+                    Ok(h) => !h.eq_ignore_ascii_case(&f.sha256),
+                    Err(_) => true, // unreadable -> fetch it fresh
+                }
             }
         }
     });
@@ -521,5 +531,65 @@ mod tests {
         assert_eq!(cmp_versions("0.3.0", "0.3.0"), Equal);
         assert_eq!(cmp_versions("0.3", "0.3.0"), Equal);
         assert_eq!(cmp_versions("0.10.0", "0.9.9"), Greater);
+    }
+
+    fn sha256_of(bytes: &[u8]) -> String {
+        use sha2::Digest as _;
+        let mut h = sha2::Sha256::new();
+        h.update(bytes);
+        hex::encode(h.finalize())
+    }
+
+    /// Regression test: a file whose content changed but whose byte size did
+    /// not must NOT be dropped from the download list. The old size-only
+    /// check did exactly that, so the launcher's auto-update silently kept
+    /// stale files while reporting success.
+    #[test]
+    fn retain_still_needed_replaces_same_size_changed_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "fluxrec-retain-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let rel = "BepInEx/plugins/RecNetPlugin.dll";
+        let dest = dir.join(rel);
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+
+        let old_bytes = b"old plugin build!!"; // 18 bytes
+        let new_bytes = b"new plugin build!!"; // 18 bytes — same size!
+        std::fs::write(&dest, old_bytes).unwrap();
+
+        let entry = || FileEntry {
+            path: rel.to_string(),
+            sha256: sha256_of(new_bytes),
+            url: "http://example.invalid/x".to_string(),
+            size: Some(new_bytes.len() as u64),
+        };
+
+        // Stale content, same size -> must stay in the download list.
+        let mut list = vec![entry()];
+        retain_still_needed(&mut list, &dir);
+        assert_eq!(
+            list.len(),
+            1,
+            "same-size changed file must be re-downloaded, not skipped"
+        );
+
+        // Already-correct content -> must be skipped (no redundant download).
+        std::fs::write(&dest, new_bytes).unwrap();
+        let mut list = vec![entry()];
+        retain_still_needed(&mut list, &dir);
+        assert!(
+            list.is_empty(),
+            "up-to-date file must not be re-downloaded"
+        );
+
+        // Missing file -> must stay in the download list.
+        std::fs::remove_file(&dest).unwrap();
+        let mut list = vec![entry()];
+        retain_still_needed(&mut list, &dir);
+        assert_eq!(list.len(), 1, "missing file must be downloaded");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

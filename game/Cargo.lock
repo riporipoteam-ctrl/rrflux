@@ -445,11 +445,13 @@ dependencies = [
  "axum",
  "axum-server",
  "fluxrec-common",
+ "hex",
  "rcgen",
  "reqwest",
  "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "zip",
 ]
