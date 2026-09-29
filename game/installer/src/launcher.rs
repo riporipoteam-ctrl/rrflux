@@ -29,6 +29,30 @@ use std::time::Duration;
 use crate::progress::Progress;
 use crate::updater::UpdateDecision;
 
+
+/// Ensure rec.net resolves to localhost to prevent Store WebView hangs.
+/// The 2023 client has hardcoded https://rec.net/shop URLs; rec.net is dead
+/// (Rec Room shut down June 2026), causing 6s DNS timeouts. Adding a hosts
+/// entry makes it fail fast. Fails silently without admin — not critical.
+fn ensure_recnet_hosts_entry() {
+    let hosts_path = "C:\\Windows\\System32\\drivers\\etc\\hosts";
+    let entry = "127.0.0.1 rec.net";
+    
+    // Check if already present
+    if let Ok(content) = std::fs::read_to_string(hosts_path) {
+        if content.contains("rec.net") {
+            return;
+        }
+    }
+    
+    // Try to append (fails silently without admin)
+    if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(hosts_path) {
+        use std::io::Write;
+        let _ = writeln!(file, "\n{}", entry);
+    }
+}
+
+
 /// `--play` entry point. Never returns (exits the process).
 pub fn run_launcher(
     dir: &Path,
@@ -39,6 +63,7 @@ pub fn run_launcher(
 ) -> ! {
     let (progress, rx) = crate::progress::channel();
     let gui_thread = crate::spawn_gui(rx);
+    ensure_recnet_hosts_entry();
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
