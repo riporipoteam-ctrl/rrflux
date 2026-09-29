@@ -69,7 +69,7 @@ jobs:
         run: |
           # BepInEx generates BepInEx/interop/*.dll on first run. We just need
           # the game to boot far enough for Il2CppInterop to run.
-          Start-Process D:\FluxRec\FluxRecLauncher.exe -ArgumentList "--play","--dir","D:\FluxRec"
+          Start-Process D:\FluxRec\RecRoom.exe -ArgumentList "-batchmode","-nographics","-logFile","D:\interop.log"
           Write-Host "waiting for interop generation..."
           $deadline = (Get-Date).AddMinutes(15)
           $interopReady = $false
@@ -101,7 +101,7 @@ jobs:
           # Let the game boot with the newly built plugin so the
           # Plus/Nametag inspectors dump their output to LogOutput.log.
           # No login happens here; we just need plugin Load() to run.
-          Start-Process D:\FluxRec\FluxRecLauncher.exe -ArgumentList "--play","--dir","D:\FluxRec"
+          Start-Process D:\FluxRec\RecRoom.exe -ArgumentList "-batchmode","-nographics","-logFile","D:\interop.log"
           Write-Host "waiting for plugin load + inspector output..."
           $deadline = (Get-Date).AddMinutes(10)
           $sawInspector = $false
