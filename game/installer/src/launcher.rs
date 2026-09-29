@@ -107,10 +107,16 @@ pub fn run_launcher(
         }
     }
 
+    // 1c. Plugin auto-update: keep RecNetPlugin.dll in sync with the HF
+    // mirror on every launch (fail-soft — offline keeps the installed one).
+    if let Ok(r) = &rt {
+        r.block_on(crate::bepinex::sync_plugin_from_mirror(dir, &progress));
+    }
+
     // --play and repair automatically instead of ever letting the game hit
     // the broken state.
     //
-    // 1c. AV self-heal (defender.rs, 2026-09-24): Windows Security
+    // 1d. AV self-heal (defender.rs, 2026-09-24): Windows Security
     // quarantined a game file on Armin's PC, hanging the game at
     // "Connecting to server...". Verify the quarantine-prone files too.
     {

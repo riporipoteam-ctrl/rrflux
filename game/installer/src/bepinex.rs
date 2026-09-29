@@ -255,3 +255,95 @@ pub async fn repair_for_launcher(
 pub fn bepinex_dir(game_dir: &Path) -> PathBuf {
     game_dir.join("BepInEx")
 }
+
+/// HF mirror base for plugin auto-updates.
+const PLUGIN_MIRROR_BASE: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/";
+const PLUGIN_FILE: &str = "RecNetPlugin.dll";
+const PLUGIN_SHA_FILE: &str = "RecNetPlugin.dll.sha256";
+
+/// Compute SHA-256 hex of a file. Empty string on any error.
+fn sha256_of_file(path: &Path) -> String {
+    use sha2::Digest as _;
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return String::new(),
+    };
+    let mut h = sha2::Sha256::new();
+    h.update(&bytes);
+    hex::encode(h.finalize())
+}
+
+/// Keep BepInEx/plugins/RecNetPlugin.dll in sync with the HF mirror.
+/// Called on every --play launch. Fail-soft: any problem keeps the installed
+/// plugin and the game still launches.
+pub async fn sync_plugin_from_mirror(game_dir: &Path, progress: &crate::progress::Progress) {
+    let plugins_dir = game_dir.join("BepInEx").join("plugins");
+    let plugin_path = plugins_dir.join(PLUGIN_FILE);
+
+    // Remove the fossil stub from the old era.
+    let _ = fs::remove_file(plugins_dir.join("FluxRec.Plugin.dll"));
+
+    let client = match reqwest::Client::builder()
+        .user_agent("FluxRec-Setup/0.2.21")
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return, // offline — keep installed
+    };
+
+    // Fetch the tiny sidecar (one GET per launch).
+    let want = match client
+        .get(format!("{PLUGIN_MIRROR_BASE}{PLUGIN_SHA_FILE}"))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => match r.text().await {
+            Ok(t) => t.trim().to_string(),
+            Err(_) => return,
+        },
+        _ => return, // mirror unreachable — keep installed
+    };
+    if want.is_empty() {
+        return;
+    }
+
+    let have = sha256_of_file(&plugin_path);
+    if have.eq_ignore_ascii_case(&want) {
+        return; // already current — the common case
+    }
+
+    println!("[bepinex] plugin out of date, downloading from mirror…");
+    progress.set_status("Updating plugin…", 10);
+
+    let bytes = match client
+        .get(format!("{PLUGIN_MIRROR_BASE}{PLUGIN_FILE}"))
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => match r.bytes().await {
+            Ok(b) => b,
+            Err(_) => return,
+        },
+        _ => return,
+    };
+    if bytes.len() < 10_000 {
+        return; // truncated — keep installed
+    }
+    // Verify hash before writing.
+    {
+        use sha2::Digest as _;
+        let mut h = sha2::Sha256::new();
+        h.update(&bytes);
+        if !hex::encode(h.finalize()).eq_ignore_ascii_case(&want) {
+            return; // hash mismatch — keep installed
+        }
+    }
+    let _ = fs::create_dir_all(&plugins_dir);
+    if fs::write(&plugin_path, &bytes).is_ok() {
+        println!("[bepinex] RecNetPlugin.dll updated from mirror.");
+        crate::defender::unblock_file(&plugin_path);
+    }
+}
