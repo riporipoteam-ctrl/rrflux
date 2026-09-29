@@ -273,10 +273,62 @@ fn sha256_of_file(path: &Path) -> String {
     hex::encode(h.finalize())
 }
 
+/// Remove the temporary `127.0.0.1 huggingface.co` hosts entry added during
+/// Store debugging. The plugin mirror lives on HuggingFace, so the block
+/// breaks plugin auto-updates. Fail-soft: if we can't write (no admin),
+/// the mirror sync below just fails soft and the game still launches.
+fn remove_hf_hosts_block() {
+    #[cfg(windows)]
+    {
+        let hosts_path = std::path::Path::new(
+            r"C:\Windows\System32\drivers\etc\hosts",
+        );
+        let content = match fs::read_to_string(hosts_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        // Drop lines that block huggingface.co via loopback.
+        let filtered: Vec<&str> = content
+            .lines()
+            .filter(|line| {
+                let t = line.trim();
+                // Skip comments and empty lines (keep them).
+                if t.is_empty() || t.starts_with('#') {
+                    return true;
+                }
+                // Remove if it maps huggingface.co to loopback.
+                let lower = t.to_lowercase();
+                !(lower.contains("huggingface.co")
+                    && (lower.starts_with("127.")
+                        || lower.starts_with("::1")
+                        || lower.starts_with("0.0.0.0")))
+            })
+            .collect();
+        if filtered.len() == content.lines().count() {
+            return; // no block found — nothing to do
+        }
+        let new_content = filtered.join("\r\n") + "\r\n";
+        // Backup first, then write. Fail-soft on any error.
+        let backup = hosts_path.with_extension("fluxrec.bak");
+        let _ = fs::copy(hosts_path, &backup);
+        if fs::write(hosts_path, new_content).is_ok() {
+            println!("[bepinex] removed huggingface.co hosts block");
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // Non-Windows: nothing to do.
+    }
+}
+
 /// Keep BepInEx/plugins/RecNetPlugin.dll in sync with the HF mirror.
 /// Called on every --play launch. Fail-soft: any problem keeps the installed
 /// plugin and the game still launches.
 pub async fn sync_plugin_from_mirror(game_dir: &Path, progress: &crate::progress::Progress) {
+    // Remove the temporary huggingface.co hosts block (added during Store
+    // debugging). The plugin mirror lives on HF, so the block breaks updates.
+    remove_hf_hosts_block();
+
     let plugins_dir = game_dir.join("BepInEx").join("plugins");
     let plugin_path = plugins_dir.join(PLUGIN_FILE);
 
@@ -284,7 +336,7 @@ pub async fn sync_plugin_from_mirror(game_dir: &Path, progress: &crate::progress
     let _ = fs::remove_file(plugins_dir.join("FluxRec.Plugin.dll"));
 
     let client = match reqwest::Client::builder()
-        .user_agent("FluxRec-Setup/0.2.21")
+        .user_agent("FluxRec-Setup/0.2.22")
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(15))
         .build()
