@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec"
-version = "0.5.8"
+version = "0.2.21"
 dependencies = [
  "axum",
  "axum-server",
@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec-common"
-version = "0.5.8"
+version = "0.2.21"
 dependencies = [
  "bytes",
  "futures-util",
@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec-download"
-version = "0.5.8"
+version = "0.2.21"
 dependencies = [
  "fluxrec-common",
  "tokio",
@@ -480,7 +480,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec-selfupdate"
-version = "0.5.8"
+version = "0.2.21"
 
 [[package]]
 name = "fnv"

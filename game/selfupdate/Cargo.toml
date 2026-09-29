@@ -1,6 +1,6 @@
 [package]
 name = "fluxrec-selfupdate"
-version = "0.5.9"
+version = "0.2.21"
 edition = "2021"
 
 [dependencies]
