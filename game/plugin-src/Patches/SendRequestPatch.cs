@@ -98,8 +98,9 @@ public class SendRequestPatch
 
     // ------------------------------------------------------------------
     // Storefront endpoint compatibility (comprehensive, 2026-09-26,
-    // re-verified live 2026-09-26 ~19:00 CEST against the deployed econ
-    // worker at econ.recflare.net).
+    // re-verified live 2026-09-29 against the deployed econ worker at
+    // econ.ripo-ripoteam.workers.dev — the host the client actually uses,
+    // proven by the CachedNameServerResponse_ log line).
     //
     // Complete enumeration of the storefront endpoints baked into the 2023
     // client, extracted from GameAssembly's global-metadata.dat (2026-09-26).
@@ -127,15 +128,11 @@ public class SendRequestPatch
     // - v1/toptoday and v1/objectives are PAGE-OPEN fetches (the Store page's
     //   item-list sources are Store/AdCarousel/Wishlist/TopToday, and the
     //   client fires adcarouselitems + toptoday as a paired async fetch).
-    //   Both 404 live with `{"success":false,"error":{"message":"not found"}}`.
-    //   They are the prime suspects for "Store opens EMPTY then crashes":
-    //   the page renders with no items, and the faulted fetch pair ("Received
-    //   null response from Storefront!") leaves the screen in a state the
-    //   ~3s-later UI tick doesn't survive. No safe rewrite exists — their
-    //   response DTO shapes are not recoverable from the dump, so per the
-    //   no-synthesis rule they stay telemetry-only. The real fix is backend
-    //   stubs returning `[]` (empty list reads as "nothing to show", a 404
-    //   stalls the load) — same treatment adcarouselitems already got.
+    //   They 404'd on the old recflare.net host, but on the live worker
+    //   (econ.ripo-ripoteam.workers.dev, verified 2026-09-29) both return
+    //   200 with `[]`. The empty-then-crash is NOT explained by a 404 here
+    //   anymore — the persistent STOREBUGLOG.txt telemetry above exists to
+    //   capture what the Store page actually fires before it dies.
     // - v2/balance has NO native backend route (404 live); the v4/balance/2
     //   rewrite is load-bearing, not optional. v4/balance/:currencyType
     //   answers `[{CurrencyType, Platform, Balance}]` (single-entry array);
@@ -202,6 +199,36 @@ public class SendRequestPatch
         var normPath = path.EndsWith("/", StringComparison.Ordinal) && path.Length > 1
             ? path.Substring(0, path.Length - 1)
             : path;
+
+        // Persistent Store telemetry (2026-09-29): log EVERY storefront
+        // request to STOREBUGLOG.txt (append-only — it survives the crash +
+        // relaunch that wipes LogOutput.log). This captures exactly what the
+        // Store page fires before it dies.
+        if (normPath.StartsWith("/api/storefronts/", StringComparison.OrdinalIgnoreCase))
+        {
+            var note = "served";
+            foreach (var (from, to) in StorefrontRewrites)
+            {
+                if (normPath.Equals(from, StringComparison.OrdinalIgnoreCase))
+                {
+                    note = "rewrite->" + to;
+                    break;
+                }
+            }
+            if (note == "served")
+            {
+                foreach (var unmapped in UnmappedStorefrontPaths)
+                {
+                    if (normPath.Equals(unmapped, StringComparison.OrdinalIgnoreCase))
+                    {
+                        note = "UNMAPPED (no backend equivalent)";
+                        break;
+                    }
+                }
+            }
+            try { Plugin.StoreBugLog($"STOREFRONT {request.MethodType} {request.Uri.Host}{normPath} [{note}]"); }
+            catch { }
+        }
 
         foreach (var (from, to) in StorefrontRewrites)
         {

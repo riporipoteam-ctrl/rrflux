@@ -14,6 +14,19 @@ public class Plugin : BasePlugin
 {
     internal static new ManualLogSource Log;
 
+    /// Append a line to STOREBUGLOG.txt in the game dir. Append-only, so it
+    /// survives the crash + relaunch that wipes BepInEx's LogOutput.log.
+    /// Used for Store-page diagnostics.
+    public static void StoreBugLog(string line)
+    {
+        try
+        {
+            var logPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "STOREBUGLOG.txt");
+            System.IO.File.AppendAllText(logPath, $"[{System.DateTime.Now:HH:mm:ss.fff}] {line}\n");
+        }
+        catch { }
+    }
+
     public static ConfigEntry<string> AppIdRT { get; private set; }
     public static ConfigEntry<string> AppIdVoice { get; private set; }
     public static ConfigEntry<string> AppIdChat { get; private set; }
@@ -53,13 +66,8 @@ public class Plugin : BasePlugin
         Log = base.Log;
 
         // STOREBUGLOG: session header so Armin knows where a new run starts
-        try
-        {
-            var logPath = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "STOREBUGLOG.txt");
-            var header = $"\n===== STOREBUGLOG session started {System.DateTime.Now:yyyy-MM-dd HH:mm:ss} =====\n";
-            System.IO.File.AppendAllText(logPath, header);
-        }
-        catch { }
+        StoreBugLog("\n===== STOREBUGLOG session started " +
+                    System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " =====");
 
         AppIdRT = Config.Bind("Photon", "App Id Realtime", "", "Photon Realtime App ID");
         AppIdVoice = Config.Bind("Photon", "App Id Voice", "", "Photon Voice App ID");

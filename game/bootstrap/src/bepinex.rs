@@ -1,79 +1,50 @@
-// Flux Rec launcher — automatic BepInEx + FluxRec plugin installation.
+// Flux Rec launcher — automatic BepInEx + plugin maintenance.
 //
-// BepInEx 6 (IL2CPP) gives the 2022 client its runtime patches: TLS trust
-// bypass, host redirect to the local backend, EAC stubbing, and optional
-// Photon ID overrides (see bepinex-plugin/). The launcher fetches a
-// prebuilt bundle from the game mirror and installs it into the game dir
-// so the player never does anything by hand:
+// Two jobs, both idempotent and fail-soft (a missing plugin must never
+// block playing):
 //
-//   game/winhttp.dll + game/doorstop_config.ini   (Doorstop bootstrapper)
-//   game/BepInEx/plugins/FluxRec.Plugin.dll       (our plugin)
-//   game/BepInEx/config/gg.ripoteam.fluxrec.cfg   (defaults, written once)
+//   1. BepInEx core: if the preloader is missing (fresh dir, Defender
+//      ate it, ...), fetch the pinned bepinex.zip bundle from the mirror
+//      and extract it. Otherwise hands off — the bundle does NOT
+//      re-download every launch.
+//   2. RecNetPlugin.dll: the actual redirect plugin is kept in sync with
+//      the mirror on EVERY launch. The mirror carries RecNetPlugin.dll
+//      plus a RecNetPlugin.dll.sha256 sidecar (hex hash). The launcher
+//      fetches the tiny sidecar, compares it with the installed DLL's
+//      hash, and downloads the DLL only when it differs. This is the
+//      auto-update path for the plugin — no installer re-run needed.
 //
-// Idempotent: a marker file records the installed bundle version and the
-// installed plugin's hash; re-install happens only when either changes.
-// Fail-soft: if the mirror files aren't uploaded yet (HTTP 404) — or the
-// download fails for any other reason — the launcher logs a warning and
-// keeps launching the game unblocked. A missing plugin must never block
-// playing.
+// The pre-0.5.9 launcher used to install a fossil stub plugin
+// (BepInEx/plugins/FluxRec.Plugin.dll, guid gg.ripoteam.fluxrec) from the
+// mirror on the side. That stub is obsolete and is deleted when found so
+// it can't load next to the real plugin.
 
 use crate::util;
-use fluxrec_common::download::{download_files, sha256_of_file, DownloadOptions, Progress};
-use fluxrec_common::manifest::FileEntry;
+use fluxrec_common::download::sha256_of_file;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Bump this (and re-upload the bundle) whenever the bundled BepInEx
-/// changes. A different value forces a re-install via the marker file.
+/// changes.
 const BEPINEX_BUNDLE_VERSION: &str = "6.0.0-pre.2";
 const BEPINEX_BUNDLE_FILE: &str = "bepinex.zip";
 /// sha256 of bepinex.zip on the mirror.
 const BEPINEX_BUNDLE_SHA256: &str =
     "3648722ea1a0a042240eec47da4c5b264995ee7f3f95141f62f2749d589fe9c3";
 
-/// Filename of the Flux Rec plugin DLL on the mirror. The uploader decides
-/// which game build it targets (November 2022, Showdown, ...); the launcher
-/// takes whatever the mirror serves — nothing here is hardcoded to one
-/// build.
-const PLUGIN_FILE: &str = "FluxRec.Plugin.dll";
-/// sha256 of the plugin DLL on the mirror.
-const PLUGIN_SHA256: &str =
-    "fb814c16497d2eedeb8b4edfd0ad551ad46e8c53241c9b272b1a3869e6f65f95";
+/// Plugin DLL filename on the mirror (served next to manifest.json).
+const PLUGIN_FILE: &str = "RecNetPlugin.dll";
+/// Sidecar on the mirror holding the expected hex sha256 of PLUGIN_FILE.
+const PLUGIN_SHA_FILE: &str = "RecNetPlugin.dll.sha256";
+/// Where the plugin lives in the game dir.
+const PLUGIN_LOCAL_PATH: &str = "BepInEx/plugins/RecNetPlugin.dll";
 
-/// BepInEx 6 names the config file after the plugin GUID.
-const PLUGIN_GUID: &str = "gg.ripoteam.fluxrec";
-
-/// Marker file in the game dir. Contents: bundle version, newline, sha256
-/// of the installed plugin DLL.
-const MARKER_FILE: &str = ".fluxrec-bepinex-installed";
-
-/// Default plugin config, written ONLY when the file doesn't exist yet.
-/// Mirrors the Bind() defaults in bepinex-plugin/src/Plugin.cs.
-const DEFAULT_CONFIG: &str = "\
-## Flux Rec plugin defaults (written once by the Flux Rec launcher).\n\
-## Edit freely — the launcher never overwrites this file.\n\
-\n\
-[Backend]\n\
-\n\
-## Base URL of the Flux Rec backend. Requests to https://ns.rec.net are\n\
-## rewritten to this host. Keep the https:// scheme.\n\
-Host = https://127.0.0.1\n\
-\n\
-## Replace BestHTTP's certificate verifier with its built-in accept-all\n\
-## verifier so the local backend certificate is trusted.\n\
-DisableTlsValidation = true\n\
-\n\
-[EAC]\n\
-\n\
-## Return an empty EAC challenge response instead of calling the EAC client.\n\
-StubChallengeResponse = true\n\
-\n\
-[Photon]\n\
-\n\
-## Photon App ID overrides. Empty = keep the build's baked-in values.\n\
-AppIdRealtime =\n\
-AppIdChat =\n\
-AppIdVoice =\n";
+/// Fossil stub plugin from the old era — deleted on sight.
+const FOSSIL_PLUGIN_PATH: &str = "BepInEx/plugins/FluxRec.Plugin.dll";
+/// Marker file from the old era — no longer used.
+const OLD_MARKER_FILE: &str = ".fluxrec-bepinex-installed";
+/// Staging dir from the old era — cleaned up if left behind.
+const OLD_STAGING_DIR: &str = ".fluxrec-bepinex";
 
 fn mirror_base() -> String {
     fluxrec_common::MANIFEST_URL
@@ -84,15 +55,8 @@ fn mirror_base() -> String {
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(120))
         .build()
         .map_err(|e| e.to_string())
-}
-
-/// Marker value we'd expect if `game_dir` already has a current install.
-fn expected_marker(plugin_path: &Path) -> Option<String> {
-    let hash = sha256_of_file(plugin_path).ok()?;
-    Some(format!("{BEPINEX_BUNDLE_VERSION}\n{hash}"))
 }
 
 /// Unzip `zip_path` into `dest`, preserving the archive's internal layout.
@@ -120,151 +84,186 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Download the bundle + plugin, install into the game dir, write defaults.
-/// Never hard-fails: on any problem it logs and returns so the game can
-/// still launch.
-pub async fn ensure_bepinex(game_dir: &Path) {
-    let plugin_path = game_dir
-        .join("BepInEx")
-        .join("plugins")
-        .join(PLUGIN_FILE);
-    let marker_path = game_dir.join(MARKER_FILE);
-
-    // Idempotency: skip when the marker matches the installed state.
-    if let Ok(marker) = std::fs::read_to_string(&marker_path) {
-        if Some(marker.trim_end().to_string()) == expected_marker(&plugin_path) {
-            util::crash_log("bepinex: already installed and current, skipping");
-            return;
-        }
+/// Install the BepInEx bundle from the mirror. Only called when the
+/// preloader is missing. Fail-soft: logs and returns on any problem.
+async fn install_bundle_if_missing(game_dir: &Path) {
+    let preloader = game_dir.join("BepInEx/core/BepInEx.Preloader.dll");
+    if preloader.exists() {
+        return;
     }
+    util::crash_log("bepinex: preloader missing, fetching bundle from mirror");
 
-    let base = mirror_base();
-    let entries = vec![
-        FileEntry {
-            path: BEPINEX_BUNDLE_FILE.to_string(),
-            sha256: BEPINEX_BUNDLE_SHA256.to_string(),
-            url: format!("{base}{BEPINEX_BUNDLE_FILE}"),
-            size: None,
-        },
-        FileEntry {
-            path: PLUGIN_FILE.to_string(),
-            sha256: PLUGIN_SHA256.to_string(),
-            url: format!("{base}{PLUGIN_FILE}"),
-            size: None,
-        },
-    ];
-
-    let staging: PathBuf = game_dir.join(".fluxrec-bepinex");
-    let _ = std::fs::create_dir_all(&staging);
     let client = match http_client() {
         Ok(c) => c,
         Err(e) => {
-            util::crash_log(&format!("bepinex WARNING: couldn't build HTTP client ({e}); skipping"));
+            util::crash_log(&format!("bepinex WARNING: no HTTP client ({e}); skipping bundle install"));
             return;
         }
     };
-    let on_progress = |p: Progress| {
-        util::crash_log(&format!(
-            "bepinex: downloading {} ({}/{})",
-            p.current_file, p.files_done, p.files_total
-        ));
-    };
-    match download_files(&client, &entries, &staging, &DownloadOptions::default(), on_progress).await
+    let url = format!("{}{}", mirror_base(), BEPINEX_BUNDLE_FILE);
+    let bytes = match client
+        .get(&url)
+        .timeout(Duration::from_secs(600))
+        .send()
+        .await
     {
-        Ok((bytes, files)) => {
-            util::crash_log(&format!("bepinex: downloaded {files} file(s), {bytes} bytes"))
+        Ok(r) if r.status().is_success() => match r.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                util::crash_log(&format!("bepinex WARNING: bundle read failed ({e})"));
+                return;
+            }
+        },
+        Ok(r) => {
+            util::crash_log(&format!(
+                "bepinex WARNING: bundle not on mirror (HTTP {}); game launches without BepInEx",
+                r.status()
+            ));
+            return;
         }
         Err(e) => {
-            if e.contains("404") {
-                util::crash_log(&format!(
-                    "bepinex WARNING: bundle/plugin not on the mirror yet (HTTP 404): {e}\n\
-                     The game will launch without the plugin until the files are uploaded."
-                ));
-            } else {
-                util::crash_log(&format!(
-                    "bepinex WARNING: download failed ({e}); \
-                     the game will launch without the plugin for now."
-                ));
-            }
-            let _ = std::fs::remove_dir_all(&staging);
+            util::crash_log(&format!("bepinex WARNING: bundle download failed ({e})"));
+            return;
+        }
+    };
+
+    // Verify the pinned hash before extracting.
+    {
+        use sha2::Digest as _;
+        let mut h = sha2::Sha256::new();
+        h.update(&bytes);
+        let got = hex::encode(h.finalize());
+        if !got.eq_ignore_ascii_case(BEPINEX_BUNDLE_SHA256) {
+            util::crash_log("bepinex WARNING: bundle hash mismatch; refusing to install");
             return;
         }
     }
 
-    // Hash check when a hash is pinned (constants are TODO/empty until the
-    // files are uploaded; download_files already enforced them otherwise).
-    let bundle_path = staging.join(BEPINEX_BUNDLE_FILE);
-    if !BEPINEX_BUNDLE_SHA256.is_empty() {
-        match sha256_of_file(&bundle_path) {
-            Ok(h) if h.eq_ignore_ascii_case(BEPINEX_BUNDLE_SHA256) => {}
-            Ok(h) => {
-                util::crash_log(&format!(
-                    "bepinex WARNING: bundle hash mismatch (got {h}); refusing to install"
-                ));
-                let _ = std::fs::remove_dir_all(&staging);
-                return;
-            }
-            Err(e) => {
-                util::crash_log(&format!("bepinex WARNING: couldn't hash bundle ({e})"));
-                let _ = std::fs::remove_dir_all(&staging);
-                return;
-            }
-        }
+    let staging: PathBuf = game_dir.join(".fluxrec-bundle-tmp");
+    let _ = std::fs::create_dir_all(&staging);
+    let zip_path = staging.join(BEPINEX_BUNDLE_FILE);
+    if let Err(e) = std::fs::write(&zip_path, &bytes) {
+        util::crash_log(&format!("bepinex WARNING: couldn't stage bundle ({e})"));
+        return;
     }
-
-    // Extract the bundle into the game dir (winhttp.dll,
-    // doorstop_config.ini, BepInEx/ tree). Blocking I/O off the runtime.
     let game_dir_owned = game_dir.to_path_buf();
-    let extract_res = tokio::task::spawn_blocking(move || extract_zip(&bundle_path, &game_dir_owned))
-        .await
-        .map_err(|e| format!("extract task failed: {e}"));
+    let extract_res = tokio::task::spawn_blocking(move || extract_zip(&zip_path, &game_dir_owned)).await;
+    let _ = std::fs::remove_dir_all(&staging);
     match extract_res {
-        Ok(Ok(())) => util::crash_log("bepinex: bundle extracted into game dir"),
-        Ok(Err(e)) | Err(e) => {
-            util::crash_log(&format!("bepinex WARNING: extract failed ({e}); skipping"));
-            let _ = std::fs::remove_dir_all(&staging);
+        Ok(Ok(())) => util::crash_log(&format!(
+            "bepinex: bundle {BEPINEX_BUNDLE_VERSION} installed"
+        )),
+        Ok(Err(e)) => util::crash_log(&format!("bepinex WARNING: bundle extract failed ({e})")),
+        Err(e) => util::crash_log(&format!("bepinex WARNING: bundle extract task failed ({e})")),
+    }
+}
+
+/// Keep BepInEx/plugins/RecNetPlugin.dll in sync with the mirror.
+/// Fail-soft: any problem keeps the installed plugin and logs.
+async fn ensure_plugin_current(game_dir: &Path) {
+    let plugin_path = game_dir.join(PLUGIN_LOCAL_PATH);
+    let base = mirror_base();
+    let client = match http_client() {
+        Ok(c) => c,
+        Err(e) => {
+            util::crash_log(&format!("plugin WARNING: no HTTP client ({e}); keeping installed plugin"));
+            return;
+        }
+    };
+
+    // The sidecar is one tiny GET per launch.
+    let want = match client
+        .get(format!("{base}{PLUGIN_SHA_FILE}"))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => match r.text().await {
+            Ok(t) => t.trim().to_string(),
+            Err(_) => {
+                util::crash_log("plugin WARNING: couldn't read version marker; keeping installed plugin");
+                return;
+            }
+        },
+        _ => {
+            util::crash_log("plugin: version marker not on mirror; keeping installed plugin");
+            return;
+        }
+    };
+    if want.is_empty() {
+        util::crash_log("plugin WARNING: empty version marker; keeping installed plugin");
+        return;
+    }
+
+    let have = sha256_of_file(&plugin_path).unwrap_or_default();
+    if have.eq_ignore_ascii_case(&want) {
+        return; // already current — the common case, no download
+    }
+    util::crash_log("plugin: new version on mirror, downloading RecNetPlugin.dll");
+
+    let bytes = match client
+        .get(format!("{base}{PLUGIN_FILE}"))
+        .timeout(Duration::from_secs(300))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => match r.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                util::crash_log(&format!("plugin WARNING: download read failed ({e}); keeping installed plugin"));
+                return;
+            }
+        },
+        Ok(r) => {
+            util::crash_log(&format!(
+                "plugin WARNING: plugin not on mirror (HTTP {}); keeping installed plugin",
+                r.status()
+            ));
+            return;
+        }
+        Err(e) => {
+            util::crash_log(&format!("plugin WARNING: download failed ({e}); keeping installed plugin"));
+            return;
+        }
+    };
+    if bytes.len() < 10_000 {
+        util::crash_log("plugin WARNING: downloaded plugin looks truncated; keeping installed plugin");
+        return;
+    }
+    {
+        use sha2::Digest as _;
+        let mut h = sha2::Sha256::new();
+        h.update(&bytes);
+        let got = hex::encode(h.finalize());
+        if !got.eq_ignore_ascii_case(&want) {
+            util::crash_log("plugin WARNING: downloaded hash mismatch; keeping installed plugin");
             return;
         }
     }
-
-    // Copy the plugin DLL into BepInEx/plugins/.
     if let Some(parent) = plugin_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Err(e) = std::fs::copy(staging.join(PLUGIN_FILE), &plugin_path) {
-        util::crash_log(&format!("bepinex WARNING: couldn't install plugin ({e})"));
-        let _ = std::fs::remove_dir_all(&staging);
-        return;
+    match std::fs::write(&plugin_path, &bytes) {
+        Ok(()) => util::crash_log("plugin: RecNetPlugin.dll updated from mirror"),
+        Err(e) => util::crash_log(&format!("plugin WARNING: couldn't write plugin ({e})")),
     }
-    util::crash_log(&format!(
-        "bepinex: installed plugin {}",
-        plugin_path.to_string_lossy()
-    ));
-
-    // Default plugin config — only when the player hasn't made one.
-    let config_path = game_dir
-        .join("BepInEx")
-        .join("config")
-        .join(format!("{PLUGIN_GUID}.cfg"));
-    if !config_path.exists() {
-        if let Some(parent) = config_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match std::fs::write(&config_path, DEFAULT_CONFIG) {
-            Ok(_) => util::crash_log(&format!(
-                "bepinex: wrote default plugin config {}",
-                config_path.to_string_lossy()
-            )),
-            Err(e) => util::crash_log(&format!("bepinex WARNING: couldn't write default config ({e})")),
-        }
-    }
-
-    // Record the install so the next launch skips this whole step.
-    if let Some(marker) = expected_marker(&plugin_path) {
-        let _ = std::fs::write(&marker_path, marker);
-    }
-    let _ = std::fs::remove_dir_all(&staging);
-    util::crash_log("bepinex: install complete");
 }
 
-// CI retrigger: no functional change (v0.5.1 rebuild)
+/// Launcher step 0e: BepInEx core repair + plugin auto-update.
+/// Never hard-fails: on any problem it logs and the game still launches.
+pub async fn ensure_bepinex(game_dir: &Path) {
+    // Drop the fossil stub plugin from the old era so it can't load
+    // next to the real one, and clean up the old marker/staging files.
+    let fossil = game_dir.join(FOSSIL_PLUGIN_PATH);
+    if fossil.exists() {
+        match std::fs::remove_file(&fossil) {
+            Ok(()) => util::crash_log("bepinex: removed obsolete FluxRec.Plugin.dll stub"),
+            Err(e) => util::crash_log(&format!("bepinex WARNING: couldn't remove fossil plugin ({e})")),
+        }
+    }
+    let _ = std::fs::remove_file(game_dir.join(OLD_MARKER_FILE));
+    let _ = std::fs::remove_dir_all(game_dir.join(OLD_STAGING_DIR));
+
+    install_bundle_if_missing(game_dir).await;
+    ensure_plugin_current(game_dir).await;
+}
