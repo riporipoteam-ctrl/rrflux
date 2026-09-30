@@ -27,6 +27,9 @@ pub(crate) const RECNET_PLUGIN_DLL: &[u8] = include_bytes!("../assets/RecNetPlug
 /// RRUI fix plugin — forces the new Watch UI (Store crash fix).
 /// Loaded alongside the stock RecNet plugin.
 pub(crate) const RRUI_FIX_DLL: &[u8] = include_bytes!("../assets/FluxRec.RruiFix.dll");
+/// Store crash diagnostics plugin — captures full crash data when Store is clicked.
+/// Logs to STOREBUGLOG.txt: entry points, exceptions, Unity errors, heartbeat.
+pub(crate) const STORE_DIAG_DLL: &[u8] = include_bytes!("../assets/FluxRec.StoreDiag.dll");
 
 /// Install (or refresh) BepInEx into `game_dir`.
 ///
@@ -73,6 +76,9 @@ pub fn install_bepinex(
     let rrui_path = plugins_dir.join("FluxRec.RruiFix.dll");
     fs::write(&rrui_path, RRUI_FIX_DLL).map_err(|e| format!("FluxRec.RruiFix.dll: {e}"))?;
     println!("[bepinex] wrote FluxRec.RruiFix.dll (RRUI Store fix).");
+    let diag_path = plugins_dir.join("FluxRec.StoreDiag.dll");
+    fs::write(&diag_path, STORE_DIAG_DLL).map_err(|e| format!("FluxRec.StoreDiag.dll: {e}"))?;
+    println!("[bepinex] wrote FluxRec.StoreDiag.dll (Store crash diagnostics).");
     crate::defender::unblock_file(&plugin_path);
     // Delete the broken PlayButtonFix.dll from v0.1.48/49/50 if it somehow
     // still exists in the old location.
