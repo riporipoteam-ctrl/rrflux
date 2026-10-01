@@ -43,7 +43,7 @@ use std::time::{Duration, Instant};
 mod assets;
 mod bypass;
 mod defender; // AV hardening (2026-09-24): Defender exclusions, quarantine self-heal, Unblock-File
-mod bepinex; // v0.2.6: BepInEx install restored (FluxLoader removed — bootstrap never ran)
+// v0.3.0: BepInEx removed — 2025 client uses 2025Patch (native DLL injection).
 mod transaction; // v0.2.0: transactional staging, atomic swap, rollback
 mod guide; // one-time guided Windows Security exclusion setup (2026-09-25)
 mod gui;
@@ -60,13 +60,13 @@ mod vcredist;
 /// (benchmark 2026-09-24: Mega 16-seg 5.4 MB/s beats HF 16-seg 1.5 MB/s;
 /// HF throttles parallel ranges, so Mega is primary, HF is the fallback).
 const CLIENT_ZIP_MIRRORS: &[&str] = &[
-    "https://s3.g.megas4.com/2koayuyiwxv4groxzwdbbxg43cwustavrkvfb/recflare/client.zip",
-    "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/recflare-client-20230414.zip",
+    "https://archive.recagain.site/download/manifest/1151455856673601091",
 ];
-const CLIENT_ZIP_MD5: &str = "4c4a94624eba99028bb36445ccb03253";
-const BEPINEX_URL: &str = "https://github.com/BepInEx/BepInEx/releases/download/v6.0.0-pre.2/BepInEx-Unity.IL2CPP-win-x64-6.0.0-pre.2.zip";
-const BEPINEX_SIZE: u64 = 34_146_254;
-// (v0.2.6: the BepInEx plugin build is embedded in bepinex.rs as RECNET_PLUGIN_DLL.)
+const CLIENT_ZIP_MD5: &str = "94456722dda0633b8b1913732b06533f";
+// 2025 client uses 2025Patch (native DLL injection) instead of BepInEx.
+// v0.3.0: 2025 client migration — BepInEx removed.
+const PATCH2025_URL: &str = "https://github.com/recflare/patch-2025/releases/download/v0.0.8/2025Patch-v0.0.8-x64.zip";
+// (v0.3.0: 2025Patch files are embedded — see patch2025.rs.)
 /// Flux Rec logo bundle: gzipped patched Addressables UI bundle (loading
 /// screen logos replaced). Hosted on our Hugging Face dataset; verified by
 /// MD5 before use, then gunzipped over the stock bundle.
@@ -1004,9 +1004,9 @@ async fn apply_common_components(
     client: &reqwest::Client,
     backups: &mut transaction::BackupSet,
     ns_host: &str,
-    photon_rt: &str,
-    photon_voice: &str,
-    photon_chat: &str,
+    _photon_rt: &str,
+    _photon_voice: &str,
+    _photon_chat: &str,
     progress: &progress::Progress,
 ) -> Result<(), String> {
     // 2. Steam bypass FIRST: the game cannot boot without this, and no
@@ -1027,55 +1027,113 @@ async fn apply_common_components(
     patches::apply_client_patches(target);
 
     // 5. BepInEx (v0.2.6: restored — the proven loader; FluxLoader's
-    // bootstrap never ran on real Windows). The full BepInEx zip is
-    // extracted; the RecFlare redirect plugin (embedded BepInEx build)
-    // goes into BepInEx/plugins/.
-    progress.set_stage("Installing BepInEx…");
-    let bepinex_zip = fetch_bepinex_zip(client, progress).await?;
-    bepinex::install_bepinex(
+    // v0.3.0: 2025 client uses 2025Patch (native DLL injection) instead of BepInEx.
+    // The patch files (2025Patch.dll, Injector.exe, 2025patch.ini) go next to
+    // Recroom_Release.exe. The injector launches the game with the patch.
+    progress.set_stage("Installing 2025Patch…");
+    let patch_zip = fetch_patch2025_zip(client, progress).await?;
+    install_patch2025(
         target,
-        &bepinex_zip,
-        backups,
+        &patch_zip,
         ns_host,
-        photon_rt,
-        photon_voice,
-        photon_chat,
         progress,
     )?;
-    // Clean up the temp BepInEx zip.
-    let _ = std::fs::remove_file(&bepinex_zip);
+    // Clean up the temp patch zip.
+    let _ = std::fs::remove_file(&patch_zip);
 
-    // 6. Plugin config + hosts entry + console policy live in
-    // bepinex::install_bepinex (step 6) and finish_live_dir.
+    // 6. Configuration lives in 2025patch.ini (written by install_patch2025).
     progress.set_stage("Writing configuration…");
     println!("[install] configuration written.");
     Ok(())
 }
 
-/// Download the BepInEx zip to the temp dir for the full BepInEx install.
+/// Download the 2025Patch zip to the temp dir.
 /// Returns the zip path.
-pub(crate) async fn fetch_bepinex_zip(
+pub(crate) async fn fetch_patch2025_zip(
     client: &reqwest::Client,
     progress: &progress::Progress,
 ) -> Result<std::path::PathBuf, String> {
-    let dest = std::env::temp_dir().join("fluxrec-bepinex.zip");
-    // Reuse a valid cached copy when present.
-    if crate::file_ok(&dest, None, Some(BEPINEX_SIZE)) {
-        println!("[bepinex] reusing cached zip.");
+    let dest = std::env::temp_dir().join("fluxrec-patch2025.zip");
+    // Reuse a valid cached copy when present (no size check — GitHub release).
+    if dest.exists() {
+        println!("[patch2025] reusing cached zip.");
         return Ok(dest);
     }
     download(
         client,
-        BEPINEX_URL,
+        PATCH2025_URL,
         &dest,
         None,
-        Some(BEPINEX_SIZE),
-        "bepinex",
-        Some((progress, "Installing BepInEx…")),
+        None,
+        "patch2025",
+        Some((progress, "Installing 2025Patch…")),
     )
     .await?;
     defender::unblock_file(&dest);
     Ok(dest)
+}
+
+/// Install 2025Patch: extract DLL, injector, and write configured 2025patch.ini.
+fn install_patch2025(
+    target: &std::path::Path,
+    patch_zip: &std::path::Path,
+    ns_host: &str,
+    _progress: &progress::Progress,
+) -> Result<(), String> {
+    use std::io::Read;
+    
+    let file = std::fs::File::open(patch_zip)
+        .map_err(|e| format!("open patch zip: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("read patch zip: {}", e))?;
+    
+    // Extract 2025Patch.dll and Injector.exe next to Recroom_Release.exe
+    for name in ["2025Patch.dll", "Injector.exe"] {
+        let mut entry = archive.by_name(name)
+            .map_err(|e| format!("patch zip missing {}: {}", name, e))?;
+        let mut buf = Vec::new();
+        entry.read_to_end(&mut buf)
+            .map_err(|e| format!("read {}: {}", name, e))?;
+        let dest = target.join(name);
+        std::fs::write(&dest, &buf)
+            .map_err(|e| format!("write {}: {}", name, e))?;
+        println!("[patch2025] installed {}", name);
+    }
+    
+    // Write configured 2025patch.ini with Flux Rec backend
+    let ini_content = format!(
+        "; Flux Rec 2025 patch configuration\n\
+         ; Auto-generated by Flux Rec installer v0.3.0\n\
+         \n\
+         [config]\n\
+         \n\
+         ; Flux Rec backend — rewrites ns.rec.net\n\
+         ApiHost={}\n\
+         \n\
+         ; Photon — leave empty to use server-provided hosts\n\
+         PhotonHost=\n\
+         PhotonPort=0\n\
+         EnableConsole=false\n\
+         BlockDeadHosts=true\n\
+         SuppressDuidMismatch=true\n\
+         EnableTracing=false\n\
+         VoiceKeyXml=\n",
+        ns_host
+    );
+    std::fs::write(target.join("2025patch.ini"), ini_content)
+        .map_err(|e| format!("write 2025patch.ini: {}", e))?;
+    println!("[patch2025] wrote 2025patch.ini (ApiHost={})", ns_host);
+    
+    // Write launcher batch files
+    let screen_bat = "@echo off\ncd /d \"%~dp0\"\nstart \"\" \"Injector.exe\"\n\"Recroom_Release.exe\" +forcemode:screen\n";
+    let vr_bat = "@echo off\ncd /d \"%~dp0\"\nstart \"\" \"Injector.exe\"\n\"Recroom_Release.exe\" +forcemode:vr\n";
+    std::fs::write(target.join("RecRoomScreen.bat"), screen_bat)
+        .map_err(|e| format!("write RecRoomScreen.bat: {}", e))?;
+    std::fs::write(target.join("RecRoomVR.bat"), vr_bat)
+        .map_err(|e| format!("write RecRoomVR.bat: {}", e))?;
+    println!("[patch2025] wrote launcher batch files");
+    
+    Ok(())
 }
 
 /// Post-install steps against the live dir: hosts entry, shortcuts,
