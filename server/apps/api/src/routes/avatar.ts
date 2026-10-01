@@ -1,8 +1,10 @@
 import { Hono } from 'hono'
 import { describeRoute } from 'hono-openapi'
+import { intVar } from '@repo/hono-helpers'
 
 import {
 	CURRENT_OUTFIT_SLOT,
+	createGift,
 	getOutfit,
 	getOutfits,
 	getOutfitsByAccounts,
@@ -27,6 +29,12 @@ import {
 	toQuestCustomAvatarItem,
 	updateCustomAvatarItem,
 } from '../custom-avatar-items-db'
+import {
+	BlobStoreNotConfiguredError,
+	deleteBlobs,
+	putBlob,
+} from '@repo/blob-store'
+
 import { authedId, unauthorized } from '../http'
 import {
 	createInvention,
@@ -292,7 +300,7 @@ async function createInventionFromBody(
 		tagResult: INVENTION_TAG_RESULT.success,
 	}
 
-	const invention = await createInvention(c.env.DB, c.env.CDN_ASSETS, {
+	const invention = await createInvention(c.env.DB, c.env, {
 		creatorPlayerId,
 		inventionDataFilename,
 		name,
@@ -341,14 +349,14 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 			tags: ['Avatar'],
 			summary: 'Generate a gift box',
 			description:
-				'Mint the gift box a player earned (levelling up, a room reward). With no ' +
-				'EarnableRewards catalog wired up this always falls back to a token gift of a ' +
-				'random amount, and the box is not persisted — its `Id` is 0 and it cannot be ' +
-				'opened through the `econ` worker’s consume endpoint.',
+				'Mint the gift box a player earned (levelling up, a room reward, Friendotron). ' +
+				'With no EarnableRewards catalog this falls back to a fixed token gift ' +
+				'(GIFT_FALLBACK_TOKENS, default 50). The box IS persisted via createGift so it appears in ' +
+				'`/api/avatar/v2/gifts` and can be opened through the consume endpoint.',
 			security: AUTHED,
 			requestBody: form(GenerateGiftRequest, 'Where the gift was earned'),
 			responses: {
-				200: json(GeneratedGift, 'The generated (unpersisted) gift'),
+				200: json(GeneratedGift, 'The generated (persisted) gift'),
 				401: UNAUTHORIZED_RESPONSE,
 			},
 		}),
@@ -362,14 +370,17 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 			const message = typeof body.Message === 'string' ? body.Message : ''
 			const xp = typeof body.Xp === 'string' ? Number.parseInt(body.Xp, 10) || 0 : 0
 
-			// No EarnableRewards binding → always fall back to a token gift.
-			const tokenAmounts = [10, 25, 50, 100, 250, 500]
-			const currency = tokenAmounts[Math.floor(Math.random() * tokenAmounts.length)]
+			// No EarnableRewards catalog exists (Rec Room's was server-side), so the
+			// fallback gift is the operator's chosen fixed token amount, configurable
+			// via GIFT_FALLBACK_TOKENS (default 50). The old random table of invented
+			// amounts is gone.
+			const currency = intVar(c.env.GIFT_FALLBACK_TOKENS, 50)
 
-			return c.json({
-				Id: 0, // TODO: real id once gifts are persisted
+			// Persist the gift so it shows up in /api/avatar/v2/gifts and can be consumed.
+			const { id: giftId } = await createGift(c.env.DB, id, {
 				FromPlayerId: 1,
 				ConsumableItemDesc: '',
+				ConsumableCount: 0,
 				AvatarItemDesc: '',
 				FriendlyName: '',
 				AvatarItemType: 0,
@@ -378,47 +389,17 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 				CurrencyType: 2,
 				Currency: currency,
 				Xp: xp,
-				Level: 0,
+				PackageType: 0,
+				Message: message,
+				GiftRarity: 20,
 				Platform: -1,
 				PlatformsToSpawnOn: -1,
 				BalanceType: 0,
 				GiftContext: giftContext,
-				GiftRarity: 20,
-				Message: message,
 			})
-		}
-	)
-	// v3 GET variant for the 2023 client (build 20230414) Friendotron flow.
-	// The real client calls GET /api/avatar/v3/gifts/generate; we only had v2 POST.
-	// Mirrors the v2 handler's token-gift fallback.
-	.get(
-		'/api/avatar/v3/gifts/generate',
-		describeRoute({
-			tags: ['Avatar'],
-			summary: 'Generate a gift box (v3, 2023 client)',
-			description:
-				'GET variant of the v2 gift generate endpoint for the 2023 client Friendotron flow.',
-			security: AUTHED,
-			responses: {
-				200: json(GeneratedGift, 'The generated (unpersisted) gift'),
-				401: UNAUTHORIZED_RESPONSE,
-			},
-		}),
-		async (c) => {
-			const id = await authedId(c)
-			if (id === null) return unauthorized(c)
-
-			const query = c.req.query()
-			const giftContext = Number.parseInt(query.GiftContext || '0', 10) || 0
-			const message = query.Message || ''
-			const xp = Number.parseInt(query.Xp || '0', 10) || 0
-
-			// No EarnableRewards binding → always fall back to a token gift.
-			const tokenAmounts = [10, 25, 50, 100, 250, 500]
-			const currency = tokenAmounts[Math.floor(Math.random() * tokenAmounts.length)]
 
 			return c.json({
-				Id: 0, // TODO: real id once gifts are persisted
+				Id: giftId,
 				FromPlayerId: 1,
 				ConsumableItemDesc: '',
 				AvatarItemDesc: '',
@@ -462,22 +443,22 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 		(c) => c.json([])
 	)
 
-	// Custom avatar item gates — real Rec Room client endpoints with no backing
-	// implementation yet; we enable them. Flip to `false` to disable the
-	// corresponding flow. `isCreationAllowedForAccount` wraps its answer in the
-	// success/value envelope; the other two return a bare JSON boolean.
+	// Custom avatar item gates — real Rec Room client endpoints. Creation is allowed
+	// for every account: the client reads `value` for truthiness, so this must be a
+	// real boolean `true`, not null. Flip to `false` to disable the corresponding
+	// flow. `isCreationAllowedForAccount` wraps its answer in the success/value
+	// envelope; the other two return a bare JSON boolean.
 	.get(
 		'/api/customAvatarItems/v1/isCreationAllowedForAccount',
 		describeRoute({
 			tags: ['Avatar'],
 			summary: 'May this account create custom items?',
 			description:
-				'A feature gate with no backing implementation — we answer yes. Note this one ' +
-				'wraps its answer in the `{ success, value }` envelope while the two gates below ' +
-				'return a bare boolean.',
+				'A feature gate — we answer yes. Wraps its answer in the `{ success, value }` ' +
+				'envelope while the two gates below return a bare boolean.',
 			responses: { 200: json(SuccessValueEnvelope, 'Allowed') },
 		}),
-		(c) => c.json({ success: true, value: null })
+		(c) => c.json({ success: true, value: true })
 	)
 	.get(
 		'/api/customAvatarItems/v1/isCreationEnabled',
@@ -516,12 +497,14 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 			tags: ['Avatar'],
 			summary: 'Create a custom avatar item',
 			description:
-				'Multipart: a `metadata` JSON text field plus two file parts, `thumbnailImage` ' +
-				'(PNG) and `design` (the design blob). Inserts a `custom_avatar_item` row owned ' +
+				'Multipart: a `metadata` JSON text field plus two file parts, `thumbnailPng` ' +
+				'(PNG) and `designPng` (the design blob) — the names the 2023 client sends; ' +
+				'`thumbnailImage`/`thumbnail` and `design`/`designImage` are also accepted. ' +
+				'Inserts a `custom_avatar_item` row owned ' +
 				'by the caller and answers with it in the PascalCase `{ Value, Success, Error, ' +
 				'error_id }` envelope. The item is filed under `OutfitType` 105, the custom shirt, ' +
 				'which is what the store’s user-generated-content tab searches for.\n\n' +
-				'The two files go to the shared image bucket (`recflare-img`) under ' +
+				'The two files go to the shared image store (the `IMAGES` blob namespace) under ' +
 				'`avatar-item/<date>/<id>-thumb.png` and `avatar-item/<date>/<id>-design.png`; those ' +
 				'keys are the `ThumbnailImageFilename` / `DesignFilename` on the row.',
 			security: AUTHED,
@@ -541,72 +524,143 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 				c.json({ Value: null, Success: false, Error: message, error_id: null }, 400)
 
 			const body = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
-			if (typeof body.metadata !== 'string') return fail('metadata is required')
+			// The client may post `metadata` as a text field or as a JSON blob/file part —
+			// accept both, since a FormData JSON blob arrives as a File.
+			let metadataText: string | null = null
+			if (typeof body.metadata === 'string') {
+				metadataText = body.metadata
+			} else if (body.metadata instanceof File) {
+				try {
+					metadataText = await body.metadata.text()
+				} catch {
+					metadataText = null
+				}
+			}
+			if (metadataText === null) return fail('metadata is required')
 			let meta: Record<string, unknown>
 			try {
-				const parsed: unknown = JSON.parse(body.metadata)
+				const parsed: unknown = JSON.parse(metadataText)
 				if (!parsed || typeof parsed !== 'object') return fail('metadata must be a JSON object')
 				meta = parsed as Record<string, unknown>
 			} catch {
 				return fail('metadata is not valid JSON')
 			}
-			if (typeof meta.Name !== 'string' || meta.Name.trim() === '') return fail('Name is required')
-			if (typeof meta.BaseAvatarItemId !== 'number') return fail('BaseAvatarItemId is required')
-			if (typeof meta.BaseAvatarItemColor !== 'string')
-				return fail('BaseAvatarItemColor is required')
-			if (!(body.thumbnailImage instanceof File)) return fail('thumbnailImage is required')
-			if (!(body.design instanceof File)) return fail('design is required')
+			// Accept camelCase fallbacks: some client builds send `name`/`baseAvatarItemId`/
+			// `baseAvatarItemColor` instead of the PascalCase the API documents.
+			const metaName = meta.Name ?? meta.name
+			const metaBaseId = meta.BaseAvatarItemId ?? meta.baseAvatarItemId
+			const metaBaseColor = meta.BaseAvatarItemColor ?? meta.baseAvatarItemColor
+			const metaDescription =
+				typeof meta.Description === 'string'
+					? meta.Description
+					: typeof meta.description === 'string'
+						? meta.description
+						: ''
+			const metaPrice =
+				typeof meta.Price === 'number'
+					? meta.Price
+					: typeof meta.price === 'number'
+						? meta.price
+						: 0
+			const metaAccessibility =
+				typeof meta.Accessibility === 'number'
+					? meta.Accessibility
+					: typeof meta.accessibility === 'number'
+						? meta.accessibility
+						: 0
+			if (typeof metaName !== 'string' || metaName.trim() === '') return fail('Name is required')
+			if (typeof metaBaseId !== 'number') return fail('BaseAvatarItemId is required')
+			if (typeof metaBaseColor !== 'string') return fail('BaseAvatarItemColor is required')
+			// The 2023 client posts the two files as `thumbnailPng` and `designPng`
+			// (the string literals in its `InternalSaveCustomAvatarItem` flow) — those
+			// are the primary names. The documented `thumbnailImage`/`design` spellings
+			// and their short forms stay as fallbacks.
+			const thumbnailFile =
+				body.thumbnailPng instanceof File
+					? body.thumbnailPng
+					: body.thumbnailImage instanceof File
+						? body.thumbnailImage
+						: body.thumbnail instanceof File
+							? body.thumbnail
+							: null
+			const designFile =
+				body.designPng instanceof File
+					? body.designPng
+					: body.design instanceof File
+						? body.design
+						: body.designImage instanceof File
+							? body.designImage
+							: null
+			if (!thumbnailFile) return fail('thumbnailPng is required')
+			if (!designFile) return fail('designPng is required')
 			const limit = maxApiUploadBytes(c.env)
 			// Each file gets the full per-file ceiling. Check both before either is copied into
-			// an ArrayBuffer or written, so a rejected request never leaves half an item in R2.
-			if (exceedsApiUploadLimit(body.thumbnailImage, limit)) {
+			// an ArrayBuffer or written, so a rejected request never leaves half an item in the blob store.
+			if (exceedsApiUploadLimit(thumbnailFile, limit)) {
 				return c.json(
 					{
 						Value: null,
 						Success: false,
-						Error: `thumbnailImage exceeds the ${limit}-byte upload limit`,
+						Error: `thumbnailPng exceeds the ${limit}-byte upload limit`,
 						error_id: null,
 					},
 					413
 				)
 			}
-			if (exceedsApiUploadLimit(body.design, limit)) {
+			if (exceedsApiUploadLimit(designFile, limit)) {
 				return c.json(
 					{
 						Value: null,
 						Success: false,
-						Error: `design exceeds the ${limit}-byte upload limit`,
+						Error: `designPng exceeds the ${limit}-byte upload limit`,
 						error_id: null,
 					},
 					413
 				)
 			}
 
-			// Both files go to the shared image bucket, foldered by upload date and keyed by
-			// the item's id (chosen here so the keys can carry it). The `img` worker serves
+			// Both files go to the shared image blob store, foldered by upload date and keyed
+			// by the item's id (chosen here so the keys can carry it). The `img` worker serves
 			// them back by key.
 			const customAvatarItemId = crypto.randomUUID()
 			const prefix = `avatar-item/${new Date().toISOString().slice(0, 10)}/${customAvatarItemId}`
 			const thumbnailImageFilename = `${prefix}-thumb.png`
 			const designFilename = `${prefix}-design.png`
-			await Promise.all([
-				c.env.IMAGES.put(thumbnailImageFilename, await body.thumbnailImage.arrayBuffer(), {
-					httpMetadata: { contentType: body.thumbnailImage.type || 'image/png' },
-				}),
-				c.env.IMAGES.put(designFilename, await body.design.arrayBuffer(), {
-					httpMetadata: { contentType: body.design.type || 'image/png' },
-				}),
-			])
+			try {
+				await Promise.all([
+					putBlob(c.env, 'IMAGES', thumbnailImageFilename, await thumbnailFile.arrayBuffer(), {
+						contentType: thumbnailFile.type || 'image/png',
+					}),
+					putBlob(c.env, 'IMAGES', designFilename, await designFile.arrayBuffer(), {
+						contentType: designFile.type || 'image/png',
+					}),
+				])
+			} catch (e) {
+				// The blob store has no credentials configured — a deployment problem,
+				// not a client one.
+				if (e instanceof BlobStoreNotConfiguredError) {
+					return c.json(
+						{
+							Value: null,
+							Success: false,
+							Error: 'image storage is not configured',
+							error_id: null,
+						},
+						503
+					)
+				}
+				throw e
+			}
 
 			const item = await createCustomAvatarItem(c.env.DB, {
 				customAvatarItemId,
 				creatorAccountId: id,
-				name: meta.Name,
-				description: typeof meta.Description === 'string' ? meta.Description : '',
-				price: typeof meta.Price === 'number' ? meta.Price : 0,
-				baseAvatarItemId: meta.BaseAvatarItemId,
-				baseAvatarItemColor: meta.BaseAvatarItemColor,
-				accessibility: typeof meta.Accessibility === 'number' ? meta.Accessibility : 0,
+				name: metaName,
+				description: metaDescription,
+				price: metaPrice,
+				baseAvatarItemId: metaBaseId,
+				baseAvatarItemColor: metaBaseColor,
+				accessibility: metaAccessibility,
 				designFilename,
 				thumbnailImageFilename,
 			})
@@ -622,7 +676,11 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 				'A partial edit of `Name`, `Description`, `Price` and `Accessibility` — the client ' +
 				'sends every field and nulls the ones it is not changing, so null means "leave ' +
 				'alone". Only the creator may edit. `ModifiedAt` is bumped. Answers the updated ' +
-				'item in the same `{ Value, Success, Error, error_id }` envelope as the create.',
+				'item in the same `{ Value, Success, Error, error_id }` envelope as the create.\n\n' +
+				'Also accepts multipart form data: the shirt designer re-saves artwork by posting ' +
+				'the `thumbnailPng` and/or `designPng` file parts (same names as the create route); ' +
+				'each supplied file is stored under a fresh blob key and the old blob is deleted. ' +
+				'Previously a re-save of the artwork was a silent no-op.',
 			security: AUTHED,
 			parameters: [stringParam('id', 'The `CustomAvatarItemId`')],
 			requestBody: jsonBody(UpdateCustomAvatarItemRequest, 'The fields to change'),
@@ -632,12 +690,14 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 				401: UNAUTHORIZED_RESPONSE,
 				403: json(CustomAvatarItemResponse, 'Not the creator'),
 				404: json(CustomAvatarItemResponse, 'No such item'),
+				413: json(CustomAvatarItemResponse, 'An uploaded file exceeds the upload limit'),
+				503: json(CustomAvatarItemResponse, 'Image storage is not configured'),
 			},
 		}),
 		async (c) => {
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
-			const fail = (status: 400 | 403 | 404, message: string) =>
+			const fail = (status: 400 | 403 | 404 | 413 | 503, message: string) =>
 				c.json({ Value: null, Success: false, Error: message, error_id: null }, status)
 
 			const itemId = c.req.param('id')
@@ -645,8 +705,6 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 			if (!existing) return fail(404, 'No such item')
 			if (existing.CreatorAccountId !== id) return fail(403, 'Not your item')
 
-			const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
-			if (!body) return fail(400, 'A JSON body is required')
 			const str = (v: unknown, field: string): string | null | undefined => {
 				if (v === null || v === undefined) return null
 				if (typeof v !== 'string') throw new TypeError(`${field} must be a string`)
@@ -658,22 +716,128 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 					throw new TypeError(`${field} must be an integer`)
 				return v
 			}
-			let patch
-			try {
-				patch = {
-					name: str(body.Name, 'Name'),
-					description: str(body.Description, 'Description'),
-					price: int(body.Price, 'Price'),
-					accessibility: int(body.Accessibility, 'Accessibility'),
+
+			let patch: {
+				name: string | null | undefined
+				description: string | null | undefined
+				price: number | null
+				accessibility: number | null
+				thumbnailImageFilename?: string | null
+				designFilename?: string | null
+			}
+			// Multipart re-save (the shirt designer's artwork flow): new file parts replace the
+			// stored blobs. Field values may ride as form fields or inside a `metadata` JSON part.
+			if ((c.req.header('content-type') ?? '').includes('multipart/form-data')) {
+				const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
+				let meta: Record<string, unknown> = {}
+				const metaRaw = form.metadata
+				if (typeof metaRaw === 'string' || metaRaw instanceof File) {
+					try {
+						const text = typeof metaRaw === 'string' ? metaRaw : await metaRaw.text()
+						const parsed: unknown = JSON.parse(text)
+						if (parsed && typeof parsed === 'object')
+							meta = parsed as Record<string, unknown>
+					} catch {
+						return fail(400, 'metadata is not valid JSON')
+					}
 				}
-			} catch (e) {
-				return fail(400, (e as Error).message)
+				const field = (name: string): unknown =>
+					typeof form[name] === 'string' ? form[name] : (meta[name] ?? meta[name.toLowerCase()])
+				const numField = (name: string): number | null => {
+					const v = field(name)
+					if (v === null || v === undefined || v === '') return null
+					const n = typeof v === 'number' ? v : Number.parseInt(String(v), 10)
+					if (!Number.isInteger(n)) throw new TypeError(`${name} must be an integer`)
+					return n
+				}
+				const strField = (name: string): string | null | undefined => {
+					const v = field(name)
+					if (v === null || v === undefined || v === '') return null
+					if (typeof v !== 'string') throw new TypeError(`${name} must be a string`)
+					return v
+				}
+				try {
+					patch = {
+						name: strField('Name') ?? undefined,
+						description: strField('Description') ?? undefined,
+						price: numField('Price'),
+						accessibility: numField('Accessibility'),
+					}
+				} catch (e) {
+					return fail(400, (e as Error).message)
+				}
+				const pickFile = (primary: string, ...fallbacks: string[]): File | null => {
+					for (const key of [primary, ...fallbacks]) {
+						const v = form[key]
+						if (v instanceof File) return v
+					}
+					return null
+				}
+				const thumbnailFile = pickFile('thumbnailPng', 'thumbnailImage', 'thumbnail')
+				const designFile = pickFile('designPng', 'design', 'designImage')
+				if (thumbnailFile || designFile) {
+					const limit = maxApiUploadBytes(c.env)
+					if (thumbnailFile && exceedsApiUploadLimit(thumbnailFile, limit))
+						return fail(413, `thumbnailPng exceeds the ${limit}-byte upload limit`)
+					if (designFile && exceedsApiUploadLimit(designFile, limit))
+						return fail(413, `designPng exceeds the ${limit}-byte upload limit`)
+					const prefix = `avatar-item/${new Date().toISOString().slice(0, 10)}/${itemId}`
+					const uploads: Promise<unknown>[] = []
+					if (thumbnailFile) {
+						patch.thumbnailImageFilename = `${prefix}-thumb.png`
+						uploads.push(
+							putBlob(c.env, 'IMAGES', patch.thumbnailImageFilename, await thumbnailFile.arrayBuffer(), {
+								contentType: thumbnailFile.type || 'image/png',
+							})
+						)
+					}
+					if (designFile) {
+						patch.designFilename = `${prefix}-design.png`
+						uploads.push(
+							putBlob(c.env, 'IMAGES', patch.designFilename, await designFile.arrayBuffer(), {
+								contentType: designFile.type || 'image/png',
+							})
+						)
+					}
+					try {
+						await Promise.all(uploads)
+					} catch (e) {
+						if (e instanceof BlobStoreNotConfiguredError)
+							return fail(503, 'image storage is not configured')
+						throw e
+					}
+				}
+			} else {
+				const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+				if (!body) return fail(400, 'A JSON body is required')
+				try {
+					patch = {
+						name: str(body.Name, 'Name'),
+						description: str(body.Description, 'Description'),
+						price: int(body.Price, 'Price'),
+						accessibility: int(body.Accessibility, 'Accessibility'),
+					}
+				} catch (e) {
+					return fail(400, (e as Error).message)
+				}
 			}
 			if (patch.name !== null && patch.name?.trim() === '')
 				return fail(400, 'Name must not be blank')
 
 			const item = await updateCustomAvatarItem(c.env.DB, itemId, patch)
 			if (!item) return fail(404, 'No such item')
+			// Best-effort cleanup of the replaced blobs — the row already points at the new keys.
+			const stale = [
+				patch.thumbnailImageFilename ? existing.ThumbnailImageFilename : null,
+				patch.designFilename ? existing.DesignFilename : null,
+			].filter((k): k is string => k !== null)
+			if (stale.length > 0) {
+				try {
+					await deleteBlobs(c.env, 'IMAGES', stale)
+				} catch {
+					/* a stale blob is orphaned, not fatal */
+				}
+			}
 			return c.json({ Value: item, Success: true, Error: null, error_id: null })
 		}
 	)
@@ -708,13 +872,30 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 
 			const item = await deleteCustomAvatarItem(c.env.DB, itemId)
 			if (!item) return fail(404, 'No such item')
-			// The row is gone; the objects follow. A missing key is a no-op for R2. A first-party
+			// The row is gone; the blobs follow. A missing key is a no-op for the store. A first-party
 			// item has neither (it is rendered from its saves' assetbundles), so there is nothing
 			// to delete for one.
 			const keys = [item.ThumbnailImageFilename, item.DesignFilename].filter(
 				(k): k is string => k !== null
 			)
-			if (keys.length > 0) await c.env.IMAGES.delete(keys)
+			if (keys.length > 0) {
+				try {
+					await deleteBlobs(c.env, 'IMAGES', keys)
+				} catch (e) {
+					if (e instanceof BlobStoreNotConfiguredError) {
+						return c.json(
+							{
+								Value: null,
+								Success: false,
+								Error: 'image storage is not configured',
+								error_id: null,
+							},
+							503
+						)
+					}
+					throw e
+				}
+			}
 			return c.json({ Value: item, Success: true, Error: null, error_id: null })
 		}
 	)
@@ -1398,7 +1579,7 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 
 			const version = await getInventionVersion(
 				c.env.DB,
-				c.env.CDN_ASSETS,
+				c.env,
 				inventionId,
 				versionNumber
 			)
@@ -2344,7 +2525,7 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 	// remove an invention is the account that made it, not a co-owner and not a buyer.
 	//
 	// The record and everything inside it (versions, tags, referenced-invention lists)
-	// go in one DELETE; the data blob in R2 and the `inventory_invention` rows of
+	// go in one DELETE; the data blob in the store and the `inventory_invention` rows of
 	// players who bought it are left alone. See `deleteInvention` for why.
 	.post(
 		'/api/inventions/v2/delete',

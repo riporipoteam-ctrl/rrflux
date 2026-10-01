@@ -161,6 +161,14 @@ export interface Account {
 	 */
 	plusSince?: string
 	plusUntil?: string
+	/**
+	 * Voice-ban expiry (ISO-8601 UTC). Set by the admin API's ban endpoint; while it
+	 * is in the future, `match`'s connection-info answers empty `voiceConnectionInfo` /
+	 * `voiceServerId`, so the client has no voice server to join — the player can play
+	 * but not speak. Absent (or past) means no voice ban. Operator-managed only; no
+	 * player-facing flow reads or writes it.
+	 */
+	voiceBanUntil?: string
 }
 
 interface AccountRow {

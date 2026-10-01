@@ -24,6 +24,13 @@ export type Env = SharedHonoEnv & {
 	 * read it through `intVar`, never as a bare number.
 	 */
 	STARTING_TOKENS?: string | number
+	/**
+	 * Token price of Flux Rec+ (operator knob, NO default). Rec Room+ was a
+	 * real-money subscription — there is no authentic token price, so when this
+	 * is unset Plus has no token price and token purchase/renewal are unavailable
+	 * rather than priced from an invented number.
+	 */
+	PLUS_PRICE_TOKENS?: string | number
 }
 
 /** Variables can be extended */

@@ -41,6 +41,12 @@ import { censorSwears } from '../../api/src/sanitize'
 import { BalanceAddType } from '../../notify/src/notification-payloads'
 import { NotificationType } from '../../notify/src/notification-types'
 import avatarItemCatalog from '../static/db/avatar-items.json'
+// Carousel with REAL Rec Room item thumbnails (not AI images) - IDs must exist in toptoday
+const adCarouselItems = [
+  {"AdCarouselItemId":1,"Description":"Fresh gear for your avatar. Paintball Vest in Black — 550 tokens.","ImageName":"94farwa7bctza7e4db865is8x.png","PurchasableItemIds":[2316],"Title":"Paintball Vest"},
+  {"AdCarouselItemId":2,"Description":"Royal style. The Royal Dress in Green — check it out.","ImageName":"4chofv403g5ompt8exr51v7ai.png","PurchasableItemIds":[1139],"Title":"Royal Dress"},
+  {"AdCarouselItemId":3,"Description":"More fresh gear. Paintball Vest in Black — 550 tokens.","ImageName":"94farwa7bctza7e4db865is8x.png","PurchasableItemIds":[2316],"Title":"Featured Gear"}
+];
 import defaultAvatarItems from '../static/default-avatar-items.json'
 import defaultAvatar from '../static/default-avatar.json'
 import defaultBaseAvatarItems from '../static/default-base-avatar-items.json'
@@ -626,18 +632,18 @@ async function isSubscriber(c: Context<App>): Promise<boolean> {
 /** `SubscriptionLevel.Gold`. 1 is Platinum. */
 const SUBSCRIPTION_LEVEL_GOLD = 0
 
-/** Token price of Flux Rec+ on non-Saturdays (no real-money store exists). */
-const FLUXREC_PLUS_PRICE = 10_000
-
-/** Token price of Flux Rec+ on Saturdays (weekly discount). */
-const FLUXREC_PLUS_PRICE_SATURDAY = 3_500
-
 /**
- * The current Flux Rec+ price in tokens. Saturdays (UTC) are discounted to
- * 3,500; all other days are 10,000.
+ * Token price of Flux Rec+, from the operator's `PLUS_PRICE_TOKENS` env var.
+ * Rec Room+ was a real-money subscription — there is no authentic token price,
+ * so there is NO default: when the operator has not configured one, Plus has no
+ * token price (`null`) and token purchase/renewal are unavailable rather than
+ * priced from an invented number.
  */
-function currentPlusPrice(now: Date = new Date()): number {
-	return now.getUTCDay() === 6 ? FLUXREC_PLUS_PRICE_SATURDAY : FLUXREC_PLUS_PRICE
+function plusPriceTokens(env: Record<string, unknown>): number | null {
+	const raw = env.PLUS_PRICE_TOKENS
+	if (raw === undefined || raw === null) return null
+	const n = intVar(raw, -1)
+	return n >= 0 ? n : null
 }
 
 /** `SubscriptionPeriod.Month`. 1 is Year, 2 ThreeMonth, 3 SixMonth. */
@@ -862,34 +868,48 @@ const DESC_BY_NAME: Map<string, string> = (() => {
  * `EquipmentModificationGuid`) keep their captured descs.
  */
 function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
+	// Add working thumbnail URLs from our img host. The 2023 client tries to load
+	// thumbnails from dead Rec Room CDN hosts (rec.net, unionassets.com) which causes
+	// a 6s DNS timeout hang then crash. Our img host serves the thumbnails.
+	const IMG_BASE = 'https://img.ripo-ripoteam.workers.dev/';
+	// Build lookup: AvatarItemId -> ThumbnailImage filename
+	const thumbMap = new Map<number, string>();
+	for (const item of avatarItemCatalog as Array<{AvatarItemId: number, ThumbnailImage: string}>) {
+		if (item.AvatarItemId && item.ThumbnailImage) {
+			thumbMap.set(item.AvatarItemId, item.ThumbnailImage);
+		}
+	}
 	return items.map((item) => {
-		const giftDrop = item.GiftDrop
-		if (!giftDrop) return item
-		const name = giftDrop.FriendlyName?.trim().toLowerCase()
-		if (!name) return item
-		let newDrop = giftDrop
-		if (!giftDrop.ThumbnailImageName) {
-			const thumbnail = THUMBNAIL_BY_NAME.get(name)
-			if (thumbnail) {
-				newDrop = { ...newDrop, ThumbnailImageName: thumbnail }
+		if (!item.GiftDrop) return item;
+		// Priority 1: Item already has ThumbnailImageName (e.g. star boxes) - convert to full URL
+		const existingThumb = (item.GiftDrop as any).ThumbnailImageName;
+		if (existingThumb && typeof existingThumb === 'string' && existingThumb.length > 0) {
+			// Don't overwrite if ThumbnailImage is already a full URL
+			const current = (item.GiftDrop as any).ThumbnailImage;
+			if (!current || !current.startsWith('http')) {
+				return {
+					...item,
+					GiftDrop: {
+						...item.GiftDrop,
+						ThumbnailImage: IMG_BASE + existingThumb,
+					},
+				};
 			}
+			return item;
 		}
-		// Repair the desc only for plain avatar items: non-empty, not a consumable,
-		// not a query box, not equipment, and with a catalog match.
-		if (
-			typeof giftDrop.AvatarItemDesc === 'string' &&
-			giftDrop.AvatarItemDesc !== '' &&
-			!giftDrop.ConsumableItemDesc &&
-			!giftDrop.IsQuery &&
-			!giftDrop.EquipmentModificationGuid
-		) {
-			const realDesc = DESC_BY_NAME.get(name)
-			if (realDesc && realDesc !== giftDrop.AvatarItemDesc) {
-				newDrop = { ...newDrop, AvatarItemDesc: realDesc }
-			}
+		// Priority 2: Look up by PurchasableItemId in avatar catalog
+		const thumb = thumbMap.get(item.PurchasableItemId);
+		if (thumb) {
+			return {
+				...item,
+				GiftDrop: {
+					...item.GiftDrop,
+					ThumbnailImage: IMG_BASE + thumb,
+				},
+			};
 		}
-		return newDrop === giftDrop ? item : { ...item, GiftDrop: newDrop }
-	})
+		return item;
+	});
 }
 
 interface StoreItem {
@@ -991,11 +1011,8 @@ interface GiftRequest {
  * 404s as "no such storefront".
  */
 const STOREFRONT_ALIASES: Record<string, string> = {
-	// Empty. 1704 was here for a while, standing in for a 2025 gift-drop storefront nobody had
-	// captured; the items it was meant to sell turned out to belong in the general store, so
-	// they are in `sf3-2025.json` and served as storefront 3 — see {@link STOREFRONT_BY_BUILD}.
-	// That is a per-BUILD variant of one storefront rather than an alias between two ids, which
-	// is why nothing is listed here.
+	// Watch UI Store page requests "Storefront_Watch" — map it to the general store (sf3).
+	'Storefront_Watch': '3',
 }
 
 /**
@@ -3341,9 +3358,11 @@ const app = new Hono<App>({ strict: false })
 		}
 	)
 
-	// Mark a checklist row done. [Authorize]. Grants 25 XP and 25 tokens once-only
-	// per row (idempotent via checklist_status table). Creates a gift box so the
-	// reward appears in /api/avatar/v2/gifts.
+	// Mark a checklist row done. [Authorize]. Records completion once-only per row
+	// (idempotent via checklist_status table) and returns a zero-grant envelope.
+	// No tokens, XP, or gift box are granted: no authentic reward contract exists
+	// for NUX checklist completion (the 2025 game disabled the new-player checklist
+	// server-side), so inventing a reward would fabricate game data.
 	.on(
 		'POST',
 		['/api/checklist/v1/complete', '/api/checklist/v2/complete'],
@@ -3351,9 +3370,9 @@ const app = new Hono<App>({ strict: false })
 			tags: ['Econ'],
 			summary: 'Complete a checklist row',
 			description:
-				'Marks a NUX checklist row done. Grants 25 XP and 25 tokens once-only per ' +
-				'row (idempotent). Creates a gift box so the reward appears in the gifts list. ' +
-				'v1 and v2 behave alike.',
+				'Marks a NUX checklist row done, once-only per row (idempotent). Grants ' +
+				'nothing — no authentic reward contract exists for checklist completion, ' +
+				'so no tokens, XP, or gift box are invented. v1 and v2 behave alike.',
 			security: AUTHED,
 			requestBody: jsonBody(CompleteChecklistRequest, 'Which row was completed — `{ ItemIndex }`'),
 			responses: {
@@ -3390,42 +3409,15 @@ const app = new Hono<App>({ strict: false })
 					BalanceType: -2,
 				})
 			}
-			// Record completion
+			// Record completion. No reward is granted here: no authentic contract
+			// exists for checklist-completion rewards, so inventing tokens/XP (or a
+			// gift box wrapping them) would fabricate game data.
 			await db.prepare(
 				'INSERT INTO checklist_status (account_id, item_index, completed_at) VALUES (?, ?, ?)'
 			).bind(id, itemIndex, new Date().toISOString()).run()
-			// Grant 25 XP
-			await addXp(db, id, 25)
-			// Grant 25 tokens (ensure starting balances first)
-			const startingTokens = intVar(c.env.STARTING_TOKENS, DEFAULT_STARTING_TOKENS)
-			await ensureStartingBalances(db, id, startingTokens)
-			const balance = await creditCurrency(
-				db,
-				id,
-				CurrencyType.RecCenterTokens,
-				25,
-				startingTokens
-			)
-			// Create a gift box as the visual wrapper
-			const drop = {
-				FriendlyName: 'New Player Challenge Reward',
-				Tooltip: 'You completed a New Player challenge!',
-				ConsumableItemDesc: '',
-				AvatarItemDesc: '',
-				AvatarItemType: null,
-				EquipmentPrefabName: '',
-				EquipmentModificationGuid: '',
-				Rarity: 0,
-				Context: CHECKLIST_REWARD_CONTEXT,
-				Currency: 25,
-				CurrencyType: CurrencyType.RecCenterTokens,
-				Xp: 25,
-			}
-			const granted = await grantGiftDrop(c, id, drop, 'You completed a New Player challenge! You earned 25 tokens and 25 XP!')
-			await pushGiftReceived(c, id, granted, 'You completed a New Player challenge! You earned 25 tokens and 25 XP!', COACH_ACCOUNT_ID)
 			return c.json({
 				BalanceUpdates: [{ UpdateResponse: CHECKLIST_REWARD_CONTEXT, Data: [] }],
-				Balance: 25,
+				Balance: 0,
 				CurrencyType: CurrencyType.RecCenterTokens,
 				BalanceType: -2,
 			})
@@ -4957,6 +4949,43 @@ const app = new Hono<App>({ strict: false })
 		}
 	)
 
+	// v3 storefront by id. The 2025 client calls GET /api/storefronts/v3/{id} when
+	// opening the main Store from the Watch menu (Storefront_Watch → id 3).
+	// This was missing → 404 → empty store. Serves the captured sf{id}.json catalogs.
+	app.get(
+		'/api/storefronts/v3/:id',
+		describeRoute({
+			tags: ['Storefront'],
+			summary: 'Storefront catalog by id (v3)',
+			description: 'Serves the storefront catalog for the given storefront id. Id 3 is the main Watch-menu store (sf3-2025.json on newer builds).',
+			parameters: [
+				{
+					name: 'id',
+					in: 'path',
+					required: true,
+					description: 'Storefront id (3 = main store)',
+					schema: { type: 'string' },
+				},
+			],
+			responses: {
+				200: json(JsonObject, 'The storefront catalog'),
+				404: { description: 'No storefront for this id' },
+			},
+		}),
+		async (c) => {
+			const id = c.req.param('id')
+			const storefrontType = Number.parseInt(id, 10)
+			if (!Number.isFinite(storefrontType)) {
+				return c.json({ success: false, error: { message: 'not found' } }, 404)
+			}
+			const catalog = await loadStorefront(c, storefrontType)
+			if (!catalog) {
+				return c.json({ success: false, error: { message: 'not found' } }, 404)
+			}
+			return c.json(catalog)
+		}
+	)
+
 	// v4 room storefront. The 2023 client calls GET /api/storefronts/v4/room/{id} when
 	// opening the store in a room (Rec Center = room 2, bowling alley = 500, etc.).
 	// This was missing → 404 → empty store. Room 2 returns the dynamic rotation;
@@ -5283,13 +5312,16 @@ const app = new Hono<App>({ strict: false })
 			const storefront = await loadStorefront(c, storefrontType as number)
 
 			// Past LEGACY_CLIENT_BUILD the bag may also name CATALOG rows — the ids the generated
-			// storefront and the discovery rows hand out (10000 and up) — so those are looked up in
-			// the `catalog` table and appended. One extra query for the whole bag.
+			// legacy storefront and the discovery rows hand out (10000 and up) — so those are
+			// looked up in the `catalog` table and appended. One extra query for the whole bag.
 			//
-			// Appended rather than replacing the file: the two id spaces do not overlap
-			// (`CATALOG_ID_BASE` is above every captured id), so a bag may mix them and a newer
-			// client buying from a captured storefront still works. An older build is not offered
-			// catalog ids anywhere, so it is left resolving exactly what it always did.
+			// Appended rather than replacing the file: the file wins id collisions (its items
+			// come first in the merged list), so a bag may mix them and a newer client buying
+			// from the 2025 capture still resolves what the client was shown. NOTE: the 2025
+			// capture reuses ids across the 10000+ range, so catalog-table ids there are
+			// shadowed by the capture — the table fallback only meaningfully serves ids the
+			// capture does not list. An older build is not offered catalog ids anywhere, so it
+			// is left resolving exactly what it always did.
 			const build = await authedBuild(c)
 			const catalogItems =
 				build !== null && build > LEGACY_CLIENT_BUILD
@@ -5698,65 +5730,31 @@ const app = new Hono<App>({ strict: false })
 		}
 	)
 
-	// Storefront ad-carousel items. Stubbed to `[]`: the bundled placeholder banner
-	// references a missing AdCarouselItem.png, and the client pairs this fetch with
-	// `/api/storefronts/v1/toptoday` and `/api/storefronts/v1/objectives` on its
-	// Store page — an empty non-null list parses to "nothing to show" instead of the
-	// null item list that crashes the page's UI tick. Real promo data can replace
-	// the stubs once the carousel assets exist.
+	// Storefront ad-carousel items. Real Rec Room items (IDs exist in toptoday).
 	.get(
 		'/api/storefronts/v1/adcarouselitems',
-		listRoute('Storefront ad-carousel items', 'Featured carousel with promo slides'),
-		(c) => c.json([
-			{
-				AdCarouselItemId: 1,
-				Description: "Fresh shirts for your avatar. Grab the RECS Shirt in White or Green \u2014 700 tokens each.",
-				ImageName: "FluxRecTees.png",
-				PurchasableItemIds: [475, 487],
-				Title: "Flux Rec Tees"
-			},
-			{
-				AdCarouselItemId: 2,
-				Description: "Show your bot pride. Robo Logo Shirt in Pink or Blue \u2014 700 tokens each.",
-				ImageName: "RoboLogoShirts.png",
-				PurchasableItemIds: [477, 478],
-				Title: "Robo Logo Shirts"
-			},
-			{
-				AdCarouselItemId: 3,
-				Description: "Bold skull tees. KO Skull Shirt in Black or Pink \u2014 500 tokens each.",
-				ImageName: "KOSkullCollection.png",
-				PurchasableItemIds: [470, 481],
-				Title: "KO Skull Collection"
-			}
-		])
+		listRoute('Storefront ad-carousel items', 'Featured carousel items'),
+		(c) => c.json(adCarouselItems)
 	)
-	// Storefront "top today" items — currently unstocked, served as an empty list.
-	.get(
-		'/api/storefronts/v1/toptoday',
-		listRoute('Storefront top-today items', 'Empty stub so the Store page does not 404/crash'),
-		(c) => c.json([])
-	)
-	// Storefront daily objectives — currently none published, served as an empty list.
+
+	// Storefront objectives. The 2023 client lists api/storefronts/v1/objectives.
 	.get(
 		'/api/storefronts/v1/objectives',
-		listRoute('Storefront objectives', 'Empty stub so the Store page does not 404/crash'),
+		listRoute('Storefront objectives', 'Store objectives for the 2023 client (empty)'),
 		(c) => c.json([])
 	)
-	// The 2023 client's Store page pairs `adcarouselitems` with this route in a
-	// WhenAll; a 404 faults the pair, so it is stubbed to an empty list like the
-	// other storefront sources (the commerce worker already answers `[]` for
-	// tokenBundles, but the client never reaches it).
+
+	// Storefront "top today" items. Returns the rec center storefront rotation.
 	.get(
-		'/reminder/currentTokenBundles/v2',
-		listRoute('Current token bundles', 'Empty stub so the Store page does not 404/crash'),
-		(c) => c.json([])
-	)
-	// Fired per carousel card by the Store page; no campaigns exist, so an empty list.
-	.get(
-		'/purchasecampaign/allcurrent/v2',
-		listRoute('Current purchase campaigns', 'Empty stub so the Store page does not 404/crash'),
-		(c) => c.json([])
+		'/api/storefronts/v1/toptoday',
+		listRoute('Storefront top-today items', 'Top today storefront'),
+		(c) => {
+			const storefront = buildRecCenterStorefront() as { StoreItems: StoreItem[] }
+			if (Array.isArray(storefront.StoreItems)) {
+				storefront.StoreItems = enrichWithThumbnails(storefront.StoreItems)
+			}
+			return c.json(storefront)
+		}
 	)
 
 	// Current weekly challenge. The rotation is GENERATED from the calendar week (see
@@ -6030,27 +6028,32 @@ const app = new Hono<App>({ strict: false })
 			})
 	)
 
-	// Buy Flux Rec+ with tokens. The only way to get Plus: a one-time token payment
-	// (no real-money store, no Discord claim). Sets the account's `hasPlus` flag, which
-	// the auth worker stamps into the token's `rn.plus` claim at the NEXT login — the
-	// buyer signs in again and the client reports an active subscription.
+	// Buy Flux Rec+ with tokens. The only token way to get Plus: a one-time token
+	// payment (no real-money store, no Discord claim). Sets the account's `hasPlus`
+	// flag, which the auth worker stamps into the token's `rn.plus` claim at the
+	// NEXT login — the buyer signs in again and the client reports an active
+	// subscription. There is no authentic token price, so the price comes only from
+	// the operator's PLUS_PRICE_TOKENS var — with none configured the purchase is
+	// unavailable (400 `no_price_configured`) rather than invented.
 	//
-	// Auth-gated: 401 without a valid token. 400 when the caller already has Plus or
-	// can't cover the price.
+	// Auth-gated: 401 without a valid token. 400 when the caller already has Plus,
+	// can't cover the price, or no price is configured.
 	.post(
 		'/api/CampusCard/v1/PurchaseWithTokens',
 		describeRoute({
 			tags: ['Econ'],
 			summary: 'Buy Flux Rec+ with tokens',
 			description: [
-				'One-time token purchase of Flux Rec+. Spends FLUXREC_PLUS_PRICE tokens',
-				'(default 10,000) and sets the account’s `hasPlus` flag; the subscription',
-				'appears after the next login, when auth stamps the `rn.plus` claim.',
+				'One-time token purchase of Flux Rec+. Spends the operator-configured',
+				'PLUS_PRICE_TOKENS and sets the account’s `hasPlus` flag; the subscription',
+				'appears after the next login, when auth stamps the `rn.plus` claim. With',
+				'no PLUS_PRICE_TOKENS configured the purchase is unavailable (400',
+				'`no_price_configured`) — no price is invented.',
 			].join(' '),
 			security: AUTHED,
 			responses: {
 				200: json(SubscriptionResponse, 'The new Flux Rec+ subscription'),
-				400: json(ErrorResponse, 'Already subscribed or insufficient tokens'),
+				400: json(ErrorResponse, 'Already subscribed, insufficient tokens, or no price configured'),
 				401: UNAUTHORIZED_RESPONSE,
 			},
 		}),
@@ -6061,7 +6064,16 @@ const app = new Hono<App>({ strict: false })
 				return c.json({ error: 'already_owned', error_description: 'account already has Flux Rec+' }, 400)
 			}
 			const startingTokens = intVar(c.env.STARTING_TOKENS, DEFAULT_STARTING_TOKENS)
-			const price = currentPlusPrice()
+			const price = plusPriceTokens(c.env)
+			if (price === null) {
+				return c.json(
+					{
+						error: 'no_price_configured',
+						error_description: 'Flux Rec+ has no token price configured',
+					},
+					400
+				)
+			}
 			const paid = await spendCurrency(
 				c.env.DB,
 				id,
@@ -6141,7 +6153,17 @@ const app = new Hono<App>({ strict: false })
 			if (!until || until <= now) {
 				// Expired or legacy (no timestamps): try to renew.
 				const startingTokens = intVar(c.env.STARTING_TOKENS, DEFAULT_STARTING_TOKENS)
-				const price = currentPlusPrice()
+				const price = plusPriceTokens(c.env)
+				if (price === null) {
+					// No price configured: renewal is impossible, so the subscription
+					// lapses rather than renewing at an invented price.
+					await c.env.DB.prepare(
+						"UPDATE account SET data = json_set(data, '$.hasPlus', json('false')) WHERE account_id = ?1"
+					)
+						.bind(id)
+						.run()
+					return c.json({})
+				}
 				const renewed = await spendCurrency(
 					c.env.DB,
 					id,
@@ -6179,7 +6201,8 @@ const app = new Hono<App>({ strict: false })
 
 	// The subscription seasons running right now (the RR+ seasonal reward tracks).
 	// Returns the active Flux Rec+ season so the client's membership UI can display
-	// pricing. An empty list caused the client's membership-price error.
+	// pricing. Returns a SINGLE OBJECT (not an array) — the client's
+	// AvatarItem.GetStorefront deserializer expects '{' at offset 0.
 	.get(
 		'/api/subscriptionseasons/v1/seasons/current',
 		listRoute('Current subscription seasons', 'The active Flux Rec+ season'),
@@ -6189,19 +6212,59 @@ const app = new Hono<App>({ strict: false })
 			start.setUTCDate(start.getUTCDate() - 30)
 			const end = new Date(now)
 			end.setUTCDate(end.getUTCDate() + 30)
-			return c.json([
-				{
-					SeasonId: 1,
-					Name: 'Flux Rec+',
-					StartDate: start.toISOString(),
-					EndDate: end.toISOString(),
-					IsActive: true,
-					TokenPrice: currentPlusPrice(),
-					TokenPriceSaturday: FLUXREC_PLUS_PRICE_SATURDAY,
-				},
-			])
+			return c.json({
+				SeasonId: 1,
+				Name: 'Flux Rec+',
+				StartDate: start.toISOString(),
+				EndDate: end.toISOString(),
+				IsActive: true,
+				TokenPrice: plusPriceTokens(c.env),
+			})
 		}
 	)
+
+	// Membership prices for the Flux Rec+ purchase UI. The 2025 client calls this
+	// when opening the Membership page; without it the client shows
+	// "Error loading membership prices." Prices are in tokens (not real money).
+	// Rec Room+ was a real-money subscription, so there is no authentic token
+	// price: the single monthly price comes only from the operator's
+	// PLUS_PRICE_TOKENS var, and with none configured the list is empty (no
+	// invented yearly tier — the old 10x-yearly price was fabricated and is gone).
+	.get(
+		'/api/subscriptions/v1/prices',
+		describeRoute({
+			tags: ['Econ'],
+			summary: 'Flux Rec+ membership prices',
+			description: 'Returns the token prices for Flux Rec+ membership. Prices are in tokens, not real money.',
+			security: AUTHED,
+			responses: {
+				200: json(JsonObject, 'The membership prices'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const price = plusPriceTokens(c.env)
+			return c.json({
+				Prices:
+					price === null
+						? []
+						: [
+								{
+									DurationMonths: 1,
+									TokenPrice: price,
+									Name: 'Flux Rec+ 1 Month',
+								},
+							],
+			})
+		}
+	)
+
+	// Purchase Flux Rec+ membership with tokens. REMOVED 2026-10-01: this was an
+	// invented parallel purchase path (custom route, custom `player_subscription`
+	// table whose migration never applied, hardcoded 1,000-token starting balance)
+	// that wrote to a table nothing reads — `UpdateAndGetSubscription` answers from
+	// the account's `plusSince`/`plusUntil` JSON. The single token-funded purchase
+	// path is CampusCard `PurchaseWithTokens` above.
 
 	// Whether the caller can start a Maker AI free trial. Always false, mirroring the
 	// reference server: nothing here runs trials, and false is the answer that leaves the

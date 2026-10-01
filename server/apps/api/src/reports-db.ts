@@ -546,6 +546,10 @@ export const NOT_BLOCKED = {
  * reporter is not a host who kicked them, and naming them would tell the banned player who
  * reported them. Everything else keeps its `NOT_BLOCKED` value: the other block kinds and
  * screen dressings, none of which this server hands out.
+ *
+ * The one exception is an ADMIN-issued ban (see `ADMIN_BAN_DETAILS_PREFIX`): there the
+ * "reporter" is the operator, and `details` is the reason they gave — so it IS shown, via
+ * `TopMessageOverride`, which the client's block screen renders as the headline text.
  */
 export function banBlockDetails(ban: ReportRow) {
 	const startedAtIso = ban.banned_at ?? ban.created_at
@@ -554,6 +558,7 @@ export function banBlockDetails(ban: ReportRow) {
 		ban.ban_expires === null
 			? PERMANENT_BAN_DURATION
 			: Math.max(1, Math.ceil((Date.parse(ban.ban_expires) - startedAt) / 1000))
+	const adminReason = adminBanReason(ban)
 	return {
 		...NOT_BLOCKED,
 		ReportCategory: ban.report_category,
@@ -561,5 +566,28 @@ export function banBlockDetails(ban: ReportRow) {
 		IsBan: true,
 		Message: 'Rule violation',
 		TimeoutStartedAt: startedAtIso,
+		// An admin ban's reason is shown on the block screen; player reports keep the
+		// default text (their reporter's words are never shown to the reported).
+		...(adminReason !== null ? { TopMessageOverride: adminReason } : {}),
 	}
+}
+
+/**
+ * Marker prefix the admin API puts at the start of a ban report's `details`.
+ * Everything after it is the operator's ban reason, and — unlike a player-filed
+ * report's details — it is safe to show the banned player (see `banBlockDetails`).
+ * Player-filed reports never carry this prefix.
+ */
+export const ADMIN_BAN_DETAILS_PREFIX = '[admin-ban] '
+
+/**
+ * The operator's reason for an admin-issued ban, or null when this row isn't one
+ * (a player-filed report, or an admin row with no reason text left after the prefix).
+ */
+export function adminBanReason(ban: Pick<ReportRow, 'details'>): string | null {
+	if (typeof ban.details === 'string' && ban.details.startsWith(ADMIN_BAN_DETAILS_PREFIX)) {
+		const reason = ban.details.slice(ADMIN_BAN_DETAILS_PREFIX.length).trim()
+		return reason === '' ? null : reason
+	}
+	return null
 }

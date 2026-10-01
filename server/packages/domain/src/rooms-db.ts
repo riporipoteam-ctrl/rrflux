@@ -680,7 +680,7 @@ export async function cloneRoom(
 	if (!source || source.CloningAllowed === false) return null
 
 	const row = await db
-		.prepare('SELECT MAX(room_id) AS maxId FROM room')
+		.prepare('SELECT MAX(room_id) AS maxId FROM room WHERE room_id < 9007199254740991')
 		.first<{ maxId: number | null }>()
 	const newRoomId = (row?.maxId ?? 0) + 1
 
@@ -1370,7 +1370,7 @@ export async function saveSubRoomData(
 	subRoomId: number,
 	accountId: number,
 	input: SaveSubRoomDataInput
-): Promise<{ room: Room; save: SubRoomDataSave } | null> {
+): Promise<{ room: Room; save: SubRoomDataSave; published: boolean } | null> {
 	const room = await getRoomById(db, roomId)
 	if (!room) return null
 	// Read off the already-hydrated room rather than re-querying the subroom and its
@@ -1454,7 +1454,7 @@ export async function saveSubRoomData(
 
 	// Re-hydrate so the returned room reflects the just-saved subroom.
 	await attachSubRooms(db, [room])
-	return { room, save }
+	return { room, save, published: publishNow }
 }
 
 /**
@@ -3398,49 +3398,77 @@ export async function getDormRoom(db: D1Database, accountId: number): Promise<Ro
  * `rooms` worker otherwise owns the schema).
  */
 export async function getOrCreateDormRoom(db: D1Database, accountId: number): Promise<Room> {
-	const existing = await getDormRoom(db, accountId)
-	if (existing) return existing
+	// Retry loop for the get-or-create race: two concurrent requests (e.g. the client
+	// retrying matchmake at 18% loading) can both pass the initial getDormRoom check,
+	// compute the same MAX(room_id)+1, and collide on the loser's INSERT with
+	// "UNIQUE constraint failed: room.room_id". On that specific error we re-read —
+	// the winner's dorm is now visible — instead of 500ing.
+	for (let attempt = 0; attempt < 3; attempt++) {
+		const existing = await getDormRoom(db, accountId)
+		if (existing) {
+			// A previous attempt may have inserted the room row but died before the
+			// subroom; heal that so the caller always gets a usable dorm.
+			if (!existing.SubRooms || existing.SubRooms.length === 0) {
+				const subRoom = await insertSubRoom(db, existing.RoomId, {
+					SubRoomId: 1,
+					UnitySceneId: '76d98498-60a1-430c-ab76-b54a29b7a163',
+					MaxPlayers: 4,
+					CreatorAccountId: accountId,
+				})
+				existing.SubRooms = [subRoom]
+			}
+			return existing
+		}
 
-	const template = await getRoomById(db, DORM_TEMPLATE_ROOM_ID)
-	const idRow = await db
-		.prepare('SELECT COALESCE(MAX(room_id), 1) + 1 AS next FROM room')
-		.first<{ next: number }>()
-	const roomId = idRow?.next ?? 2
+		const template = await getRoomById(db, DORM_TEMPLATE_ROOM_ID)
+		const idRow = await db
+			.prepare('SELECT COALESCE(MAX(room_id), 1) + 1 AS next FROM room WHERE room_id < 9007199254740991')
+			.first<{ next: number }>()
+		const roomId = idRow?.next ?? 2
 
-	// Reuse the template's subroom (scene/capacity), owned by the player, starting
-	// from a clean save. Fall back to the base dorm scene if the template is absent.
-	const templateSub =
-		template && Array.isArray(template.SubRooms) && template.SubRooms.length > 0
-			? (template.SubRooms[0] as Record<string, unknown>)
-			: { SubRoomId: 1, UnitySceneId: '76d98498-60a1-430c-ab76-b54a29b7a163', MaxPlayers: 4 }
+		// Reuse the template's subroom (scene/capacity), owned by the player, starting
+		// from a clean save. Fall back to the base dorm scene if the template is absent.
+		const templateSub =
+			template && Array.isArray(template.SubRooms) && template.SubRooms.length > 0
+				? (template.SubRooms[0] as Record<string, unknown>)
+				: { SubRoomId: 1, UnitySceneId: '76d98498-60a1-430c-ab76-b54a29b7a163', MaxPlayers: 4 }
 
-	// Named after the owner: `@<username>'s Dorm` (falls back to the account id).
-	const username = (await getUsername(db, accountId)) ?? `Player${accountId}`
+		// Named after the owner: `@<username>'s Dorm` (falls back to the account id).
+		const username = (await getUsername(db, accountId)) ?? `Player${accountId}`
 
-	const room: Room = {
-		...(template ?? { Accessibility: Accessibility.Unlisted }),
-		RoomId: roomId,
-		Name: `@${username}'s Dorm`,
-		CreatorAccountId: accountId,
-		IsDorm: true,
-		Roles: [
-			{
-				AccountId: accountId,
-				Role: Role.Creator,
-				LastChangedByAccountId: null,
-				InvitedRole: Role.None,
-			},
-		],
-		// Counters start at zero rather than inheriting the template dorm's (see cloneRoom).
-		Stats: storedStats(template?.Stats),
-		CreatedAt: new Date().toISOString(),
+		const room: Room = {
+			...(template ?? { Accessibility: Accessibility.Unlisted }),
+			RoomId: roomId,
+			Name: `@${username}'s Dorm`,
+			CreatorAccountId: accountId,
+			IsDorm: true,
+			Roles: [
+				{
+					AccountId: accountId,
+					Role: Role.Creator,
+					LastChangedByAccountId: null,
+					InvitedRole: Role.None,
+				},
+			],
+			// Counters start at zero rather than inheriting the template dorm's (see cloneRoom).
+			Stats: storedStats(template?.Stats),
+			CreatedAt: new Date().toISOString(),
+		}
+		// serializeRoom drops any SubRooms carried over from the template; the dorm's own
+		// subroom is inserted into the subroom table below with a fresh globally-unique id.
+		try {
+			await db.prepare('INSERT INTO room (data) VALUES (?1)').bind(serializeRoom(room)).run()
+		} catch (e) {
+			if (attempt < 2 && e instanceof Error && e.message.includes('UNIQUE constraint failed')) {
+				continue
+			}
+			throw e
+		}
+		const subRoom = await insertSubRoom(db, roomId, { ...templateSub, CreatorAccountId: accountId })
+		room.SubRooms = [subRoom]
+		// The template carries these (it was parsed), but a dorm minted without one wouldn't.
+		attachRoomDtoDefaults(room)
+		return room
 	}
-	// serializeRoom drops any SubRooms carried over from the template; the dorm's own
-	// subroom is inserted into the subroom table below with a fresh globally-unique id.
-	await db.prepare('INSERT INTO room (data) VALUES (?1)').bind(serializeRoom(room)).run()
-	const subRoom = await insertSubRoom(db, roomId, { ...templateSub, CreatorAccountId: accountId })
-	room.SubRooms = [subRoom]
-	// The template carries these (it was parsed), but a dorm minted without one wouldn't.
-	attachRoomDtoDefaults(room)
-	return room
+	throw new Error(`Failed to get or create dorm room for account ${accountId} after retries`)
 }

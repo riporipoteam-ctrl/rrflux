@@ -1,0 +1,45 @@
+
+# Agents
+# Astro generated types
+# Build Outputs
+# Debug
+# Dependencies
+# Local env files
+# Misc
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Testing
+# Turbo
+# Vercel
+# Wrangler
+*.env
+*.log
+*.pem
+.DS_Store
+.astro/
+.claude/settings.local.json
+.dev.vars
+.env
+.env.development.local
+.env.local
+.env.production.local
+.env.test.local
+.eslintcache
+.idea
+.next/
+.pnp
+.pnp.js
+.secret
+.turbo
+.vercel
+.wrangler
+.wrangler/
+coverage
+dist
+dist/
+node_modules
+node_modules/
+npm-debug.log*
+out/
+wrangler.generated.*
+yarn-debug.log*
+yarn-error.log*

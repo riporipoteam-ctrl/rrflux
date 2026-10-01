@@ -529,10 +529,17 @@ app.get(
 		// 404. Honour `?sig=p1` the same way so the fallback is signed like any other
 		// image. An unconfigured blob store (no Firestore credentials) lands here too:
 		// a read must never 500, it serves the default instead.
-		const serveFallback = () =>
-			c.env.ASSETS.fetch(new URL(FALLBACK_ASSET_PATH, c.req.url)).then((asset) =>
-				serveStaticAsset(c.env, asset, transform, signing)
+		const serveFallback = async () => {
+			const res = await c.env.ASSETS.fetch(new URL(FALLBACK_ASSET_PATH, c.req.url)).then(
+				(asset) => serveStaticAsset(c.env, asset, transform, signing)
 			)
+			// The fallback is a stand-in for a missing key, not the real object: never
+			// cache it as immutable, or clients keep the wrong image for 30 days after
+			// the real upload lands under this key.
+			const headers = new Headers(res.headers)
+			headers.set('cache-control', 'public, max-age=60')
+			return new Response(res.body, { status: res.status, headers })
+		}
 
 		let meta
 		try {

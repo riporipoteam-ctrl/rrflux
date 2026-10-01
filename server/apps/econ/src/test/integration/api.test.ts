@@ -69,6 +69,16 @@ import {
 } from '../../catalog-db'
 import { CATALOG_ID_BASE } from '../../catalog-load'
 import { CHALLENGE_GIFT_SCHEMA_DDL, CHALLENGE_STATUS_SCHEMA_DDL } from '../../challenge-db'
+// Checklist completion ledger (mirrors migrations/0025_checklist_status.sql) —
+// the complete endpoint records each completed row here, idempotently.
+const CHECKLIST_STATUS_SCHEMA_DDL = [
+	`CREATE TABLE IF NOT EXISTS checklist_status (
+		account_id INTEGER NOT NULL,
+		item_index INTEGER NOT NULL,
+		completed_at TEXT NOT NULL,
+		PRIMARY KEY (account_id, item_index)
+	)`,
+]
 // The live weekly rotation, generated the same way the worker generates it, so the challenge
 // tests exercise whatever this week actually holds instead of ids from a rotation that has
 // since rolled over.
@@ -85,15 +95,15 @@ import type { CatalogLoadRow, CatalogRow, CatalogValue } from '../../catalog-db'
 import type { Env } from '../../context'
 
 /**
- * The GENERATED half of a store file — the items built from the item catalog, as opposed to the
- * equipment, consumables and boxes carried across from the 2023 capture.
+ * The items of the CURRENT sf3-2025.json that are not among the carried 2023 consumable
+ * ids. Kept for the purchase-flow tests that resolve "an item only the newer store sells"
+ * (see NEWER_ONLY below) rather than by id.
  *
- * Split on membership in the CARRIED ids rather than on `CATALOG_ID_BASE`. The two happen to
- * agree now that the equipment skins are gone — the carried ids run 2168-2458, well below the
- * base — but they did not while a skin carried id 20756767, and asking the real question costs
- * nothing.
+ * Split on membership in the CARRIED ids rather than on `CATALOG_ID_BASE`: asking the real
+ * question costs nothing.
  */
 const capturedIds = new Set(carriedItems.map((i) => i.PurchasableItemId))
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const catalogItems = () => sf32025.StoreItems.filter((i) => !capturedIds.has(i.PurchasableItemId))
 
 /**
@@ -157,10 +167,14 @@ const CURRENT_CHALLENGE = weekly.Challenges[0]
 beforeAll(async () => {
 	// Seed the shared JWT signing key into the local Secrets Store so .get() resolves.
 	await adminSecretsStore(env.JWT_SECRET).create('test-signing-key')
+	// The test operator's Flux Rec+ token price. There is no default: with this
+	// unset Plus has no token price (TokenPrice answers null, purchase 400s).
+	env.PLUS_PRICE_TOKENS = '10000'
 	for (const stmt of SCHEMA_DDL) await env.DB.prepare(stmt).run()
 	for (const stmt of BALANCE_SCHEMA_DDL) await env.DB.prepare(stmt).run()
 	for (const stmt of OUTFIT_SCHEMA_DDL) await env.DB.prepare(stmt).run()
 	for (const stmt of CHALLENGE_STATUS_SCHEMA_DDL) await env.DB.prepare(stmt).run()
+	for (const stmt of CHECKLIST_STATUS_SCHEMA_DDL) await env.DB.prepare(stmt).run()
 	for (const stmt of CHALLENGE_GIFT_SCHEMA_DDL) await env.DB.prepare(stmt).run()
 	for (const stmt of PROGRESSION_SCHEMA_DDL) await env.DB.prepare(stmt).run()
 	for (const stmt of REWARD_STATUS_SCHEMA_DDL) await env.DB.prepare(stmt).run()
@@ -2155,9 +2169,10 @@ describe('econ endpoints', () => {
 		expect(((await unversioned.json()) as { Success: boolean }).Success).toBe(false)
 
 		// A bag may MIX an item the STOREFRONT FILE lists with one resolved straight off the
-		// `catalog` table.
+		// `catalog` table. NEWER_ONLY is a 2025-capture item (the newer build's storefront file
+		// lists it); AVATAR_ID resolves off the catalog table.
 		const mixed = await buy('20250718.01', [
-			{ id: SF3_ITEM.id, price: SF3_ITEM.price },
+			{ id: NEWER_ONLY.id, price: NEWER_ONLY.price },
 			{ id: AVATAR_ID, price: 600 },
 		])
 		expect(((await mixed.json()) as { Success: boolean }).Success).toBe(true)
@@ -2582,13 +2597,14 @@ describe('econ endpoints', () => {
 			expect(merged.StoreItems.length, version).toBeGreaterThan(sf3.StoreItems.length)
 		}
 
-		// The id does not change and nothing is renumbered: sf3's own items are in the merged file
-		// unchanged, so a newer client buying one is charged the same as an older client would be.
+		// The id does not change within a snapshot: an old-build client buys an sf3 item
+		// from sf3 at sf3's price. (The 2025 capture is a different snapshot — the real API
+		// reused PurchasableItemIds over time — so cross-snapshot id equality is not asserted.)
 		// The fixture costs 600, so account 42 is credited first.
 		await creditCurrency(env.DB, 42, CurrencyType.RecCenterTokens, 10000, DEFAULT_STARTING_TOKENS)
 		const bowtie = await exports.default.fetch(`${ORIGIN}/api/storefronts/v2/buyItem`, {
 			method: 'POST',
-			headers: { ...(await at('20250718.01')), 'Content-Type': 'application/json' },
+			headers: { ...(await at('20230414')), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				StorefrontType: 3,
 				PurchasableItemId: SF3_ITEM.id, // an avatar item the generated sf3 sells
@@ -2631,40 +2647,48 @@ describe('econ endpoints', () => {
 		expect(refused.status).toBe(404)
 	})
 
-	test('sf3 and sf3-2025 are the same store at two points in time', async () => {
-		// BOTH are generated from the item catalog now — sf3 is no longer a capture. They report
-		// the same storefront id, because they are two versions of ONE store and the client asks
-		// for 3 either way.
+	test('sf3-2025 is the authentic 2025 Watch-store capture; sf3 is the generated legacy store', async () => {
+		// sf3-2025.json is served VERBATIM from the real Rec Room Watch-store capture
+		// (static/db/Watch_EnumValue_3.json) — see sf3-2025.PROVENANCE.md. sf3.json is the
+		// generated legacy store for builds at or before LEGACY_CLIENT_BUILD. They are two
+		// DIFFERENT snapshots of the store: the real API reused PurchasableItemIds over
+		// time (id 2168 was "Film (Black & White)" in the 2023 capture and "Racing Suit
+		// (Blue)" in the 2025 one), so no cross-file id equality is asserted — only that
+		// each file is internally consistent and the build gate serves the right one.
 		expect(sf3.StorefrontType).toBe(3)
 		expect(sf32025.StorefrontType).toBe(3)
 
-		// sf3 is a strict SUBSET of sf3-2025: same items, same ids, same prices — it just stops at
-		// the cutoff. Anything else would mean a player's store changed under them on upgrade.
-		const newer = new Map(sf32025.StoreItems.map((i) => [i.PurchasableItemId, i]))
-		for (const item of sf3.StoreItems) {
-			expect(newer.get(item.PurchasableItemId), String(item.PurchasableItemId)).toEqual(item)
+		// The 2025 capture: thousands of items, unique ids, real price variety (133
+		// distinct token prices — not a generated rarity->price table), real CDN
+		// thumbnail names on the large majority of items.
+		expect(sf32025.StoreItems.length).toBeGreaterThan(3000)
+		{
+			const ids = sf32025.StoreItems.map((i) => i.PurchasableItemId)
+			expect(new Set(ids).size, 'sf3-2025').toBe(ids.length)
 		}
-		expect(sf3.StoreItems.length).toBeLessThan(sf32025.StoreItems.length)
+		const priceSet = new Set(sf32025.StoreItems.flatMap((i) => i.Prices.map((p) => p.Price)))
+		expect(priceSet.size, 'distinct capture prices').toBeGreaterThan(50)
+		const withThumb = sf32025.StoreItems.filter((i) => i.GiftDrop.ThumbnailImageName)
+		expect(withThumb.length).toBeGreaterThan(sf32025.StoreItems.length * 0.8)
+		// The discount percent is the capture's own 10 — the per-item SubscriberPrices
+		// already carry the discount, exactly as the live API served them.
+		expect(sf32025.SubscriberDiscountPercent).toBe(10)
+		// NextUpdate is the far-future sentinel, never a stale past date (the client's
+		// "New items in: time has passed!" bug).
+		expect(new Date(sf32025.NextUpdate).getTime()).toBeGreaterThan(Date.now())
 
-		// Ids are unique within each file. The merge of carried and generated halves is only safe
-		// because their id spaces don't overlap, so a collision must fail rather than be resolved
-		// by array order.
-		for (const [label, file] of [
-			['sf3', sf3],
-			['sf3-2025', sf32025],
-		] as const) {
-			const ids = file.StoreItems.map((i) => i.PurchasableItemId)
-			expect(new Set(ids).size, label).toBe(ids.length)
+		// sf3 (legacy generated store): unique ids, and the discount expressed ONLY in
+		// `SubscriberPrices`; announcing it again at the top level risks a client taking
+		// 10% off an already-discounted price and posting through the server's own
+		// subscriber floor, refused as "Price has changed".
+		{
+			const ids = sf3.StoreItems.map((i) => i.PurchasableItemId)
+			expect(new Set(ids).size, 'sf3').toBe(ids.length)
 		}
-
-		// The discount is expressed ONLY in `SubscriberPrices`; announcing it again at the top
-		// level risks a client taking 10% off an already-discounted price and posting through the
-		// server's own subscriber floor, refused as "Price has changed".
 		expect(sf3.SubscriberDiscountPercent).toBe(0)
-		expect(sf32025.SubscriberDiscountPercent).toBe(0)
 
-		// Every GENERATED item is priced from its rarity, and rarity -1 (the developer tier) is
-		// excluded rather than priced — an item listed here can be bought.
+		// Every GENERATED sf3 item is priced from its rarity, and rarity -1 (the developer
+		// tier) is excluded rather than priced — an item listed here can be bought.
 		const priceByRarity = new Map([
 			[0, 150],
 			[10, 600],
@@ -2672,7 +2696,9 @@ describe('econ endpoints', () => {
 			[30, 800],
 			[50, 3000],
 		])
-		for (const item of catalogItems()) {
+		const sf3CatalogItems = sf3.StoreItems.filter((i) => !capturedIds.has(i.PurchasableItemId))
+		expect(sf3CatalogItems.length).toBeGreaterThan(0)
+		for (const item of sf3CatalogItems) {
 			const expected = priceByRarity.get(item.GiftDrop.Rarity)
 			expect(expected, `rarity ${item.GiftDrop.Rarity}`).toBeDefined()
 			expect(item.Prices[0]).toMatchObject({ CurrencyType: 2, Price: expected })
@@ -2685,26 +2711,22 @@ describe('econ endpoints', () => {
 			expect(item.GiftDrop.GiftDropId).toBe(item.PurchasableItemId)
 			expect(item.PurchasableItemId).toBeGreaterThanOrEqual(CATALOG_ID_BASE)
 		}
-		expect(catalogItems().filter((i) => i.GiftDrop.Rarity === -1)).toEqual([])
+		expect(sf3CatalogItems.filter((i) => i.GiftDrop.Rarity === -1)).toEqual([])
 
-		// The CARRIED half — 30 consumables and 5 random boxes — comes from
-		// `static/db/consumables.json`, what survives of the 2023 capture. The item catalog does
-		// not model these, so they keep their own ids and prices.
+		// The CARRIED half of sf3 — 30 consumables and 5 random boxes — comes from
+		// `static/db/consumables.json`, what survives of the 2023 capture. The item catalog
+		// does not model these, so they keep their own ids and prices.
 		const carried = sf3.StoreItems.filter((i) => capturedIds.has(i.PurchasableItemId))
 		expect(carried.length).toBeGreaterThan(0)
 		expect(carried.every((i) => (i.GiftDrop.AvatarItemDesc ?? '') === '')).toBe(true)
 
-		// And NO equipment skins anywhere in either file: they are awarded from weekly challenges,
-		// so a store listing one would sell something the game gives away.
-		for (const [label, file] of [
-			['sf3', sf3],
-			['sf3-2025', sf32025],
-		] as const) {
-			expect(
-				file.StoreItems.filter((i) => (i.GiftDrop.EquipmentModificationGuid ?? '') !== ''),
-				label
-			).toEqual([])
-		}
+		// And NO equipment skins in the generated sf3: they are awarded from weekly
+		// challenges, so a store listing one would sell something the game gives away.
+		// (The 2025 capture is served verbatim and keeps whatever the live API listed.)
+		expect(
+			sf3.StoreItems.filter((i) => (i.GiftDrop.EquipmentModificationGuid ?? '') !== ''),
+			'sf3'
+		).toEqual([])
 
 		// An id with no storefront still 404s, and 1704 is gone — it was a stand-in for a store
 		// that turned out to belong inside sf3.
@@ -4714,27 +4736,13 @@ describe('econ endpoints', () => {
 		return scenes
 	}
 
-	// The 2023 client's Store page pairs these fetches (adcarouselitems +
-	// currentTokenBundles in a WhenAll, purchasecampaign per carousel card); each
-	// must be a bare 200 + `[]` — the old 404/error-envelope or stale-placeholder
-	// answers crash the page's UI tick a few seconds after load.
-	for (const path of [
-		'/api/storefronts/v1/adcarouselitems',
-		'/api/storefronts/v1/toptoday',
-		'/api/storefronts/v1/objectives',
-		'/reminder/currentTokenBundles/v2',
-		'/purchasecampaign/allcurrent/v2',
-	]) {
-		test(`GET ${path} returns exact [] with JSON content type`, async () => {
-			const res = await exports.default.fetch(`${ORIGIN}${path}`)
-			expect(res.status).toBe(200)
-			expect(res.headers.get('content-type')).toContain('application/json')
-			const raw = await res.text()
-			expect(raw).not.toBe('')
-			expect(raw.trim()).toBe('[]')
-			expect(JSON.parse(raw)).toEqual([])
-		})
-	}
+	test('GET /api/storefronts/v1/adcarouselitems returns the carousel items', async () => {
+		const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v1/adcarouselitems`)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as Array<{ AdCarouselItemId: number }>
+		expect(Array.isArray(body)).toBe(true)
+		expect(body[0]).toHaveProperty('AdCarouselItemId')
+	})
 
 	test('GET /api/gamerewards/v1/pending returns []', async () => {
 		const res = await exports.default.fetch(`${ORIGIN}/api/gamerewards/v1/pending`)
@@ -5508,10 +5516,16 @@ describe('econ endpoints', () => {
 		expect(await res.json()).toEqual([])
 	})
 
-	test('GET /api/subscriptionseasons/v1/seasons/current returns []', async () => {
+	test('GET /api/subscriptionseasons/v1/seasons/current returns a single object', async () => {
 		const res = await exports.default.fetch(`${ORIGIN}/api/subscriptionseasons/v1/seasons/current`)
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual([])
+		const body = await res.json()
+		// The client's AvatarItem.GetStorefront deserializer expects '{' at offset 0;
+		// an array here caused a hard Store-page crash (0x80000003).
+		expect(Array.isArray(body)).toBe(false)
+		expect(body.SeasonId).toBe(1)
+		expect(body.Name).toBe('Flux Rec+')
+		expect(typeof body.TokenPrice).toBe('number')
 	})
 
 	const getSubscription = async (headers: Record<string, string> = {}) =>
@@ -5772,8 +5786,6 @@ describe('econ endpoints', () => {
 			'GET /api/roomkeys/v1/mine',
 			'GET /api/roomkeys/v1/room',
 			'GET /api/storefronts/v1/adcarouselitems',
-			'GET /api/storefronts/v1/objectives',
-			'GET /api/storefronts/v1/toptoday',
 			'GET /api/storefronts/v2/buyInvention',
 			'GET /api/storefronts/v3/giftdropstore/{id}',
 			'GET /api/storefronts/v4/balance/{currencyType}',
@@ -5788,8 +5800,6 @@ describe('econ endpoints', () => {
 			'GET /econ/roomInventoryItemTags/room/{roomId}',
 			'GET /econ/roomOffer/room/{roomId}',
 			'GET /econ/roomOffer/room/{roomId}/purchaseCounts',
-			'GET /purchasecampaign/allcurrent/v2',
-			'GET /reminder/currentTokenBundles/v2',
 			'POST /api/CampusCard/v1/PurchaseWithTokens',
 			'POST /api/CampusCard/v1/UpdateAndGetSubscription',
 			'POST /api/avatar/v1/lockeditems/bulk',

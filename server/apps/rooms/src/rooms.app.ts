@@ -3524,7 +3524,14 @@ const app = new Hono<App>()
 
 			// `value` carries BOTH the updated room and the save just created — and `error`
 			// is null here, not the empty string the other room envelopes use.
-			await pushRoomUpdate(c, accountId, result.room)
+			// A save that went LIVE (dorms auto-publish, or AutoPublish) is pushed to
+			// everyone standing in the room so clients can hot-reload; a staged save only
+			// notifies the creator, whose client tracks the unpublished revision.
+			if (result.published) {
+				await pushRoomUpdateToRoom(c, roomId, result.room, [accountId])
+			} else {
+				await pushRoomUpdate(c, accountId, result.room)
+			}
 			return c.json({
 				success: true,
 				error: null,
@@ -3687,7 +3694,10 @@ const app = new Hono<App>()
 				)
 			}
 
-			await pushRoomUpdate(c, accountId, result.room)
+			// Publishing makes the save the one players load — push the update to everyone
+			// standing in the room (not just the publisher) so clients can hot-reload the
+			// new content instead of serving their cached instance.
+			await pushRoomUpdateToRoom(c, roomId, result.room, [accountId])
 			return roomEnvelope(c, result.room)
 		}
 	)

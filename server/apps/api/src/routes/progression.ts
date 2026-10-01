@@ -57,6 +57,7 @@ const HUB_INSTANCE = 'global'
  * body correct.
  */
 async function pushProgression(c: Context<App>, progression: Progression): Promise<void> {
+	if (progression.PlayerId == null || !Number.isSafeInteger(progression.PlayerId)) return
 	try {
 		await c.env.RECFLARE_NOTIFICATIONS_HUB.getByName(HUB_INSTANCE).notifyPlayer(
 			progression.PlayerId,
@@ -271,6 +272,11 @@ export const progressionRoutes = new Hono<App>({ strict: false })
 		}),
 		async (c) => {
 			const id = Number.parseInt(c.req.param('id'), 10)
+			// Non-numeric path segments (e.g. a client calling an unimplemented
+			// named endpoint like `xpEarnedToday`) must not flow into the DB and
+			// notification hub as NaN — D1/DO coerce NaN to NULL and the pending
+			// notification insert fails its NOT NULL constraint.
+			if (!Number.isSafeInteger(id)) return c.json({ error: 'invalid player id' }, 404)
 			const progression = await getProgression(c.env.DB, id)
 			await pushProgression(c, progression)
 			return c.json(progression)

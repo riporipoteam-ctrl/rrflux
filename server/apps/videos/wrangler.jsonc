@@ -27,7 +27,10 @@
 		// URLs, merged OVER the built-in catalog in src/videos.app.ts. The URLs
 		// are public, so this is a plain var, not a secret. Example:
 		//   {"dQw4w9WgXcQ": "https://cdn.example.com/videos/never-gonna.mp4"}
+		// Board wiring (2026-09-25): the five Ripo Team board videos, ids matching
+		// community-board.json BlobName values. <R2_HASH> = the pub-<hash> subdomain from
+		// the bucket's r2.dev public URL — substitute the real hash before deploying.
 		// Values may also be {"title": "...", "url": "..."} objects.
-		"VIDEOS_MAP": "{}"
+		"VIDEOS_MAP": "{\"9yxvLdJXh5Q\": {\"title\": \"Dust And Destiny \u2014 Official Song\", \"url\": \"https://pub-<R2_HASH>.r2.dev/9yxvLdJXh5Q.mp4\"}, \"dlLAVqbClVU\": {\"title\": \"TheHauntingOfChris 7: The Final Tape\", \"url\": \"https://pub-<R2_HASH>.r2.dev/dlLAVqbClVU.mp4\"}, \"nsrNhZWOA2U\": {\"title\": \"RipoHangout Reveal Trailer\", \"url\": \"https://pub-<R2_HASH>.r2.dev/nsrNhZWOA2U.mp4\"}, \"wl2YtvlA6Z8\": {\"title\": \"RipoHangout 10.0 Update Trailer\", \"url\": \"https://pub-<R2_HASH>.r2.dev/wl2YtvlA6Z8.mp4\"}, \"cfcx07aXfAQ\": {\"title\": \"HorizonOfDespair RRS Official Trailer\", \"url\": \"https://pub-<R2_HASH>.r2.dev/cfcx07aXfAQ.mp4\"}}"
 	}
 }

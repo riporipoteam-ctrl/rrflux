@@ -19,6 +19,33 @@ export type Env = SharedHonoEnv &
 	DOMAIN: string
 	/** Maximum accepted size of each API-owned image upload, in bytes. */
 	RECFLARE_MAX_API_UPLOAD_BYTES?: string
+	/**
+	 * Shared admin key for the operator admin API (`/api/admin/v1/*`, used by the
+	 * RipoBot Discord bot). Injected at deploy time via `--var ADMIN_API_KEY` from
+	 * `RECFLARE_ADMIN_API_KEY` in the server `.env`. Absent until the operator sets it.
+	 */
+	ADMIN_API_KEY?: string
+	/**
+	 * Tokens granted at signup (operator knob, default 500). Read here only so the
+	 * admin token-grant applies the same signup grant econ does before crediting.
+	 */
+	STARTING_TOKENS?: string | number
+	/**
+	 * Fallback token gift minted by `/api/avatar/v2/gifts/generate` when no
+	 * EarnableRewards catalog exists (operator knob, default 50).
+	 */
+	GIFT_FALLBACK_TOKENS?: string | number
+	/**
+	 * Operator-configured default gift box minted by
+	 * `POST /api/admin/v1/gifts/grant` when no `gift_id` is given. There is no
+	 * authentic gift-box catalog, so what "a gift" contains is the operator's
+	 * explicit choice — these values are NOT Rec Room data. Defaults grant
+	 * nothing; set e.g. `OPERATOR_DEFAULT_GIFT_TOKENS=100` to restore a token gift.
+	 */
+	OPERATOR_DEFAULT_GIFT_TOKENS?: string | number
+	OPERATOR_DEFAULT_GIFT_XP?: string | number
+	OPERATOR_DEFAULT_GIFT_RARITY?: string | number
+	OPERATOR_DEFAULT_GIFT_MESSAGE?: string
 	// Shared rooms database (schema/migrations owned by the `rooms` worker). Used
 	// read-only here to resolve room roles for `/api/rooms/v1/verifyRole`.
 	DB: D1Database

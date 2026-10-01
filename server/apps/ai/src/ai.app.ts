@@ -23,6 +23,7 @@ import {
 	RoomieUserFacts,
 	UNAUTHORIZED_RESPONSE,
 } from './openapi'
+import { z } from 'zod'
 
 import type { Context } from 'hono'
 import type { App } from './context'
@@ -232,6 +233,246 @@ const app = new Hono<App>()
 			if (id === null) return unauthorized(c)
 
 			return c.json({ UserContext: '', UserFacts: [] })
+		}
+	)
+
+	// Roomie chat. The client sends the player's message (from room chat text or
+	// transcribed mic audio); we run it through Cloudflare Workers AI (Llama 3.1 8B
+	// Instruct) with a Roomie system prompt and return the reply. This is what makes
+	// Roomie actually talk instead of being silent.
+	.post(
+		'/roomieai/chat',
+		describeRoute({
+			tags: ['Roomie AI', '2025'],
+			summary: 'Chat with Roomie',
+			description:
+				'Sends the player message to the AI model (Cloudflare Workers AI, Llama 3.1) ' +
+				'with a Roomie system prompt and returns Roomie\'s reply text.',
+			security: AUTHED,
+			responses: {
+				200: json(z.object({}).passthrough(), 'Roomie\'s reply'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const id = await authedId(c)
+			if (id === null) return unauthorized(c)
+
+			let body: { message?: string; history?: Array<{ role: string; content: string }> }
+			try {
+				body = await c.req.json()
+			} catch {
+				return c.json({ success: false, error: 'invalid_json' }, 400)
+			}
+			const message = (body.message || '').trim()
+			if (!message) {
+				return c.json({ success: false, error: 'empty_message' }, 400)
+			}
+
+			const systemPrompt =
+				'You are Roomie, a friendly AI pet companion in the game Flux Rec (a Rec Room-style ' +
+				'social VR game). You are cheerful, playful, and helpful. Keep replies short and fun ' +
+				'(1-3 sentences) since players read them in-game. You love the game world, making ' +
+				'friends, and going on adventures. Never break character. Never mention you are an AI ' +
+				'language model — you are Roomie, the player\'s loyal companion.'
+			const messages = [
+				{ role: 'system', content: systemPrompt },
+				...(Array.isArray(body.history) ? body.history.slice(-10) : []),
+				{ role: 'user', content: message },
+			]
+
+			// Cloudflare Workers AI chat. Tries known-good text models in order and uses
+			// the first that answers — model availability varies by account/region, so
+			// the list is the resilience. Runs in the same datacenter as this worker,
+			// no external egress needed.
+			const CHAT_MODELS = [
+				'@cf/meta/llama-3.1-8b-instruct-fast',
+				'@cf/meta/llama-3.2-3b-instruct',
+				'@cf/meta/llama-3.2-1b-instruct',
+				'@cf/mistral/mistral-7b-instruct-v0.1',
+				'@cf/google/gemma-7b-it-lora',
+			]
+			try {
+				const ai = (
+					c.env as unknown as {
+						AI?: {
+							run: (
+								model: string,
+								input: unknown
+							) => Promise<{ response?: string }>
+						}
+					}
+				).AI
+				if (!ai) {
+					return c.json({ success: false, error: 'ai_not_configured' }, 503)
+				}
+				let reply = ''
+				for (const model of CHAT_MODELS) {
+					try {
+						const result = await ai.run(model, {
+							messages,
+							max_tokens: 256,
+							temperature: 0.8,
+						})
+						const text = (result.response || '').trim()
+						if (text) {
+							reply = text
+							break
+						}
+					} catch {
+						// try the next model
+					}
+				}
+				if (!reply) {
+					return c.json({ success: false, error: 'ai_error' }, 502)
+				}
+				return c.json({ success: true, error: null, value: { reply } })
+			} catch {
+				return c.json({ success: false, error: 'ai_error' }, 502)
+			}
+		}
+	)
+
+	// Roomie voice (TTS). Converts Roomie's reply text to speech audio using the
+	// Pollinations free TTS API, so Roomie has a voice in-game.
+	.post(
+		'/roomieai/speak',
+		describeRoute({
+			tags: ['Roomie AI', '2025'],
+			summary: 'Roomie text-to-speech',
+			description:
+				'Converts text to speech audio (MP3) for Roomie\'s voice using the free ' +
+				'Pollinations TTS API.',
+			security: AUTHED,
+			responses: {
+				200: json(z.object({}).passthrough(), 'Audio data'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const id = await authedId(c)
+			if (id === null) return unauthorized(c)
+
+			let body: { text?: string; voice?: string }
+			try {
+				body = await c.req.json()
+			} catch {
+				return c.json({ success: false, error: 'invalid_json' }, 400)
+			}
+			const text = (body.text || '').trim()
+			if (!text) {
+				return c.json({ success: false, error: 'empty_text' }, 400)
+			}
+
+			// Pollinations TTS: GET https://text.pollinations.ai/{prompt}?model=openai-audio&voice=nova
+			// Fallback: Google Translate's free TTS endpoint (no key; ~200 chars per request).
+			const voice = body.voice || 'nova'
+			const ttsUrl =
+				'https://text.pollinations.ai/' +
+				encodeURIComponent(text.slice(0, 500)) +
+				'?model=openai-audio&voice=' +
+				encodeURIComponent(voice)
+			try {
+				const res = await fetch(ttsUrl, { signal: AbortSignal.timeout(60_000) })
+				const ct = res.headers.get('content-type') || ''
+				if (res.ok && ct.includes('audio')) {
+					const audio = await res.arrayBuffer()
+					return new Response(audio, {
+						headers: {
+							'Content-Type': 'audio/mpeg',
+							'Cache-Control': 'public, max-age=3600',
+						},
+					})
+				}
+			} catch {
+				// fall through to the Google TTS fallback below
+			}
+
+			try {
+				const gUrl =
+					'https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=' +
+					encodeURIComponent(text.slice(0, 200))
+				const res = await fetch(gUrl, {
+					headers: { 'User-Agent': 'Mozilla/5.0' },
+					signal: AbortSignal.timeout(30_000),
+				})
+				const ct = res.headers.get('content-type') || ''
+				if (!res.ok || !ct.includes('audio')) {
+					return c.json({ success: false, error: 'tts_unavailable' }, 502)
+				}
+				const audio = await res.arrayBuffer()
+				return new Response(audio, {
+					headers: {
+						'Content-Type': 'audio/mpeg',
+						'Cache-Control': 'public, max-age=3600',
+					},
+				})
+			} catch {
+				return c.json({ success: false, error: 'tts_error' }, 502)
+			}
+		}
+	)
+
+	// Roomie hearing (STT). Accepts audio from the in-game mic, transcribes it with
+	// Cloudflare's Whisper model, and returns the text so it can be sent to /roomieai/chat.
+	.post(
+		'/roomieai/listen',
+		describeRoute({
+			tags: ['Roomie AI', '2025'],
+			summary: 'Roomie speech-to-text',
+			description:
+				'Transcribes player mic audio to text using Whisper, so players can talk ' +
+				'to Roomie with their voice.',
+			security: AUTHED,
+			responses: {
+				200: json(z.object({}).passthrough(), 'Transcribed text'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const id = await authedId(c)
+			if (id === null) return unauthorized(c)
+
+			const contentType = c.req.header('content-type') || ''
+			let audio: ArrayBuffer
+			if (contentType.includes('application/json')) {
+				// Base64-encoded audio in JSON: { audio: "base64...", format: "mp3" }
+				let body: { audio?: string }
+				try {
+					body = await c.req.json()
+				} catch {
+					return c.json({ success: false, error: 'invalid_json' }, 400)
+				}
+				if (!body.audio) {
+					return c.json({ success: false, error: 'empty_audio' }, 400)
+				}
+				const binary = atob(body.audio)
+				const bytes = new Uint8Array(binary.length)
+				for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+				audio = bytes.buffer as ArrayBuffer
+			} else {
+				// Raw audio bytes in the body
+				audio = await c.req.arrayBuffer()
+				if (!audio.byteLength) {
+					return c.json({ success: false, error: 'empty_audio' }, 400)
+				}
+			}
+
+			// Use Cloudflare Workers AI Whisper for transcription (free tier).
+			// The AI binding must be configured in wrangler.jsonc.
+			try {
+				const ai = (c.env as unknown as { AI?: { run: (model: string, input: unknown) => Promise<{ text?: string }> } }).AI
+				if (!ai) {
+					return c.json({ success: false, error: 'stt_not_configured' }, 503)
+				}
+				const result = await ai.run('@cf/openai/whisper', {
+					audio: Array.from(new Uint8Array(audio)),
+				})
+				const text = (result.text || '').trim()
+				return c.json({ success: true, error: null, value: { text } })
+			} catch {
+				return c.json({ success: false, error: 'stt_error' }, 502)
+			}
 		}
 	)
 

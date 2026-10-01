@@ -261,10 +261,91 @@ export const gameplayRoutes = new Hono<App>({ strict: false })
 		describeRoute({
 			tags: ['Gameplay'],
 			summary: 'Announcements',
-			description: 'The announcement banners on the home screen. Served from a static blob.',
+			description: 'The announcement banners on the home screen. Static announcements from the blob plus player-created ones from the database.',
 			responses: { 200: json(JsonArray, 'The announcement banners') },
 		}),
-		(c) => c.json(announcements)
+		async (c) => {
+			// Merge static announcements with player-created ones from D1.
+			try {
+				const db = c.env.DB
+				const rows = await db
+					.prepare(
+						`SELECT announcement_id as AnnouncementId, 1 as AnnouncementType, body as Body,
+							created_at as CreatedAt, image_name as ImageName, link_label as LinkButtonLabel,
+							'' as LinkName, 0 as LinkType, link_uri as LinkUri, 0 as Platform, title as Title
+						FROM announcement
+						WHERE expires_at IS NULL OR expires_at > datetime('now')
+						ORDER BY created_at DESC LIMIT 50`
+					)
+					.all()
+				const dynamic = (rows.results || []) as unknown[]
+				return c.json([...dynamic, ...announcements])
+			} catch {
+				// If the table doesn't exist yet, just serve static.
+				return c.json(announcements)
+			}
+		}
+	)
+
+	// Create a player announcement. Stores in D1; appears in /api/announcement/v1/get.
+	.post(
+		'/api/announcement/v1/create',
+		describeRoute({
+			tags: ['Gameplay'],
+			summary: 'Create announcement',
+			description: 'Creates a player announcement banner.',
+			security: AUTHED,
+			responses: {
+				200: json(JsonObject, 'The created announcement'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const id = await authedId(c)
+			if (id === null) return unauthorized(c)
+
+			let body: { title?: string; body?: string; imageName?: string; linkUri?: string; linkLabel?: string }
+			try {
+				body = await c.req.json()
+			} catch {
+				return c.json({ success: false, error: 'invalid_json' }, 400)
+			}
+			const title = (body.title || '').trim()
+			const text = (body.body || '').trim()
+			if (!title || !text) {
+				return c.json({ success: false, error: 'title_and_body_required' }, 400)
+			}
+
+			const announcementId = Date.now()
+			const now = new Date().toISOString()
+			try {
+				await c.env.DB.prepare(
+					`INSERT INTO announcement (announcement_id, title, body, image_name, link_uri, link_label, created_by, created_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+					.bind(
+						announcementId,
+						title,
+						text,
+						body.imageName || null,
+						body.linkUri || null,
+						body.linkLabel || null,
+						id,
+						now
+					)
+					.run()
+			} catch (e) {
+				return c.json({ success: false, error: 'db_error' }, 500)
+			}
+
+			return c.json({
+				success: true,
+				AnnouncementId: announcementId,
+				Title: title,
+				Body: text,
+				CreatedAt: now,
+			})
+		}
 	)
 
 	// GameSight attribution/analytics event sink. Accept and ack without persisting.

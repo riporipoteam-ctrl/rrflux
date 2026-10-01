@@ -2948,6 +2948,14 @@ const app = new Hono<App>()
 				}
 			}
 			const account = await getAccount(c.env.DB, id)
+			// Voice ban (admin API, `voiceBanUntil` on the account): a voice-banned player
+			// gets no voice server — empty strings are the same "no voice" signal the client
+			// already handles when the pool is empty — so they can play but not speak. The
+			// ban lifts itself when the timestamp passes; nothing has to clear it.
+			const voiceBanned =
+				typeof account?.voiceBanUntil === 'string' &&
+				account.voiceBanUntil !== '' &&
+				Date.parse(account.voiceBanUntil) > Date.now()
 			// The instance's server, the same one every other player in it is handed — except
 			// for a DEVELOPER, who is sent to the same host on the dev port, under the id
 			// `dev` rather than the pool entry's positional name.
@@ -2982,8 +2990,9 @@ const app = new Hono<App>()
 					// decoder is likelier to accept a missing-value string than a null on a
 					// string field. The presence payload's NULL_CONNECTION_INFO keeps its
 					// nulls — that one never carries credentials.
-					voiceConnectionInfo: tachyon.hostPort,
-					voiceServerId: tachyon.serverId,
+					// A voice-banned player gets the "no voice server" signal instead.
+					voiceConnectionInfo: voiceBanned ? '' : tachyon.hostPort,
+					voiceServerId: voiceBanned ? '' : tachyon.serverId,
 					experiments: PHOTON_EXPERIMENTS,
 				},
 				error: null,

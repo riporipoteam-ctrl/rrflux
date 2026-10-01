@@ -1,6 +1,7 @@
 -- Checklist completion ledger for New Player challenges.
 -- Records which checklist rows (ItemIndex) each account has completed,
--- making the 25 XP + 25 token grant once-only (idempotent).
+-- making completion once-only (idempotent). No reward is granted on completion:
+-- no authentic reward contract exists for checklist completion.
 -- Mirrors the reward_status pattern.
 
 CREATE TABLE IF NOT EXISTS checklist_status (

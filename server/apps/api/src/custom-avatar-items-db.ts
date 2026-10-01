@@ -287,13 +287,20 @@ export async function getCustomAvatarItems(
 	ids: string[]
 ): Promise<CustomAvatarItem[]> {
 	if (ids.length === 0) return []
-	const placeholders = ids.map((_, i) => `?${i + 1}`).join(', ')
+	// GUID case-insensitivity: the client is not consistent about GUID case (uppercase
+	// from some flows, lowercase from others), while the D1 `IN` lookup is case-sensitive.
+	// Lowercase both sides so an uppercase GUID still resolves instead of silently dropping
+	// the item (which the store renders as "not for sale" and checkout as unresolvable).
+	const lowered = ids.map((id) => id.toLowerCase())
+	const placeholders = lowered.map((_, i) => `?${i + 1}`).join(', ')
 	const { results } = await db
 		.prepare(`SELECT data FROM custom_avatar_item WHERE custom_avatar_item_id IN (${placeholders})`)
-		.bind(...ids)
+		.bind(...lowered)
 		.all<Row>()
-	const byId = new Map(results.map(toDto).map((item) => [item.CustomAvatarItemId, item]))
-	return ids.flatMap((id) => byId.get(id) ?? [])
+	const byId = new Map(
+		results.map(toDto).map((item) => [item.CustomAvatarItemId.toLowerCase(), item])
+	)
+	return lowered.flatMap((id) => byId.get(id) ?? [])
 }
 
 /**
@@ -535,6 +542,8 @@ export interface UpdateCustomAvatarItemInput {
 	description?: string | null
 	price?: number | null
 	accessibility?: number | null
+	thumbnailImageFilename?: string | null
+	designFilename?: string | null
 }
 
 /**
@@ -556,6 +565,8 @@ export async function updateCustomAvatarItem(
 				'$.Description', coalesce(?3, json_extract(data, '$.Description')),
 				'$.Price', coalesce(?4, json_extract(data, '$.Price')),
 				'$.Accessibility', coalesce(?5, json_extract(data, '$.Accessibility')),
+				'$.ThumbnailImageFilename', coalesce(?7, json_extract(data, '$.ThumbnailImageFilename')),
+				'$.DesignFilename', coalesce(?8, json_extract(data, '$.DesignFilename')),
 				'$.ModifiedAt', ?6)
 			 WHERE custom_avatar_item_id = ?1
 			 RETURNING data`
@@ -566,7 +577,9 @@ export async function updateCustomAvatarItem(
 			patch.description ?? null,
 			patch.price ?? null,
 			patch.accessibility ?? null,
-			now.toISOString()
+			now.toISOString(),
+			patch.thumbnailImageFilename ?? null,
+			patch.designFilename ?? null
 		)
 		.first<Row>()
 	return row ? toDto(row) : null

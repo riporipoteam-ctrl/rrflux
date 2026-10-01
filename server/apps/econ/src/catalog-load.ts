@@ -62,10 +62,12 @@ export interface SkinCapture {
  *
  * The catalog needs ids that cannot be confused with any captured storefront's, because a
  * generated storefront lists a row under its `catalog_id` DIRECTLY — one number, no second
- * numbering and no arithmetic between them. Every real captured `PurchasableItemId` is 2764 or
- * below (one sf3 outlier at 20756767 aside), so numbering from 1 would have collided with sf3's
- * own head-on and the same id would mean two different items depending on which storefront the
- * client read it from. Starting at 10000 puts the whole catalog somewhere nothing else uses.
+ * numbering and no arithmetic between them. The 2023 capture's `PurchasableItemId`s run 2764
+ * or below (one outlier at 20756767), so 10000 clears those. NOTE: the authentic 2025
+ * capture (sf3-2025.json) reuses ids up through 33691 — the real API renumbered items over
+ * time — so catalog ids in the 10000-33691 band are shadowed by the capture for newer
+ * builds (the storefront file wins id collisions). The generated legacy sf3.json is
+ * unaffected: it is the only storefront its builds ever see.
  */
 export const CATALOG_ID_BASE = 10_000
 
