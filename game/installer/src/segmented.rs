@@ -22,16 +22,17 @@ use tokio::io::AsyncWriteExt;
 
 /// Number of parallel segments for large files.
 ///
-/// 16: measured ~2.6x total throughput vs 8 on throttled routes
-/// (per-connection throttling rewards more connections; the file is
-/// ~3.8GB so 16 x ~240MB segments stay efficient).
-pub const SEGMENTS: usize = 16;
+/// 32: doubles the connections vs 16 to defeat per-connection throttling
+/// on slow mirrors (archive.recagain.site throttles ~2-3 MB/s per conn).
+/// The file is ~3.8GB so 32 x ~120MB segments stay efficient.
+pub const SEGMENTS: usize = 32;
 /// Files smaller than this just use a single stream (segments add nothing).
 pub const SEGMENT_MIN_SIZE: u64 = 8 * 1024 * 1024;
 /// Per-segment attempts before the whole download fails.
 const SEGMENT_ATTEMPTS: u32 = 5;
 /// No data for this long -> the segment is stalled, abort and retry.
-const STALL_SECS: u64 = 60;
+/// 30s: fail fast on dead connections so a retry can resume quickly.
+const STALL_SECS: u64 = 30;
 /// Time to wait for response headers before aborting the attempt.
 const FIRST_BYTE_TIMEOUT_SECS: u64 = 180;
 

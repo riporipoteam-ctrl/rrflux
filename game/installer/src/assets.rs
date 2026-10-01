@@ -20,6 +20,14 @@ pub static LOGO_BMP_BYTES: &[u8] = include_bytes!("../assets/logo.bmp");
 /// required there, an embedded byte slice is not enough.
 pub static ICON_ICO_BYTES: &[u8] = include_bytes!("../assets/fluxrec.ico");
 
+/// Carousel slide images (800x450 24-bit BMP) for the installer slideshow.
+/// Slide 1 is the welcome slide (drawn programmatically with the logo);
+/// slides 2-5 are real Rec Room game screenshots with tutorial text.
+pub static SLIDE2_BMP_BYTES: &[u8] = include_bytes!("../assets/slide2.bmp");
+pub static SLIDE3_BMP_BYTES: &[u8] = include_bytes!("../assets/slide3.bmp");
+pub static SLIDE4_BMP_BYTES: &[u8] = include_bytes!("../assets/slide4.bmp");
+pub static SLIDE5_BMP_BYTES: &[u8] = include_bytes!("../assets/slide5.bmp");
+
 /// Write [`ICON_ICO_BYTES`] to `dest` (e.g. `<game dir>\fluxrec.ico`).
 ///
 /// Overwrites any existing file. The caller should call this once per

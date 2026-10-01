@@ -59,7 +59,8 @@ pub fn channel() -> (Progress, mpsc::Receiver<crate::gui::GuiMsg>) {
     (p, rx)
 }
 
-/// Rolling byte counter → "done / total MB • X.X MB/s • ETA M:SS" strings.
+/// Rolling byte counter → "done / total MB • ETA M:SS" strings.
+/// NOTE: No speed — user explicitly removed the speed indicator from the UI.
 struct Throughput {
     started: Instant,
     last_tick: Instant,
@@ -116,7 +117,7 @@ impl Throughput {
             String::new()
         };
         format!(
-            "{label}: {have_mb:.0} / {total_mb:.0} MB \u{2022} {mbps:.1} MB/s{eta}"
+            "{label}: {have_mb:.0} / {total_mb:.0} MB{eta}"
         )
     }
 }
@@ -239,7 +240,8 @@ impl Progress {
     }
 
     /// Feed absolute byte counts for the current transfer-like stage.
-    /// Formats and shows the "done / total MB • X.X MB/s • ETA" detail line
+    /// Formats and shows the "done / total MB • ETA" detail line
+    /// (no speed — user explicitly removed the speed indicator).
     /// and advances the bar proportionally.
     pub fn set_throughput(&self, label: &str, done: u64, total: u64) {
         let detail = self
