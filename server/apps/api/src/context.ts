@@ -68,6 +68,15 @@ export type Env = SharedHonoEnv &
 	// SignalR notifications hub (DO owned by the `notify` worker). Bound here to
 	// push RelationshipChanged notifications when a player's relationship changes.
 	RECFLARE_NOTIFICATIONS_HUB: DurableObjectNamespace<NotificationsHub>
+	/**
+	 * Service bindings for the ns-host proxies (see api.app.ts). Older
+	 * `2025patch.ini` files point the ns host at this worker instead of
+	 * `fluxrec-auth`, so the same `/api/storefronts/*`, `/rooms/*` and
+	 * `/sections/*` paths are served here by calling the owning workers directly.
+	 */
+	ECON: Fetcher
+	ROOMS: Fetcher
+	DISCOVERY: Fetcher
 }
 
 /** Variables can be extended */

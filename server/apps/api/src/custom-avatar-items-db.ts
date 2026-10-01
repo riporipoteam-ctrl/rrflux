@@ -509,7 +509,91 @@ export async function searchCustomAvatarItems(
 		)
 		.bind(...binds)
 		.all<Row>()
-	return results.map(toDto)
+	const dtos = results.map(toDto)
+
+	// The Watch menu Store browses with `includeCoachItems=true`, but the D1
+	// `custom_avatar_item` table has no Coach (account 1) stock — the 3,306-item
+	// authentic catalog lives only as a static JSON. Fall back to the static
+	// catalog so the store categories aren't empty.
+	if (search.includeCoachItems === true && dtos.length === 0) {
+		return searchStaticCatalog(search)
+	}
+
+	return dtos
+}
+
+/** Outfit slot derived from an item's name when the catalog gives no slot. */
+function guessOutfitType(name: string): number {
+	const n = name.toLowerCase()
+	if (/\b(hat|cap|helmet|hood|beanie|head|hair|wig|crown|tiara|ears|antlers)\b/.test(n)) return 1 // Headwear
+	if (/\b(shirt|t-shirt|tee|jacket|coat|top|hoodie|sweater|vest|blouse)\b/.test(n)) return 2 // Tops
+	if (/\b(pants|shorts|skirt|jeans|trousers|leggings|bottoms)\b/.test(n)) return 3 // Bottoms
+	if (/\b(shoe|boot|sneaker| sandal|foot|feet|slipper)\b/.test(n)) return 4 // Footwear
+	if (/\b(belt|waist|fanny)\b/.test(n)) return 5 // Waist
+	if (/\b(glove|hand|mitt)\b/.test(n)) return 6 // Hands
+	if (/\b(backpack|back|wing|cape|shoulder)\b/.test(n)) return 7 // Shoulders & Back
+	if (/\b(beard|mustache|goatee|facial)\b/.test(n)) return 8 // Facial Hair
+	return 105 // default: custom shirt slot
+}
+
+/** Static catalog fallback for the Watch menu Store (see above). */
+// @ts-ignore - JSON module bundled by wrangler
+import minimalCatalog from './storefront-minimal.json'
+
+async function searchStaticCatalog(
+	search: CustomAvatarItemSearch
+): Promise<CustomAvatarItem[]> {
+	const catalog = minimalCatalog as Array<{
+		n: string
+		d: string
+		p: number
+		id: string
+		thumb: string
+	}>
+	if (!Array.isArray(catalog)) return []
+
+	const take = Math.min(Math.max(search.take ?? 50, 0), 50)
+	const skip = Math.max(search.skip ?? 0, 0)
+	const outfitTypes = search.outfitTypes ?? []
+	const needle = (search.searchQuery?.trim() ?? '').toLowerCase()
+
+	const items: CustomAvatarItem[] = []
+	for (const entry of catalog) {
+		const name = entry.n
+		if (!name) continue
+		if (needle && !name.toLowerCase().includes(needle)) continue
+
+		const outfitType = guessOutfitType(name)
+		if (outfitTypes.length > 0 && !outfitTypes.includes(outfitType)) continue
+
+		items.push({
+			CustomAvatarItemId: entry.id,
+			CreatorAccountId: 1,
+			Name: name,
+			Description: entry.d,
+			Price: entry.p,
+			Accessibility: 1,
+			ForceCannotPublish: false,
+			IsFeatured: false,
+			IsRecRoomApproved: true,
+			BaseAvatarItemId: null,
+			BaseAvatarItemColor: null,
+			DesignFilename: null,
+			ThumbnailImageFilename: entry.thumb,
+			CreatedAt: '2025-01-01T00:00:00Z',
+			ModifiedAt: '2025-01-01T00:00:00Z',
+			PreviewOrientation: 0,
+			OutfitType: outfitType,
+			CurrentSaves: [],
+			Tags: [],
+			CustomBadgeMetadata: null,
+			RankedEntityId: entry.id,
+			RankingContext: null,
+			PurchaseInfo: null,
+		})
+	}
+
+	return items.slice(skip, skip + take)
 }
 
 /**

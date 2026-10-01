@@ -232,21 +232,19 @@ describe('img endpoints', () => {
 		expect(new Uint8Array(await signed.arrayBuffer()).byteLength).toBe(real.byteLength)
 	})
 
-	it('serves the DefaultProfileImage.jpg fallback for a missing image', async () => {
+	it('serves a neutral transparent-PNG fallback for a missing image', async () => {
 		const res = await SELF.fetch(`${ORIGIN}/missing.png`)
 		expect(res.status).toBe(200)
-		expect(res.headers.get('content-type')).toMatch(/^image\/jpeg/)
+		expect(res.headers.get('content-type')).toMatch(/^image\/png/)
 		const body = new Uint8Array(await res.arrayBuffer())
-		// The blob-store miss falls through to the bundled default: byte-identical
-		// to the static asset served directly.
-		const bundled = new Uint8Array(
-			await (await SELF.fetch(`${ORIGIN}/DefaultProfileImage.jpg`)).arrayBuffer()
-		)
-		expect(body).toEqual(bundled)
-		// Real JPEG static asset: SOI marker + non-empty body.
-		expect(body.length).toBeGreaterThan(0)
-		expect(body[0]).toBe(0xff)
-		expect(body[1]).toBe(0xd8)
+		// The blob-store miss falls through to a generated 1x1 transparent PNG —
+		// an honest "no image", not a branded placeholder.
+		expect(body.length).toBe(67)
+		// PNG signature bytes.
+		expect(body[0]).toBe(0x89)
+		expect(body[1]).toBe(0x50)
+		expect(body[2]).toBe(0x4e)
+		expect(body[3]).toBe(0x47)
 	})
 
 	it('serves the default fallback when the blob store is not configured', async () => {
@@ -261,13 +259,14 @@ describe('img endpoints', () => {
 		const res = await app.request(`/${BLOB_KEY}`, {}, unconfigured)
 		expect(res.status).toBe(200)
 		const body = new Uint8Array(await res.arrayBuffer())
+		// Same neutral 1x1 transparent PNG fallback as a plain blob-store miss.
 		const fallback = new Uint8Array(
-			await (await SELF.fetch(`${ORIGIN}/DefaultProfileImage.jpg`)).arrayBuffer()
+			await (await SELF.fetch(`${ORIGIN}/missing.png`)).arrayBuffer()
 		)
 		expect(body).toEqual(fallback)
 	})
 
-	it('signs the DefaultProfileImage.jpg fallback with ?sig=p1', async () => {
+	it('signs the missing-image fallback with ?sig=p1', async () => {
 		const res = await SELF.fetch(`${ORIGIN}/missing.png?sig=p1`)
 		expect(res.status).toBe(200)
 

@@ -48,6 +48,15 @@ export type Env = SharedHonoEnv & {
 	 * Unset (or anything but "true") keeps the default verified behavior.
 	 */
 	TRUST_STEAM_TICKET_ID?: string
+	/**
+	 * Service bindings for the ns-host proxies (see auth.app.ts). The 2025 client
+	 * talks to exactly one backend host (this worker), so `/api/storefronts/*`,
+	 * `/rooms/*` and `/sections/*` are served here by calling the owning workers
+	 * directly via these bindings instead of HTTP subrequests.
+	 */
+	ECON: Fetcher
+	ROOMS: Fetcher
+	DISCOVERY: Fetcher
 }
 
 /** Variables can be extended */

@@ -18,7 +18,7 @@
 		{
 			"binding": "DB",
 			"database_name": "recflare",
-			"database_id": "local",
+			"database_id": "d08b35b7-ec2d-4730-90ea-9d217f84c4b5",
 			"migrations_dir": "migrations",
 			"migrations_table": "d1_migrations_auth"
 		}
@@ -46,12 +46,12 @@
 	"secrets_store_secrets": [
 		{
 			"binding": "JWT_SECRET",
-			"store_id": "local",
+			"store_id": "7d4feb60781e43039e9371b91af646f4",
 			"secret_name": "JWT_SECRET"
 		},
 		{
 			"binding": "META_APP_SECRET",
-			"store_id": "local",
+			"store_id": "7d4feb60781e43039e9371b91af646f4",
 			"secret_name": "META_APP_SECRET"
 		}
 	],

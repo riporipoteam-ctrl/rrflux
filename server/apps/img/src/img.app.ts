@@ -20,7 +20,8 @@ import type { App, Env } from './context'
 /** Key id the client uses to look up the public half of the signing key. */
 const SIGNATURE_KEY_ID = 'KEY:RSA:p1.rec.net'
 
-/** Static asset served (200) when the requested key is missing from the blob store. */
+/** Kept for reference: the well-known static key below. (The missing-key fallback is
+ * a generated 1x1 transparent PNG, not this asset.) */
 const FALLBACK_ASSET_PATH = '/DefaultProfileImage.jpg'
 
 /** Prefix extensionless keys resolve under in the shared `recflare-cdn` bucket. */
@@ -369,7 +370,7 @@ const app = new Hono<App>()
 // openapi.ts). `hide: true` keeps this route out of its own output.
 //
 // Registered BEFORE the `/:key{.+}` catch-all below: that route matches every path and
-// always returns a Response (the DefaultProfileImage.jpg fallback when nothing is
+// always returns a Response (the 1x1 transparent PNG fallback when nothing is
 // stored), so anything declared after it is unreachable. The spec is still complete —
 // `openAPIRouteHandler` walks `app.routes` at request time, after the catch-all has
 // been registered.
@@ -387,7 +388,8 @@ app.get(
 						'backend. Serves every image the client renders — profile photos, room thumbnails,',
 						'club banners and the photo feed — out of the Firestore blob store, with',
 						'bundled static assets (`static/`) taking precedence over stored blobs and',
-						'`DefaultProfileImage.jpg` served as the fallback when a key is missing. Keys',
+						'`/DefaultProfileImage.jpg` (now a neutral 1x1 white JPEG) as the default',
+					'when a key is missing. Keys',
 						'with an extension come from the `IMAGES` namespace; extensionless ones are',
 						'`storage` uploads and come from the shared `CDN_ASSETS` namespace under its',
 						'`image/` prefix. Optional center-crop and resize',
@@ -421,7 +423,7 @@ app.get(
 		description: [
 			'Serves the image stored under `key`, which may contain slashes for nested objects',
 			'(e.g. `Base/Clearcut.jpg`). A bundled static asset always wins over a stored blob of',
-			'the same key; when neither exists the bundled `DefaultProfileImage.jpg` is served',
+			'the same key; when neither exists a generated 1x1 transparent PNG is served',
 			'with a 200 rather than a 404, so the client never renders a broken image.',
 			'',
 			'Which blob-store namespace the key resolves in depends on its extension. A key with one (always',
@@ -518,7 +520,7 @@ app.get(
 			},
 		],
 		responses: {
-			200: imageBytes('The image bytes (or the DefaultProfileImage.jpg fallback)'),
+			200: imageBytes('The image bytes (or the 1x1 transparent PNG fallback)'),
 			206: imageBytes('A byte range of the stored image, when the request carried a `Range`'),
 			304: { description: 'If-None-Match matched the stored object etag; no body' },
 			400: { description: 'The key contained `..`; no body' },

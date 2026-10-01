@@ -37,6 +37,7 @@ import { generateToken, TOKEN_TTL_SECONDS, validateAndGetAccountId } from '@repo
 // The account-wide ban lives on a `report` row, whose table the api worker owns; its db
 // module is plain D1 queries with no runtime deps, so it imports cleanly here.
 import { banEvasionMatch, resolveBan } from '../../api/src/bans-db'
+import { buildEndpoints } from '../../ns/src/endpoints'
 import { verifyMetaNonce } from './meta-nonce'
 import {
 	CachedLogin,
@@ -66,7 +67,7 @@ import { parseSteamTicketIdentityUnverified, verifySteamTicket } from './steam-t
 
 import type { Context } from 'hono'
 import type { Account } from '@repo/domain'
-import type { App } from './context'
+import type { App, Env } from './context'
 import type { PlatformLink } from './platform-db'
 
 /** OAuth scopes granted by `/connect/token`. */
@@ -1425,6 +1426,54 @@ app.get(
 				},
 			},
 		})
+	)
+)
+
+// ---- ns-host service proxies ----------------------------------------------
+// The 2025 client talks to exactly one backend host: `ns.rec.net`, which
+// 2025Patch rewrites to this worker (the ApiHost in 2025patch.ini). The client
+// binary carries no other host literals, so service paths implemented by other
+// workers MUST be reachable here — otherwise the client gets 404s and renders
+// empty screens (empty Rec Center storefront, empty "Choose Base Room" picker).
+// These proxies call the owning workers directly through service bindings (see
+// `services` in wrangler.jsonc): no HTTP edge routing is involved, so there is
+// no Host-header or routing mismatch to go wrong.
+function proxyTo(getService: (env: Env) => Fetcher) {
+	return async (c: Context) => {
+		const url = new URL(c.req.url)
+		const target = `${url.pathname}${url.search}`
+		// Forward only the headers the upstream needs.
+		const headers = new Headers()
+		for (const name of ['authorization', 'content-type', 'accept', 'accept-language']) {
+			const value = c.req.header(name)
+			if (value) headers.set(name, value)
+		}
+		const init: RequestInit = { method: c.req.method, headers }
+		if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+			init.body = c.req.raw.body
+			// Required by the Fetch spec when the body is a stream.
+			;(init as Record<string, unknown>).duplex = 'half'
+		}
+		// The host is ignored by service bindings; only path+query route.
+		const res = await getService(c.env).fetch(`https://proxy.internal${target}`, init)
+		return new Response(res.body, { status: res.status, headers: res.headers })
+	}
+}
+
+app.all('/api/storefronts/*', proxyTo((env) => env.ECON))
+app.all('/rooms/*', proxyTo((env) => env.ROOMS))
+app.all('/sections/*', proxyTo((env) => env.DISCOVERY))
+
+// Service-discovery document: `{ label: host }` for every backend service, with
+// the real `fluxrec-*` hosts (the stock ns map advertises `api.`/`auth.`/
+// `econ.` subdomains that don't exist). Served here because THIS worker is the
+// ns host the game client actually talks to.
+app.get('/', (c) =>
+	c.json(
+		buildEndpoints(
+			'ripo-ripoteam.workers.dev',
+			JSON.stringify({ api: 'fluxrec-api', auth: 'fluxrec-auth', econ: 'fluxrec-econ' })
+		)
 	)
 )
 

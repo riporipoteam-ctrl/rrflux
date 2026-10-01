@@ -876,45 +876,51 @@ function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
 	// Add working thumbnail URLs from our img host. The 2023 client tries to load
 	// thumbnails from dead Rec Room CDN hosts (rec.net, unionassets.com) which causes
 	// a 6s DNS timeout hang then crash. Our img host serves the thumbnails.
-	const IMG_BASE = 'https://img.ripo-ripoteam.workers.dev/';
-	// Build lookup: AvatarItemId -> ThumbnailImage filename
-	const thumbMap = new Map<number, string>();
-	for (const item of avatarItemCatalog as Array<{AvatarItemId: number, ThumbnailImage: string}>) {
-		if (item.AvatarItemId && item.ThumbnailImage) {
-			thumbMap.set(item.AvatarItemId, item.ThumbnailImage);
-		}
-	}
+	const IMG_BASE = 'https://img.ripo-ripoteam.workers.dev/'
 	return items.map((item) => {
-		if (!item.GiftDrop) return item;
-		// Priority 1: Item already has ThumbnailImageName (e.g. star boxes) - convert to full URL
-		const existingThumb = (item.GiftDrop as any).ThumbnailImageName;
+		if (!item.GiftDrop) return item
+		const drop = item.GiftDrop as any
+		const name =
+			typeof drop.FriendlyName === 'string' ? drop.FriendlyName.trim().toLowerCase() : ''
+		let changed = false
+		const next: any = { ...drop }
+		// The client's Tooltip field is a plain string — a null leaks through from
+		// the captures and makes the client render nothing, so collapse it.
+		if (next.Tooltip == null) {
+			next.Tooltip = ''
+			changed = true
+		}
+		// Priority 1: item already has ThumbnailImageName (e.g. star boxes) — convert to full URL
+		const existingThumb = drop.ThumbnailImageName
 		if (existingThumb && typeof existingThumb === 'string' && existingThumb.length > 0) {
 			// Don't overwrite if ThumbnailImage is already a full URL
-			const current = (item.GiftDrop as any).ThumbnailImage;
+			const current = drop.ThumbnailImage
 			if (!current || !current.startsWith('http')) {
-				return {
-					...item,
-					GiftDrop: {
-						...item.GiftDrop,
-						ThumbnailImage: IMG_BASE + existingThumb,
-					},
-				};
+				next.ThumbnailImage = IMG_BASE + existingThumb
+				changed = true
 			}
-			return item;
+		} else if (name) {
+			// Priority 2: look the catalog thumbnail up by FriendlyName. (The old
+			// code keyed PurchasableItemId against the catalog's AvatarItemId,
+			// which never matches — captured GiftDrops don't carry AvatarItemId —
+			// so ~500 items got no image at all.)
+			const thumb = THUMBNAIL_BY_NAME.get(name)
+			if (thumb) {
+				next.ThumbnailImage = IMG_BASE + thumb
+				changed = true
+			}
+			// Repair AvatarItemDesc: the captures carry a human-readable
+			// description here which the client cannot resolve to an item; the
+			// catalog holds the real opaque desc the detail view needs.
+			const realDesc = DESC_BY_NAME.get(name)
+			if (realDesc && next.AvatarItemDesc !== realDesc) {
+				next.AvatarItemDesc = realDesc
+				changed = true
+			}
 		}
-		// Priority 2: Look up by PurchasableItemId in avatar catalog
-		const thumb = thumbMap.get(item.PurchasableItemId);
-		if (thumb) {
-			return {
-				...item,
-				GiftDrop: {
-					...item.GiftDrop,
-					ThumbnailImage: IMG_BASE + thumb,
-				},
-			};
-		}
-		return item;
-	});
+		if (!changed) return item
+		return { ...item, GiftDrop: next }
+	})
 }
 
 interface StoreItem {
@@ -5033,7 +5039,10 @@ const app = new Hono<App>({ strict: false })
 		}),
 		async (c) => {
 			const id = c.req.param('id')
-			const storefrontType = Number.parseInt(id, 10)
+			// Consult the alias map first (e.g. 'Storefront_Watch' → '3') before parsing
+			// as a number — the alias is a string id, not a numeric type.
+			const aliased = (STOREFRONT_ALIASES as Record<string, string>)[id]
+			const storefrontType = Number.parseInt(aliased ?? id, 10)
 			if (!Number.isFinite(storefrontType)) {
 				return c.json({ success: false, error: { message: 'not found' } }, 404)
 			}

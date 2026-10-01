@@ -5,10 +5,14 @@ import defaultAvatar from '../../static/default-avatar.json'
 
 import {
 	CURRENT_OUTFIT_SLOT,
+	applyLevelUps,
+	consumeGift,
 	createGift,
+	getGift,
 	getOutfit,
 	getOutfits,
 	getOutfitsByAccounts,
+	getPendingGifts,
 	inventionDescriptionRejection,
 	inventionLongDescriptionRejection,
 	inventionNameRejection,
@@ -339,10 +343,178 @@ function inventionIdQuery(c: Context<App>): number[] {
 	)
 }
 
+/**
+ * Open a player's gift box on the api worker: grant its contents and delete the
+ * box, exactly once. Mirrors the econ worker's `openGiftBox` — the grants and the
+ * delete commit in one D1 batch with `INSERT ... SELECT ... FROM received_gift
+ * WHERE id=? AND account_id=?` guards, so a racing double-open can't grant twice.
+ *
+ * Returns null when the box doesn't exist or isn't the caller's.
+ */
+async function openGiftBoxApi(
+	db: D1Database,
+	accountId: number,
+	giftId: number
+): Promise<{ granted: boolean } | null> {
+	const row = await db
+		.prepare('SELECT data FROM received_gift WHERE id = ?1 AND account_id = ?2')
+		.bind(giftId, accountId)
+		.first<{ data: string }>()
+	if (!row) return null
+	const content = JSON.parse(row.data) as Record<string, unknown>
+
+	// Legacy box: contents were granted at creation — just delete it.
+	if (content.GrantOnOpen !== true) {
+		await consumeGift(db, accountId, giftId)
+		return { granted: false }
+	}
+
+	const stmts: D1PreparedStatement[] = []
+	const consumable =
+		typeof content.ConsumableItemDesc === 'string' &&
+		content.ConsumableItemDesc !== '' &&
+		(typeof content.ConsumableCount === 'number' ? content.ConsumableCount : 0) > 0
+			? {
+					itemDesc: content.ConsumableItemDesc,
+					count: content.ConsumableCount as number,
+				}
+			: null
+
+	if (consumable) {
+		stmts.push(
+			db
+				.prepare(
+					'SELECT COALESCE(SUM(count), 0) AS total FROM consumable WHERE account_id = ?1 AND consumable_item_desc = ?2'
+				)
+				.bind(accountId, consumable.itemDesc)
+		)
+	}
+
+	const item = content.GrantedAvatarItem as Record<string, unknown> | null
+	if (item && typeof item.AvatarItemDesc === 'string') {
+		stmts.push(
+			db
+				.prepare(
+					`INSERT INTO inventory (account_id, avatar_item_desc, data)
+					SELECT ?1, ?2, ?3 FROM received_gift WHERE id = ?4 AND account_id = ?1
+					ON CONFLICT (account_id, avatar_item_desc) DO UPDATE SET data = ?3`
+				)
+				.bind(accountId, item.AvatarItemDesc, JSON.stringify(item), giftId)
+		)
+	}
+
+	const equipment = content.GrantedEquipment as Record<string, unknown> | null
+	if (equipment && typeof equipment.ModificationGuid === 'string') {
+		stmts.push(
+			db
+				.prepare(
+					`INSERT INTO equipment (account_id, equipment_modification_guid, data)
+					SELECT ?1, ?2, ?3 FROM received_gift WHERE id = ?4 AND account_id = ?1
+					ON CONFLICT (account_id, equipment_modification_guid) DO UPDATE SET
+					  data = json_set(?3, '$.Favorited',
+					    json(CASE WHEN json_extract(equipment.data, '$.Favorited') THEN 'true' ELSE 'false' END))`
+				)
+				.bind(accountId, equipment.ModificationGuid, JSON.stringify(equipment), giftId)
+		)
+	}
+
+	if (consumable) {
+		stmts.push(
+			db
+				.prepare(
+					`INSERT INTO consumable (account_id, consumable_item_desc, count, created_at)
+					SELECT ?1, ?2, ?3, ?4 FROM received_gift WHERE id = ?5 AND account_id = ?1
+					RETURNING id`
+				)
+				.bind(accountId, consumable.itemDesc, consumable.count, new Date().toISOString(), giftId)
+		)
+	}
+
+	const currencyAmount =
+		typeof content.Currency === 'number' && Number.isInteger(content.Currency) && content.Currency > 0
+			? content.Currency
+			: 0
+	const currencyType =
+		typeof content.CurrencyType === 'number' && Number.isInteger(content.CurrencyType)
+			? content.CurrencyType
+			: 2
+	if (currencyAmount > 0) {
+		stmts.push(
+			db
+				.prepare(
+					`INSERT INTO balance (account_id, currency_type, amount)
+					 SELECT ?1, ?2, ?3 FROM received_gift WHERE id = ?4 AND account_id = ?1
+					 ON CONFLICT (account_id, currency_type) DO UPDATE SET amount = amount + ?3`
+				)
+				.bind(accountId, currencyType, currencyAmount, giftId)
+		)
+	}
+
+	const xpAmount =
+		typeof content.Xp === 'number' && Number.isInteger(content.Xp) && content.Xp > 0
+			? content.Xp
+			: 0
+	if (xpAmount > 0) {
+		stmts.push(
+			db
+				.prepare(
+					`INSERT INTO progression (account_id, level, xp)
+					 SELECT ?1, 1, ?2 FROM received_gift WHERE id = ?3 AND account_id = ?1
+					 ON CONFLICT (account_id) DO UPDATE SET xp = progression.xp + excluded.xp`
+				)
+				.bind(accountId, xpAmount, giftId)
+		)
+		stmts.push(
+			db
+				.prepare(
+					`INSERT INTO xp_history (account_id, xp_delta)
+					 SELECT ?1, ?2 FROM received_gift WHERE id = ?3 AND account_id = ?1`
+				)
+				.bind(accountId, xpAmount, giftId)
+		)
+	}
+
+	// Deleted LAST: while this row exists every guard above may fire; once it's gone
+	// nothing can.
+	stmts.push(
+		db.prepare('DELETE FROM received_gift WHERE id = ?1 AND account_id = ?2').bind(giftId, accountId)
+	)
+	const results = await db.batch(stmts)
+
+	// A racing opener may have taken the box between our read and this batch — then
+	// the delete removed nothing and none of the grants fired. That's the harmless
+	// no-op re-open, not a grant to perform.
+	const deleted = results[results.length - 1]?.meta?.changes ?? 0
+	if (deleted === 0) {
+		return { granted: false }
+	}
+
+	// Apply level-ups if XP was granted.
+	if (xpAmount > 0) {
+		const progRow = await db
+			.prepare('SELECT level, xp FROM progression WHERE account_id = ?1')
+			.bind(accountId)
+			.first<{ level: number; xp: number }>()
+		if (progRow) {
+			const leveled = applyLevelUps(progRow.level, progRow.xp)
+			if (leveled.level !== progRow.level) {
+				await db
+					.prepare('UPDATE progression SET level = ?2, xp = ?3 WHERE account_id = ?1')
+					.bind(accountId, leveled.level, leveled.xp)
+					.run()
+			}
+		}
+	}
+
+	return { granted: true }
+}
+
 // ---- Avatar gifts ----------------------------------------------------------
-// The avatar read endpoints (`v4/items`, `v2`, `v2/set`, `v3/saved`, `v2/gifts`) and
-// gift-box consume live in the `econ` worker, which the client calls on the econ host
-// — not here. Only the gift `generate` action remains on this worker.
+// The 2025 client calls the API host for ALL avatar/gift endpoints — it has no
+// "Econ" service concept (verified from the client's own binary metadata). The
+// gift endpoints below are served here (on the api worker) so the client's
+// `Avatars.DownloadGiftPackages()` finds them. The econ worker serves the same
+// routes for backward compatibility, but the client never reaches it.
 export const avatarRoutes = new Hono<App>({ strict: false })
 	.post(
 		'/api/avatar/v2/gifts/generate',
@@ -421,6 +593,156 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 			})
 		}
 	)
+
+	// Pending avatar gifts for the player — the unopened gift boxes from their purchases
+	// and from other players. [Authorize]. The 2025 client calls this on the API host
+	// (it has no Econ service concept); the econ worker serves the same route for
+	// backward compatibility.
+	.get('/api/avatar/v2/gifts', async (c) => {
+		const id = await authedId(c)
+		if (id === null) return unauthorized(c)
+		return c.json(await getPendingGifts(c.env.DB, id))
+	})
+
+	// Open (consume) a gift box. [Authorize]. The client posts this on the API host
+	// after the box animation, form-encoded as `Id=<giftId>&UnlockedLevel=<n>`.
+	// Always answers 200 with the `{ error, success, value }` envelope — even with no
+	// token, a zero id, or a box that is already gone — because the client parses it
+	// to finish opening the box.
+	.post('/api/avatar/v2/gifts/consume', async (c) => {
+		const id = await authedId(c)
+		const body = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
+		const giftId = typeof body.Id === 'string' ? Number.parseInt(body.Id, 10) || 0 : 0
+		if (id !== null && giftId !== 0) {
+			const opened = await openGiftBoxApi(c.env.DB, id, giftId)
+			if (opened === null) {
+				// Nothing was consumed: either the box is already gone (harmless no-op)
+				// or it belongs to another player (forbidden).
+				const other = await getGift(c.env.DB, giftId)
+				if (other !== null && other.accountId !== id) return c.body(null, 403)
+			}
+		}
+		return c.json({ error: '', success: true, value: null })
+	})
+
+	// The 2025 client references `api/avatar/v3/gifts/generate`; alias it to the v2
+	// handler. [Authorize].
+	.post('/api/avatar/v3/gifts/generate', async (c) => {
+		const id = await authedId(c)
+		if (id === null) return unauthorized(c)
+		const body = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
+		const giftContext =
+			typeof body.GiftContext === 'string' ? Number.parseInt(body.GiftContext, 10) || 0 : 0
+		const message = typeof body.Message === 'string' ? body.Message : ''
+		const xp = typeof body.Xp === 'string' ? Number.parseInt(body.Xp, 10) || 0 : 0
+		const currency = intVar(c.env.GIFT_FALLBACK_TOKENS, 0)
+		const { id: giftId } = await createGift(c.env.DB, id, {
+			FromPlayerId: 1,
+			ConsumableItemDesc: '',
+			ConsumableCount: 0,
+			AvatarItemDesc: '',
+			FriendlyName: '',
+			AvatarItemType: 0,
+			EquipmentPrefabName: '',
+			EquipmentModificationGuid: '',
+			CurrencyType: 2,
+			Currency: currency,
+			Xp: xp,
+			PackageType: 0,
+			Message: message,
+			GiftRarity: 20,
+			Platform: -1,
+			PlatformsToSpawnOn: -1,
+			BalanceType: 0,
+			GiftContext: giftContext,
+		})
+		return c.json({
+			Id: giftId,
+			FromPlayerId: 1,
+			ConsumableItemDesc: '',
+			AvatarItemDesc: '',
+			FriendlyName: '',
+			AvatarItemType: 0,
+			EquipmentPrefabName: '',
+			EquipmentModificationGuid: '',
+			CurrencyType: 2,
+			Currency: currency,
+			Xp: xp,
+			Level: 0,
+			Platform: -1,
+			PlatformsToSpawnOn: -1,
+			BalanceType: 0,
+			GiftContext: giftContext,
+			GiftRarity: 20,
+			Message: message,
+		})
+	})
+
+	// Friendotron free gifts: `POST /api/freegifts/v1/sendmultiple`. [Authorize].
+	// The 2025 client's Friendotron sends free gifts to multiple recipients at once.
+	// The client sends `ToPlayerIds` (array) and an optional `Message`. Each recipient
+	// gets a gift box row via createGift (free-gift semantics — no charge). The real
+	// client rate-limits with "Come back tomorrow to send more gifts with Friendotron!"
+	// — we enforce a simple daily cap per sender.
+	.post('/api/freegifts/v1/sendmultiple', async (c) => {
+		const id = await authedId(c)
+		if (id === null) return unauthorized(c)
+
+		let body: Record<string, unknown> = {}
+		try {
+			body = await c.req.json()
+		} catch {
+			body = await c.req.parseBody().catch(() => ({}))
+		}
+
+		const toPlayerIds = Array.isArray(body.ToPlayerIds)
+			? (body.ToPlayerIds as unknown[]).filter((v) => Number.isInteger(v)).map((v) => v as number)
+			: []
+		const message = typeof body.Message === 'string' ? body.Message : ''
+
+		if (toPlayerIds.length === 0) {
+			return c.json({ error: 'No recipients', success: false, value: null }, 400)
+		}
+
+		// Daily cap: max 5 Friendotron gifts per sender per day (matches the client's
+		// "come back tomorrow" messaging).
+		const today = new Date().toISOString().split('T')[0]
+		const sentToday = await c.env.DB.prepare(
+			`SELECT COUNT(*) as cnt FROM received_gift WHERE json_extract(data, '$.FromPlayerId') = ?1
+			 AND json_extract(data, '$.GiftContext') = 9999 AND date(created_at) = ?2`
+		).bind(id, today).first<{ cnt: number }>()
+		if ((sentToday?.cnt ?? 0) + toPlayerIds.length > 5) {
+			return c.json({ error: 'Come back tomorrow to send more gifts with Friendotron!', success: false, value: null }, 429)
+		}
+
+		const sent: number[] = []
+		for (const toPlayerId of toPlayerIds.slice(0, 5)) {
+			if (toPlayerId === id) continue // can't gift yourself via Friendotron
+			const { id: giftId } = await createGift(c.env.DB, toPlayerId, {
+				FromPlayerId: id,
+				ConsumableItemDesc: '',
+				ConsumableCount: 0,
+				AvatarItemDesc: '',
+				FriendlyName: 'Friendotron Gift',
+				AvatarItemType: 0,
+				EquipmentPrefabName: '',
+				EquipmentModificationGuid: '',
+				CurrencyType: 2,
+				Currency: 0,
+				Xp: 0,
+				PackageType: 0,
+				Message: message,
+				GiftRarity: 20,
+				Platform: -1,
+				PlatformsToSpawnOn: -1,
+				BalanceType: 0,
+				GiftContext: 9999, // marks Friendotron origin for the daily cap
+			})
+			sent.push(giftId)
+		}
+
+		return c.json({ error: '', success: true, value: { sentGiftIds: sent } })
+	})
 
 	// A batch lookup of LOCKED avatar items — the items the client shows greyed out, so it
 	// posts the ids it wants the locked state for. Nothing here locks avatar items (the

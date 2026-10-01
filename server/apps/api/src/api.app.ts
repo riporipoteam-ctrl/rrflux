@@ -17,7 +17,10 @@ import { progressionRoutes } from './routes/progression'
 import { roomRoutes } from './routes/rooms'
 import { socialRoutes } from './routes/social'
 
-import type { App } from './context'
+import { buildEndpoints } from '../../ns/src/endpoints'
+
+import type { Context } from 'hono'
+import type { App, Env } from './context'
 
 /**
  * The Game API surface. Endpoints that would be backed by a database or on-disk
@@ -66,6 +69,53 @@ const app = new Hono<App>({ strict: false })
 	.route('/', imageRoutes)
 	.route('/', accountRoutes)
 	.route('/', adminRoutes)
+
+// ---- ns-host service proxies ----------------------------------------------
+// Older 2025patch.ini files point the game's ns host at THIS worker instead of
+// the auth worker. The 2025 client talks to exactly one backend host
+// (`ns.rec.net`, rewritten by 2025Patch) and its binary carries no other host
+// literals, so service paths implemented by other workers MUST be reachable
+// here too — otherwise the client gets 404s and renders empty screens (empty
+// Rec Center storefront, empty "Choose Base Room" picker). These proxies
+// These proxies call the owning workers directly through service bindings
+// (see `services` in wrangler.jsonc): no HTTP edge routing is involved, so
+// there is no Host-header or routing mismatch to go wrong.
+function proxyTo(getService: (env: Env) => Fetcher) {
+	return async (c: Context) => {
+		const url = new URL(c.req.url)
+		const target = `${url.pathname}${url.search}`
+		// Forward only the headers the upstream needs.
+		const headers = new Headers()
+		for (const name of ['authorization', 'content-type', 'accept', 'accept-language']) {
+			const value = c.req.header(name)
+			if (value) headers.set(name, value)
+		}
+		const init: RequestInit = { method: c.req.method, headers }
+		if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+			init.body = c.req.raw.body
+			// Required by the Fetch spec when the body is a stream.
+			;(init as Record<string, unknown>).duplex = 'half'
+		}
+		// The host is ignored by service bindings; only path+query route.
+		const res = await getService(c.env).fetch(`https://proxy.internal${target}`, init)
+		return new Response(res.body, { status: res.status, headers: res.headers })
+	}
+}
+
+app.all('/api/storefronts/*', proxyTo((env) => env.ECON))
+app.all('/rooms/*', proxyTo((env) => env.ROOMS))
+app.all('/sections/*', proxyTo((env) => env.DISCOVERY))
+
+// Service-discovery document with the real `fluxrec-*` hosts (see the auth
+// worker for the full rationale).
+app.get('/', (c) =>
+	c.json(
+		buildEndpoints(
+			'ripo-ripoteam.workers.dev',
+			JSON.stringify({ api: 'fluxrec-api', auth: 'fluxrec-auth', econ: 'fluxrec-econ' })
+		)
+	)
+)
 
 // The generated spec. Documentation only — no request is validated against it (see
 // openapi.ts). `hide: true` keeps this route out of its own output.
