@@ -4,6 +4,7 @@ import { useWorkersLogger } from 'workers-tagged-logger'
 
 import {
 	addXp,
+	applyLevelUps,
 	canManageRoomById,
 	consumeGift,
 	createGift,
@@ -84,7 +85,7 @@ import {
 	recordObjectiveProgress,
 } from './objective-db'
 import { buildRotation, rotationMapId, withWeeklyGift } from './challenge-rotation'
-import { buildRecCenterStorefront, repriceDeadCurrencyItems } from './storefront-rotation'
+import { repriceDeadCurrencyItems } from './storefront-rotation'
 import {
 	consumeConsumable,
 	getConsumables,
@@ -641,7 +642,11 @@ const SUBSCRIPTION_LEVEL_GOLD = 0
  */
 function plusPriceTokens(env: Record<string, unknown>): number | null {
 	const raw = env.PLUS_PRICE_TOKENS
-	if (raw === undefined || raw === null) return null
+	// Default 1000 tokens for 30 days of Flux Rec+. This is Flux Rec's own pricing
+	// (Rec Room never sold Plus for tokens — this is a Flux Rec-specific feature
+	// the operator requested). Override with PLUS_PRICE_TOKENS env var; set to 0
+	// to disable token purchases.
+	if (raw === undefined || raw === null) return 1000
 	const n = intVar(raw, -1)
 	return n >= 0 ? n : null
 }
@@ -1013,6 +1018,10 @@ interface GiftRequest {
 const STOREFRONT_ALIASES: Record<string, string> = {
 	// Watch UI Store page requests "Storefront_Watch" — map it to the general store (sf3).
 	'Storefront_Watch': '3',
+	// Rec Center (storefront 2, room 2) has no authentic catalog capture of its own —
+	// serve the full authentic main-store catalog (sf3/sf3-2025) instead of an invented
+	// subset. Remove this line if a real Rec Center capture ever lands in static/storefronts.
+	'2': '3',
 }
 
 /**
@@ -1061,17 +1070,8 @@ function storefrontAssetPath(id: string, build: number | null): string {
  * sf3-2025 is four, and a bulk purchase carries up to `BULK_PURCHASE_CAP` lines.
  */
 async function loadStorefront(c: Context<App>, storefrontType: number): Promise<Storefront | null> {
-	// Rec center storefront (type 2) uses the 24-hour dynamic rotation.
-	if (storefrontType === 2) {
-		const storefront = buildRecCenterStorefront() as unknown as Storefront
-		// Repair descs / add thumbnails exactly as the listing routes serve them, so
-		// a purchase grants the inventory row under the catalog's real AvatarItemDesc
-		// rather than the capture's human-readable text.
-		if (Array.isArray(storefront.StoreItems)) {
-			storefront.StoreItems = enrichWithThumbnails(storefront.StoreItems)
-		}
-		return storefront
-	}
+	// Note: storefront 2 (Rec Center) is aliased to 3 in STOREFRONT_ALIASES, so it flows
+	// through the normal asset path below and serves the full authentic catalog.
 	const build = await authedBuild(c)
 	const res = await c.env.ASSETS.fetch(
 		new URL(storefrontAssetPath(String(storefrontType), build), c.req.url)
@@ -1864,6 +1864,48 @@ export async function openGiftBox(
 				.bind(accountId, s.params[0], s.params[1], s.params[2], giftId)
 		)
 	}
+	// Currency and XP: the box's promised tokens/XP are credited here, atomically
+	// with the other grants. Without these statements a GrantOnOpen box's Currency/Xp
+	// fields were silently dropped on open.
+	const currencyAmount =
+		typeof content.Currency === 'number' && Number.isInteger(content.Currency) && content.Currency > 0
+			? content.Currency
+			: 0
+	const currencyType =
+		typeof content.CurrencyType === 'number' && Number.isInteger(content.CurrencyType)
+			? content.CurrencyType
+			: 2
+	if (currencyAmount > 0) {
+		stmts.push(
+			db
+				.prepare(
+					`INSERT INTO balance (account_id, currency_type, amount) VALUES (?1, ?2, ?3)
+					 ON CONFLICT (account_id, currency_type) DO UPDATE SET amount = amount + ?3`
+				)
+				.bind(accountId, currencyType, currencyAmount)
+		)
+	}
+	const xpAmount =
+		typeof content.Xp === 'number' && Number.isInteger(content.Xp) && content.Xp > 0
+			? content.Xp
+			: 0
+	if (xpAmount > 0) {
+		stmts.push(
+			db
+				.prepare(
+					`INSERT INTO progression (account_id, level, xp) VALUES (?1, 1, ?2)
+					 ON CONFLICT (account_id) DO UPDATE SET xp = progression.xp + excluded.xp`
+				)
+				.bind(accountId, xpAmount)
+		)
+		// Level-ups are applied after the batch via addXp's logic; the raw XP increment
+		// above is the atomic part. The xp_history log keeps xpEarnedToday accurate.
+		stmts.push(
+			db
+				.prepare('INSERT INTO xp_history (account_id, xp_delta) VALUES (?1, ?2)')
+				.bind(accountId, xpAmount)
+		)
+	}
 	// Deleted LAST: while this row exists every guard above may fire; once it's gone
 	// nothing can.
 	stmts.push(
@@ -1885,6 +1927,24 @@ export async function openGiftBox(
 		}
 	}
 
+	// Apply level-ups if XP was granted: the batch incremented raw XP, but the
+	// stored level needs recalculation via the level ladder.
+	if (xpAmount > 0) {
+		const progRow = await db
+			.prepare('SELECT level, xp FROM progression WHERE account_id = ?1')
+			.bind(accountId)
+			.first<{ level: number; xp: number }>()
+		if (progRow) {
+			const leveled = applyLevelUps(progRow.level, progRow.xp)
+			if (leveled.level !== progRow.level) {
+				await db
+					.prepare('UPDATE progression SET level = ?2, xp = ?3 WHERE account_id = ?1')
+					.bind(accountId, leveled.level, leveled.xp)
+					.run()
+			}
+		}
+	}
+
 	let at = 0
 	const preExistingCount = consumable
 		? Number((results[at++] as D1Result<{ total: number }>)?.results?.[0]?.total ?? 0)
@@ -1894,6 +1954,8 @@ export async function openGiftBox(
 	const consumableMappingId = consumable
 		? Number((results[at++] as D1Result<{ id: number }>)?.results?.[0]?.id ?? 0) || null
 		: null
+	// Currency/XP/xp_history INSERTs occupy result slots but carry no data to read;
+	// the DELETE is always last, read via results[results.length - 1] above.
 	return {
 		grantedAvatarItem: item ? (item as AvatarItem) : null,
 		grantedEquipment: equipment ? (equipment as Equipment) : null,
@@ -4922,17 +4984,9 @@ const app = new Hono<App>({ strict: false })
 		}),
 		async (c) => {
 			const id = c.req.param('id')
-			// Rec center storefront (id 2) uses the 24-hour dynamic rotation — 5 items,
-			// 3 Plus-exclusive, fresh every UTC midnight. See storefront-rotation.ts.
-			if (id === '2') {
-				const storefront = buildRecCenterStorefront() as { StoreItems: StoreItem[] }
-				return c.json({
-					...storefront,
-					StoreItems: enrichWithThumbnails(storefront.StoreItems),
-				})
-			}
 			// The same resolution `loadStorefront` uses, so what is browsed is what a purchase is
-			// checked against — see `storefrontAssetPath`.
+			// checked against — see `storefrontAssetPath`. (Id 2, the Rec Center, is aliased
+			// to the full authentic main-store catalog in STOREFRONT_ALIASES.)
 			const path = storefrontAssetPath(id, await authedBuild(c))
 			const res = await c.env.ASSETS.fetch(new URL(path, c.req.url))
 			if (!res.ok) return c.notFound()
@@ -4995,7 +5049,7 @@ const app = new Hono<App>({ strict: false })
 		describeRoute({
 			tags: ['Storefront'],
 			summary: 'Room storefront catalog (v4)',
-			description: 'Serves the room-specific storefront catalog. Room 2 (Rec Center) uses the 24-hour dynamic rotation; other original rooms serve their captured catalogs: paintball (rooms 10-11 → sf400), quest stores (room 12 GoldenTrophy → sf102, room 14 TheRiseofJumbotron → sf101, room 15 CrimsonCauldron → sf103, room 16 IsleOfLostSkulls → sf100), bowling (rooms 39-40 → sf500), stunt runner (rooms 41-42 → sf600).',
+			description: 'Serves the room-specific storefront catalog. Room 2 (Rec Center) has no authentic catalog of its own, so it serves the full authentic main-store catalog (aliased to storefront 3); other original rooms serve their captured catalogs: paintball (rooms 10-11 → sf400), quest stores (room 12 GoldenTrophy → sf102, room 14 TheRiseofJumbotron → sf101, room 15 CrimsonCauldron → sf103, room 16 IsleOfLostSkulls → sf100), bowling (rooms 39-40 → sf500), stunt runner (rooms 41-42 → sf600).',
 			parameters: [
 				{
 					name: 'id',
@@ -5012,14 +5066,14 @@ const app = new Hono<App>({ strict: false })
 		}),
 		async (c) => {
 			const id = c.req.param('id')
-			// Rec Center (room 2) uses the 24-hour dynamic rotation — 5 items,
-			// 3 Plus-exclusive, fresh every UTC midnight. See storefront-rotation.ts.
+			// Rec Center (room 2) has no authentic catalog of its own: serve the full
+			// authentic main-store catalog via loadStorefront (id 2 is aliased to 3 in
+			// STOREFRONT_ALIASES), so the in-world store shows the same real items —
+			// shirts and all — as the Watch-menu store, and purchases resolve.
 			if (id === '2') {
-				const storefront = buildRecCenterStorefront() as { StoreItems: StoreItem[] }
-				return c.json({
-					...storefront,
-					StoreItems: enrichWithThumbnails(storefront.StoreItems),
-				})
+				const storefront = await loadStorefront(c, 2)
+				if (!storefront) return c.notFound()
+				return c.json(storefront)
 			}
 			// Map original room IDs to their storefront catalog IDs. Room IDs and
 			// storefront IDs are different namespaces (e.g., Bowling is room 39
@@ -5744,15 +5798,14 @@ const app = new Hono<App>({ strict: false })
 		(c) => c.json([])
 	)
 
-	// Storefront "top today" items. Returns the rec center storefront rotation.
+	// Storefront "top today" items. Serves the Rec Center storefront catalog (which is
+	// the full authentic main-store catalog — see STOREFRONT_ALIASES).
 	.get(
 		'/api/storefronts/v1/toptoday',
 		listRoute('Storefront top-today items', 'Top today storefront'),
-		(c) => {
-			const storefront = buildRecCenterStorefront() as { StoreItems: StoreItem[] }
-			if (Array.isArray(storefront.StoreItems)) {
-				storefront.StoreItems = enrichWithThumbnails(storefront.StoreItems)
-			}
+		async (c) => {
+			const storefront = await loadStorefront(c, 2)
+			if (!storefront) return c.notFound()
 			return c.json(storefront)
 		}
 	)

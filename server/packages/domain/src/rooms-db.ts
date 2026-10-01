@@ -3408,8 +3408,8 @@ export async function getOrCreateDormRoom(db: D1Database, accountId: number): Pr
 		if (existing) {
 			// A previous attempt may have inserted the room row but died before the
 			// subroom; heal that so the caller always gets a usable dorm.
-			if (!existing.SubRooms || existing.SubRooms.length === 0) {
-				const subRoom = await insertSubRoom(db, existing.RoomId, {
+			if (!Array.isArray(existing.SubRooms) || existing.SubRooms.length === 0) {
+				const subRoom = await insertSubRoom(db, existing.RoomId as number, {
 					SubRoomId: 1,
 					UnitySceneId: '76d98498-60a1-430c-ab76-b54a29b7a163',
 					MaxPlayers: 4,

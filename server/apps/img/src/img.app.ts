@@ -524,21 +524,28 @@ app.get(
 		const ifNoneMatch = transform ? undefined : c.req.header('if-none-match')?.replace(/"/g, '')
 		const { binding, objectKey } = resolveObject(key)
 
-		// Serve the bundled DefaultProfileImage.jpg when the key is in neither static
-		// assets nor the blob store — so clients still get a valid image instead of a
-		// 404. Honour `?sig=p1` the same way so the fallback is signed like any other
-		// image. An unconfigured blob store (no Firestore credentials) lands here too:
-		// a read must never 500, it serves the default instead.
+		// Serve a 1x1 transparent PNG when the key is in neither static assets nor
+		// the blob store — an honest "no image" instead of a branded placeholder.
+		// The old DefaultProfileImage.jpg fallback showed Flux Rec branding on
+		// custom shirts and other items that simply have no image, which users
+		// reported as placeholder spam. A transparent pixel is the neutral
+		// stand-in: not invented art, just empty.
 		const serveFallback = async () => {
-			const res = await c.env.ASSETS.fetch(new URL(FALLBACK_ASSET_PATH, c.req.url)).then(
-				(asset) => serveStaticAsset(c.env, asset, transform, signing)
-			)
+			// 1x1 transparent PNG (67 bytes) — generated, not a branded asset.
+			const transparentPng = new Uint8Array([
+				137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+				0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137,
+				0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5,
+				0, 1, 13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+			])
+			const headers = new Headers()
+			headers.set('content-type', 'image/png')
+			headers.set('content-length', String(transparentPng.byteLength))
 			// The fallback is a stand-in for a missing key, not the real object: never
 			// cache it as immutable, or clients keep the wrong image for 30 days after
 			// the real upload lands under this key.
-			const headers = new Headers(res.headers)
 			headers.set('cache-control', 'public, max-age=60')
-			return new Response(res.body, { status: res.status, headers })
+			return new Response(transparentPng, { status: 200, headers })
 		}
 
 		let meta

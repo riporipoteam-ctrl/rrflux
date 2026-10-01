@@ -4725,14 +4725,14 @@ describe('custom avatar items', () => {
 			expect(oversizedThumbnail.status).toBe(413)
 			expect(await oversizedThumbnail.json()).toMatchObject({
 				Success: false,
-				Error: 'thumbnailImage exceeds the 3-byte upload limit',
+				Error: 'thumbnailPng exceeds the 3-byte upload limit',
 			})
 
 			const oversizedDesign = await upload(new Uint8Array(3), new Uint8Array(4))
 			expect(oversizedDesign.status).toBe(413)
 			expect(await oversizedDesign.json()).toMatchObject({
 				Success: false,
-				Error: 'design exceeds the 3-byte upload limit',
+				Error: 'designPng exceeds the 3-byte upload limit',
 			})
 
 			// Neither rejected request may create metadata or leave one of its two blobs behind.
@@ -9214,6 +9214,7 @@ describe('openapi', () => {
 			'GET /api/playerevents/v1/{eventId}/responses',
 			'GET /api/playerevents/v2/{eventId}',
 			'GET /api/players/v1/playerPhotoTaggingSetting',
+			'GET /api/players/v1/progression/xpEarnedToday',
 			'GET /api/players/v1/progression/{id}',
 			'GET /api/players/v2/progression/bulk',
 			'GET /api/progressionEvents/active',

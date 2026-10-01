@@ -226,7 +226,14 @@ export const gameplayRoutes = new Hono<App>({ strict: false })
 				'group, announcement and image strips. Served verbatim from a static blob.',
 			responses: { 200: json(JsonObject, 'The community board') },
 		}),
-		(c) => c.json(communityBoard)
+		(c) => {
+			// Videos are filtered out: the static blob carries Ripo Team promotional
+			// videos (YouTube links), not authentic Rec Room board content. The user
+			// explicitly requested videos not appear on boards. Served as empty
+			// rather than deleting the static data.
+			const { Videos, ...rest } = communityBoard as Record<string, unknown>
+			return c.json({ ...rest, Videos: [] })
+		}
 	)
 	// Circuit chip lists — the palettes the Maker Pen's circuit board groups its chips into
 	// (`/api/CircuitChipLists/Favorites`, `/api/CircuitChipLists/Recent`, and so on). The path

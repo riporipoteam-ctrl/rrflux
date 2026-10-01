@@ -35,6 +35,7 @@ import {
 	json,
 	JsonArray,
 	jsonBody,
+	JsonObject,
 	MessageDto,
 	MutualFriendDto,
 	RelationshipDto,
@@ -793,4 +794,92 @@ export const socialRoutes = new Hono<App>({ strict: false })
 			responses: { 200: json(JsonArray, 'An empty list') },
 		}),
 		(c) => c.json([])
+	)
+	// Player subscriptions — the "Subscribe" button on profiles. Subscribing follows
+	// a player's content (rooms, inventions). Persisted in `player_subscription`.
+	.post(
+		'/api/players/v1/:id/subscribe',
+		describeRoute({
+			tags: ['Social'],
+			summary: 'Subscribe to a player',
+			description:
+				'Subscribe to a player’s content (the Subscribe button on profiles). ' +
+				'Idempotent — subscribing twice is a no-op. Cannot subscribe to yourself.',
+			security: AUTHED,
+			responses: {
+				200: json(JsonObject, 'Subscribed'),
+				400: json(JsonObject, 'Invalid player id or subscribing to yourself'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const id = await authedId(c)
+			if (id === null) return unauthorized(c)
+			const targetId = Number.parseInt(c.req.param('id'), 10)
+			if (!Number.isInteger(targetId) || targetId <= 0) {
+				return c.json({ Success: false, Error: 'Invalid player id' }, 400)
+			}
+			if (targetId === id) {
+				return c.json({ Success: false, Error: 'Cannot subscribe to yourself' }, 400)
+			}
+			await c.env.DB.prepare(
+				'INSERT OR IGNORE INTO player_subscription (subscriber_id, subscribed_to_id) VALUES (?1, ?2)'
+			)
+				.bind(id, targetId)
+				.run()
+			return c.json({ Success: true })
+		}
+	)
+	.post(
+		'/api/players/v1/:id/unsubscribe',
+		describeRoute({
+			tags: ['Social'],
+			summary: 'Unsubscribe from a player',
+			description: 'Remove a player subscription. Idempotent.',
+			security: AUTHED,
+			responses: {
+				200: json(JsonObject, 'Unsubscribed'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const id = await authedId(c)
+			if (id === null) return unauthorized(c)
+			const targetId = Number.parseInt(c.req.param('id'), 10)
+			if (Number.isInteger(targetId) && targetId > 0) {
+				await c.env.DB.prepare(
+					'DELETE FROM player_subscription WHERE subscriber_id = ?1 AND subscribed_to_id = ?2'
+				)
+					.bind(id, targetId)
+					.run()
+			}
+			return c.json({ Success: true })
+		}
+	)
+	.get(
+		'/api/players/v1/:id/subscription',
+		describeRoute({
+			tags: ['Social'],
+			summary: 'Check subscription status',
+			description: 'Whether the caller is subscribed to the given player.',
+			security: AUTHED,
+			responses: {
+				200: json(JsonObject, '{ Subscribed: boolean }'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const id = await authedId(c)
+			if (id === null) return unauthorized(c)
+			const targetId = Number.parseInt(c.req.param('id'), 10)
+			if (!Number.isInteger(targetId) || targetId <= 0) {
+				return c.json({ Subscribed: false })
+			}
+			const row = await c.env.DB.prepare(
+				'SELECT 1 FROM player_subscription WHERE subscriber_id = ?1 AND subscribed_to_id = ?2'
+			)
+				.bind(id, targetId)
+				.first()
+			return c.json({ Subscribed: row !== null })
+		}
 	)

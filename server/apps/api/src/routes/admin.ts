@@ -8,6 +8,7 @@ import {
 	getAccountsByIds,
 	getGift,
 	getRoomById,
+	searchAccounts,
 	updateAccount,
 } from '@repo/domain'
 import { intVar, logger } from '@repo/hono-helpers'
@@ -875,6 +876,173 @@ export const adminRoutes = new Hono<App>({ strict: false })
 				username: account.username,
 				accountId: account.accountId,
 				giftId: id,
+			})
+		}
+	)
+
+	// ---- Player search ----------------------------------------------------------
+	// Prefix-search Flux Rec accounts by username (case-insensitive), for the
+	// Discord bot's "give <username> a rank" flows: the bot lists matches so the
+	// owner picks the right player instead of guessing an exact username. Only
+	// ever returns accounts that exist — there is no account creation here.
+	// Admin-key only.
+	.get(
+		'/api/admin/v1/players/search',
+		describeRoute({
+			tags: ['Admin'],
+			summary: 'Search Flux Rec players by username prefix',
+			description: [
+				'Case-insensitive username prefix search over existing accounts (max 10',
+				'matches, alphabetical). Feeds the Discord bot’s rank/Plus/ban flows so the',
+				'owner picks from real players. Never invents accounts. Admin-key only.',
+			].join(' '),
+			parameters: [
+				{
+					name: 'q',
+					in: 'query',
+					required: true,
+					schema: { type: 'string' },
+					description: 'Username prefix to search for (case-insensitive)',
+				},
+			],
+			responses: {
+				200: json(
+					z.object({
+						success: z.literal(true),
+						players: z.array(
+							z.object({
+								username: z.string(),
+								accountId: z.number(),
+								hasPlus: z.boolean(),
+								isModerator: z.boolean(),
+								isDeveloper: z.boolean(),
+							})
+						),
+					}),
+					'Matching players (up to 10)'
+				),
+				400: json(AdminError, 'Missing or empty q'),
+				401: json(AdminError, 'Missing or wrong admin key'),
+			},
+		}),
+		async (c) => {
+			const denied = requireAdminKey(c)
+			if (denied) return denied
+			const q = (c.req.query('q') ?? '').trim()
+			if (q === '') {
+				return c.json({ success: false as const, error: 'q is required' }, 400)
+			}
+			const matches = await searchAccounts(c.env.DB, q, 10)
+			return c.json({
+				success: true as const,
+				players: matches.map((a) => ({
+					username: a.username,
+					accountId: a.accountId,
+					hasPlus: a.hasPlus === true,
+					isModerator: a.isModerator === true,
+					isDeveloper: a.isDeveloper === true,
+				})),
+			})
+		}
+	)
+
+	// ---- Standalone voice ban ---------------------------------------------------
+	// Mute a player's voice WITHOUT banning their account: sets `voiceBanUntil`
+	// on the account, which the match worker enforces (match.app.ts) by refusing
+	// them a voice server from connection-info — they can play but not speak.
+	// `duration_minutes` 0 is permanent, positive is a timed voice ban that the
+	// enforcement check lifts on expiry, -1 removes the voice ban. The ban
+	// endpoints' `voice_ban` flag is the bundled variant; this is the surgical one.
+	// Admin-key only.
+	.post(
+		'/api/admin/v1/voiceban/set',
+		describeRoute({
+			tags: ['Admin'],
+			summary: 'Voice-ban a player (without banning their account)',
+			description: [
+				'Set or remove a standalone voice ban. 0 = permanent, a positive number =',
+				'timed (lifts on expiry), -1 = remove. The player keeps playing but gets no',
+				'voice server. Enforced by matchmaking via connection-info. Admin-key only.',
+			].join(' '),
+			requestBody: jsonBody(
+				UsernameBody.extend({
+					duration_minutes: z
+						.number()
+						.int()
+						.describe('0 = permanent voice ban, positive = minutes, -1 = remove the voice ban'),
+				}),
+				'Whose voice to ban and for how long'
+			),
+			responses: {
+				200: json(
+					z.object({
+						success: z.literal(true),
+						username: z.string(),
+						accountId: z.number(),
+						voiceBanned: z.boolean(),
+						voiceBanUntil: z.string().nullable(),
+					}),
+					'The voice-ban state now in force'
+				),
+				400: json(AdminError, 'Bad username or duration'),
+				401: json(AdminError, 'Missing or wrong admin key'),
+				404: json(AdminError, 'No account with that username'),
+			},
+		}),
+		async (c) => {
+			const denied = requireAdminKey(c)
+			if (denied) return denied
+			const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+			const username = typeof body.username === 'string' ? body.username.trim() : ''
+			const durationMinutes = body.duration_minutes
+			if (username === '') {
+				return c.json({ success: false as const, error: 'username is required' }, 400)
+			}
+			if (
+				typeof durationMinutes !== 'number' ||
+				!Number.isInteger(durationMinutes) ||
+				(durationMinutes < 0 && durationMinutes !== -1)
+			) {
+				return c.json(
+					{
+						success: false as const,
+						error: 'duration_minutes must be 0, a positive integer, or -1 to remove',
+					},
+					400
+				)
+			}
+			const account = await getAccountByUsername(c.env.DB, username)
+			if (!account) {
+				return c.json({ success: false as const, error: 'no such player' }, 404)
+			}
+			if (account.accountId === OPERATOR_ACCOUNT_ID) {
+				return c.json(
+					{ success: false as const, error: 'the owner account cannot be voice-banned' },
+					400
+				)
+			}
+			let voiceBanUntil: string | null = null
+			if (durationMinutes === -1) {
+				await c.env.DB.prepare(
+					`UPDATE account SET data = json_remove(data, '$.voiceBanUntil') WHERE account_id = ?1`
+				)
+					.bind(account.accountId)
+					.run()
+			} else {
+				voiceBanUntil =
+					durationMinutes === 0 ? NEVER_EXPIRES_ISO : new Date(Date.now() + durationMinutes * 60_000).toISOString()
+				await updateAccount(c.env.DB, account.accountId, { voiceBanUntil })
+			}
+			logger.info('admin voiceban set', {
+				targetAccountId: account.accountId,
+				durationMinutes,
+			})
+			return c.json({
+				success: true as const,
+				username: account.username,
+				accountId: account.accountId,
+				voiceBanned: voiceBanUntil !== null,
+				voiceBanUntil,
 			})
 		}
 	)

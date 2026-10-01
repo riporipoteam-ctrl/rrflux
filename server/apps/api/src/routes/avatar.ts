@@ -350,8 +350,8 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 			summary: 'Generate a gift box',
 			description:
 				'Mint the gift box a player earned (levelling up, a room reward, Friendotron). ' +
-				'With no EarnableRewards catalog this falls back to a fixed token gift ' +
-				'(GIFT_FALLBACK_TOKENS, default 50). The box IS persisted via createGift so it appears in ' +
+				'With no EarnableRewards catalog this creates an empty gift by default ' +
+				'(GIFT_FALLBACK_TOKENS defaults to 0 — no invented rewards). The box IS persisted via createGift so it appears in ' +
 				'`/api/avatar/v2/gifts` and can be opened through the consume endpoint.',
 			security: AUTHED,
 			requestBody: form(GenerateGiftRequest, 'Where the gift was earned'),
@@ -370,11 +370,11 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 			const message = typeof body.Message === 'string' ? body.Message : ''
 			const xp = typeof body.Xp === 'string' ? Number.parseInt(body.Xp, 10) || 0 : 0
 
-			// No EarnableRewards catalog exists (Rec Room's was server-side), so the
-			// fallback gift is the operator's chosen fixed token amount, configurable
-			// via GIFT_FALLBACK_TOKENS (default 50). The old random table of invented
-			// amounts is gone.
-			const currency = intVar(c.env.GIFT_FALLBACK_TOKENS, 50)
+			// No EarnableRewards catalog exists (Rec Room's was server-side). The fallback
+			// defaults to 0 (honest empty) — no invented token amounts. An operator with
+			// authentic reward data can set GIFT_FALLBACK_TOKENS, but the default ships
+			// empty rather than fabricating a 50-token reward.
+			const currency = intVar(c.env.GIFT_FALLBACK_TOKENS, 0)
 
 			// Persist the gift so it shows up in /api/avatar/v2/gifts and can be consumed.
 			const { id: giftId } = await createGift(c.env.DB, id, {

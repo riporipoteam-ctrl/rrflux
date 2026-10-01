@@ -27,6 +27,12 @@ export const PROGRESSION_SCHEMA_DDL: string[] = [
 		level INTEGER NOT NULL DEFAULT 1,
 		xp INTEGER NOT NULL DEFAULT 0
 	)`,
+	`CREATE TABLE IF NOT EXISTS xp_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		account_id INTEGER NOT NULL,
+		xp_delta INTEGER NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`,
 ]
 
 /**
@@ -179,6 +185,12 @@ export async function addXp(db: D1Database, accountId: number, xp: number): Prom
 		.first<{ level: number; xp: number }>()
 	if (row === null) return { progression: defaultProgression(accountId), levelsGained: 0 }
 
+	// Log the grant so xpEarnedToday can be computed from real data.
+	await db
+		.prepare('INSERT INTO xp_history (account_id, xp_delta) VALUES (?1, ?2)')
+		.bind(accountId, xp)
+		.run()
+
 	const leveled = applyLevelUps(row.level, row.xp)
 	const levelsGained = leveled.level - row.level
 	if (levelsGained > 0) {
@@ -193,9 +205,20 @@ export async function addXp(db: D1Database, accountId: number, xp: number): Prom
 	}
 }
 
-/** One player's progression, defaulted when they've earned nothing yet. */
-export async function getProgression(db: D1Database, accountId: number): Promise<Progression> {
+/** XP earned today (UTC) from the real grant history. 0 when nothing was earned. */
+export async function getXpEarnedToday(db: D1Database, accountId: number): Promise<number> {
 	const row = await db
+		.prepare(
+			`SELECT COALESCE(SUM(xp_delta), 0) AS total FROM xp_history
+			 WHERE account_id = ?1 AND date(created_at) = date('now')`
+		)
+		.bind(accountId)
+		.first<{ total: number }>()
+	return row?.total ?? 0
+}
+
+/** One player's progression, defaulted when they've earned nothing yet. */
+export async function getProgression(db: D1Database, accountId: number): Promise<Progression> {	const row = await db
 		.prepare('SELECT level, xp FROM progression WHERE account_id = ?1')
 		.bind(accountId)
 		.first<{ level: number; xp: number }>()

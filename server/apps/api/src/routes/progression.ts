@@ -6,6 +6,7 @@ import {
 	getPresence,
 	getProgression,
 	getProgressions,
+	getXpEarnedToday,
 	MessageType,
 } from '@repo/domain'
 import { logger } from '@repo/hono-helpers'
@@ -25,6 +26,7 @@ import {
 	intQuery,
 	json,
 	JsonArray,
+	JsonObject,
 	ProgressionDto,
 	ReputationDto,
 	UNAUTHORIZED_RESPONSE,
@@ -255,6 +257,27 @@ export const progressionRoutes = new Hono<App>({ strict: false })
 			responses: { 200: json(ReputationDto, 'The player’s reputation') },
 		}),
 		async (c) => c.json(await getReputation(c.env.DB, Number.parseInt(c.req.param('id'), 10)))
+	)
+	.get(
+		'/api/players/v1/progression/xpEarnedToday',
+		describeRoute({
+			tags: ['Progression'],
+			summary: 'XP earned today',
+			description:
+				'Total XP granted to the authenticated player today (UTC), computed from the ' +
+				'real xp_history grant log. Returns 0 when nothing was earned.',
+			security: AUTHED,
+			responses: {
+				200: json(JsonObject, 'XP earned today'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const id = await authedId(c)
+			if (id === null) return unauthorized(c)
+			const total = await getXpEarnedToday(c.env.DB, id)
+			return c.json({ XpEarnedToday: total })
+		}
 	)
 	.get(
 		'/api/players/v1/progression/:id',
