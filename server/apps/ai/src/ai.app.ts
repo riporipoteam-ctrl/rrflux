@@ -30,14 +30,16 @@ import type { App } from './context'
 
 /**
  * AI Worker. Serves the access checks and budget reads the client makes before offering
- * its AI features. Nothing here runs a model, so every answer is static — but not
- * uniformly a refusal, because the features fail differently:
+ * its AI features, plus the custom Roomie endpoints that actually make Roomie work:
+ * `/roomieai/chat` (free Pollinations chat, same model RipoBot uses), `/roomieai/speak`
+ * (free TTS) and `/roomieai/listen` (Cloudflare Whisper STT).
  *
  * - Game AI is a SERVER-side feature. This server cannot provide it, so both its reads are
  *   refused and the client hides the feature.
  * - Roomie runs on the CLIENT and only asks this service what it may spend, so the budget
  *   reads are granted in full. The session that would actually reach a model
- *   (`/realtime-session/create`) is where it stops.
+ *   (`/realtime-session/create`) is where it stops — we cannot mint free provider
+ *   credentials for the native realtime voice path, so that refusal is honest.
  * - Maker AI meters model usage in dollars. Nothing here bills, so every figure is zero.
  */
 
@@ -237,16 +239,20 @@ const app = new Hono<App>()
 	)
 
 	// Roomie chat. The client sends the player's message (from room chat text or
-	// transcribed mic audio); we run it through Cloudflare Workers AI (Llama 3.1 8B
-	// Instruct) with a Roomie system prompt and return the reply. This is what makes
-	// Roomie actually talk instead of being silent.
+	// transcribed mic audio); we run it through Pollinations' free anonymous text API
+	// — the exact same backend RipoBot uses (see ripobot's utils/ai.js
+	// chatCompleteBackup): POST https://text.pollinations.ai/openai with
+	// { model: 'openai', messages, max_tokens, temperature, private: true }, and a
+	// GET https://text.pollinations.ai/{prompt}?model=openai fallback on the same
+	// free tier. A Roomie system prompt keeps it in character. This is what makes
+	// Roomie actually talk instead of being silent. No key, no signup, zero spend.
 	.post(
 		'/roomieai/chat',
 		describeRoute({
 			tags: ['Roomie AI', '2025'],
 			summary: 'Chat with Roomie',
 			description:
-				'Sends the player message to the AI model (Cloudflare Workers AI, Llama 3.1) ' +
+				'Sends the player message to the AI model (Pollinations free chat, same as RipoBot) ' +
 				'with a Roomie system prompt and returns Roomie\'s reply text.',
 			security: AUTHED,
 			responses: {
@@ -281,48 +287,60 @@ const app = new Hono<App>()
 				{ role: 'user', content: message },
 			]
 
-			// Cloudflare Workers AI chat. Tries known-good text models in order and uses
-			// the first that answers — model availability varies by account/region, so
-			// the list is the resilience. Runs in the same datacenter as this worker,
-			// no external egress needed.
-			const CHAT_MODELS = [
-				'@cf/meta/llama-3.1-8b-instruct-fast',
-				'@cf/meta/llama-3.2-3b-instruct',
-				'@cf/meta/llama-3.2-1b-instruct',
-				'@cf/mistral/mistral-7b-instruct-v0.1',
-				'@cf/google/gemma-7b-it-lora',
-			]
-			try {
-				const ai = (
-					c.env as unknown as {
-						AI?: {
-							run: (
-								model: string,
-								input: unknown
-							) => Promise<{ response?: string }>
-						}
-					}
-				).AI
-				if (!ai) {
-					return c.json({ success: false, error: 'ai_not_configured' }, 503)
-				}
-				let reply = ''
-				for (const model of CHAT_MODELS) {
-					try {
-						const result = await ai.run(model, {
+			// Pollinations free anonymous chat — the same model RipoBot uses.
+			// Primary: RipoBot's exact pattern (OpenAI-compatible POST). Fallback: the
+			// GET text path on the same free tier (same model, different route) — the
+			// POST route has intermittent server-side hiccups, so the GET keeps Roomie
+			// answering. Both are keyless and cost nothing.
+			const chatWithPollinations = async (): Promise<string | null> => {
+				// 1) RipoBot's exact pattern: POST /openai
+				try {
+					const res = await fetch('https://text.pollinations.ai/openai', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							model: 'openai',
 							messages,
 							max_tokens: 256,
 							temperature: 0.8,
-						})
-						const text = (result.response || '').trim()
-						if (text) {
-							reply = text
-							break
+							private: true,
+						}),
+						signal: AbortSignal.timeout(30_000),
+					})
+					if (res.ok) {
+						const data = (await res.json()) as {
+							choices?: Array<{ message?: { content?: string } }>
 						}
-					} catch {
-						// try the next model
+						const reply = data?.choices?.[0]?.message?.content?.trim()
+						if (reply) return reply
 					}
+				} catch {
+					// fall through to the GET fallback below
 				}
+
+				// 2) GET fallback: prompt built from the conversation, same free model.
+				try {
+					const prompt = messages
+						.map((m) => `${m.role}: ${m.content}`)
+						.join('\n')
+						.slice(0, 4000)
+					const url =
+						'https://text.pollinations.ai/' +
+						encodeURIComponent(prompt) +
+						'?model=openai&private=true'
+					const res = await fetch(url, {
+						signal: AbortSignal.timeout(30_000),
+					})
+					if (!res.ok) return null
+					const text = (await res.text()).trim()
+					return text || null
+				} catch {
+					return null
+				}
+			}
+
+			try {
+				const reply = await chatWithPollinations()
 				if (!reply) {
 					return c.json({ success: false, error: 'ai_error' }, 502)
 				}
@@ -333,16 +351,21 @@ const app = new Hono<App>()
 		}
 	)
 
-	// Roomie voice (TTS). Converts Roomie's reply text to speech audio using the
-	// Pollinations free TTS API, so Roomie has a voice in-game.
+	// Roomie voice (TTS). Converts Roomie's reply text to speech audio (MP3) so
+	// Roomie has a voice in-game. Primary: Google Translate's free TTS endpoint (no
+	// key; ~200 chars per request) — verified returning valid MP3 audio 2026-10-01.
+	// Fallback: Pollinations openai-audio (GET https://text.pollinations.ai/{prompt}?
+	// model=openai-audio&voice=nova) — free and keyless, but the model was removed
+	// from the anonymous tier (404 as of 2026-10-01); kept as a fallback in case it
+	// comes back.
 	.post(
 		'/roomieai/speak',
 		describeRoute({
 			tags: ['Roomie AI', '2025'],
 			summary: 'Roomie text-to-speech',
 			description:
-				'Converts text to speech audio (MP3) for Roomie\'s voice using the free ' +
-				'Pollinations TTS API.',
+				'Converts text to speech audio (MP3) for Roomie\'s voice using free ' +
+				'TTS APIs (Google TTS primary, Pollinations TTS fallback).',
 			security: AUTHED,
 			responses: {
 				200: json(z.object({}).passthrough(), 'Audio data'),
@@ -364,16 +387,17 @@ const app = new Hono<App>()
 				return c.json({ success: false, error: 'empty_text' }, 400)
 			}
 
-			// Pollinations TTS: GET https://text.pollinations.ai/{prompt}?model=openai-audio&voice=nova
-			// Fallback: Google Translate's free TTS endpoint (no key; ~200 chars per request).
+			// Primary: Google Translate's free TTS (no key). ~200 chars per request,
+			// verified live 2026-10-01 (HTTP 200, valid MP3).
 			const voice = body.voice || 'nova'
-			const ttsUrl =
-				'https://text.pollinations.ai/' +
-				encodeURIComponent(text.slice(0, 500)) +
-				'?model=openai-audio&voice=' +
-				encodeURIComponent(voice)
 			try {
-				const res = await fetch(ttsUrl, { signal: AbortSignal.timeout(60_000) })
+				const gUrl =
+					'https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=' +
+					encodeURIComponent(text.slice(0, 200))
+				const res = await fetch(gUrl, {
+					headers: { 'User-Agent': 'Mozilla/5.0' },
+					signal: AbortSignal.timeout(30_000),
+				})
 				const ct = res.headers.get('content-type') || ''
 				if (res.ok && ct.includes('audio')) {
 					const audio = await res.arrayBuffer()
@@ -385,17 +409,20 @@ const app = new Hono<App>()
 					})
 				}
 			} catch {
-				// fall through to the Google TTS fallback below
+				// fall through to the Pollinations fallback below
 			}
 
+			// Fallback: Pollinations free TTS
+			// (GET https://text.pollinations.ai/{prompt}?model=openai-audio&voice=nova).
+			// The openai-audio model was removed from the anonymous tier (404 as of
+			// 2026-10-01), so this is kept only in case it returns.
+			const ttsUrl =
+				'https://text.pollinations.ai/' +
+				encodeURIComponent(text.slice(0, 500)) +
+				'?model=openai-audio&voice=' +
+				encodeURIComponent(voice)
 			try {
-				const gUrl =
-					'https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=' +
-					encodeURIComponent(text.slice(0, 200))
-				const res = await fetch(gUrl, {
-					headers: { 'User-Agent': 'Mozilla/5.0' },
-					signal: AbortSignal.timeout(30_000),
-				})
+				const res = await fetch(ttsUrl, { signal: AbortSignal.timeout(60_000) })
 				const ct = res.headers.get('content-type') || ''
 				if (!res.ok || !ct.includes('audio')) {
 					return c.json({ success: false, error: 'tts_unavailable' }, 502)
@@ -626,12 +653,15 @@ app.get(
 						'backend. The client checks here before offering any of its AI features: Game AI in a',
 						'room, the Roomie assistant, and Maker AI’s usage meter.',
 						'',
-						'No model runs behind this worker, so every answer is static — but they are not all',
-						'refusals, because the features fail at different points. Game AI is a server-side',
-						'feature this server cannot provide, so both its reads refuse. Roomie and Maker AI',
-						'only ask what the caller may SPEND, which nothing here meters, so those reads are',
-						'granted in full; the refusal lands instead on `POST /realtime-session/create`, the',
-						'one call whose real answer is a working credential rather than a description of one.',
+						'Roomie also talks through this worker: POST /roomieai/chat answers via the free',
+						'Pollinations chat API (the same model RipoBot uses), /roomieai/speak turns the',
+						'reply into MP3 audio, and /roomieai/listen transcribes mic audio with Whisper.',
+						'',
+						'Game AI is a server-side feature this server cannot provide, so both its reads',
+						'refuse. Roomie and Maker AI only ask what the caller may SPEND, which nothing here',
+						'meters, so those reads are granted in full; the refusal lands instead on',
+						'`POST /realtime-session/create`, the one call whose real answer is a working',
+						'credential rather than a description of one.',
 						'',
 						'The refusals are 200s carrying `success: false`, which is the shape the client',
 						'branches on — the worker exists so the client gets a definite answer on the host its',

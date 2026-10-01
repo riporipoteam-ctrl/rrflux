@@ -1,0 +1,32 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "ai",
+	"main": "src/ai.app.ts",
+	"compatibility_date": "2026-06-16",
+	"compatibility_flags": ["nodejs_compat"],
+	// Shared Secrets Store holding the HS256 JWT signing key. Every worker binds the
+	// same store as JWT_SECRET so tokens signed by `auth` verify here. Real store_id
+	// for the deploy config (the wrangler.jsonc "local" placeholder is replaced here).
+	"secrets_store_secrets": [
+		{
+			"binding": "JWT_SECRET",
+			"store_id": "7d4feb60781e43039e9371b91af646f4",
+			"secret_name": "JWT_SECRET"
+		}
+	],
+	// Workers AI binding for Whisper speech-to-text (Roomie hearing). Free tier.
+	"ai": {
+		"binding": "AI"
+	},
+	"upload_source_maps": true,
+	"observability": {
+		"logs": {
+			"enabled": true,
+			"head_sampling_rate": 1 // 100%
+		}
+	},
+	"vars": {
+		"ENVIRONMENT": "development", // overridden during deployment
+		"SENTRY_RELEASE": "unknown" // overridden during deployment
+	}
+}

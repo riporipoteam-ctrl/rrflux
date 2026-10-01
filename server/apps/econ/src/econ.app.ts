@@ -1879,10 +1879,11 @@ export async function openGiftBox(
 		stmts.push(
 			db
 				.prepare(
-					`INSERT INTO balance (account_id, currency_type, amount) VALUES (?1, ?2, ?3)
+					`INSERT INTO balance (account_id, currency_type, amount)
+					 SELECT ?1, ?2, ?3 FROM received_gift WHERE id = ?4 AND account_id = ?1
 					 ON CONFLICT (account_id, currency_type) DO UPDATE SET amount = amount + ?3`
 				)
-				.bind(accountId, currencyType, currencyAmount)
+				.bind(accountId, currencyType, currencyAmount, giftId)
 		)
 	}
 	const xpAmount =
@@ -1893,17 +1894,21 @@ export async function openGiftBox(
 		stmts.push(
 			db
 				.prepare(
-					`INSERT INTO progression (account_id, level, xp) VALUES (?1, 1, ?2)
+					`INSERT INTO progression (account_id, level, xp)
+					 SELECT ?1, 1, ?2 FROM received_gift WHERE id = ?3 AND account_id = ?1
 					 ON CONFLICT (account_id) DO UPDATE SET xp = progression.xp + excluded.xp`
 				)
-				.bind(accountId, xpAmount)
+				.bind(accountId, xpAmount, giftId)
 		)
 		// Level-ups are applied after the batch via addXp's logic; the raw XP increment
 		// above is the atomic part. The xp_history log keeps xpEarnedToday accurate.
 		stmts.push(
 			db
-				.prepare('INSERT INTO xp_history (account_id, xp_delta) VALUES (?1, ?2)')
-				.bind(accountId, xpAmount)
+				.prepare(
+					`INSERT INTO xp_history (account_id, xp_delta)
+					 SELECT ?1, ?2 FROM received_gift WHERE id = ?3 AND account_id = ?1`
+				)
+				.bind(accountId, xpAmount, giftId)
 		)
 	}
 	// Deleted LAST: while this row exists every guard above may fire; once it's gone

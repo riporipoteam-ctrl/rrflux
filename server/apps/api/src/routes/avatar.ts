@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { describeRoute } from 'hono-openapi'
 import { intVar } from '@repo/hono-helpers'
+import defaultAvatar from '../../static/default-avatar.json'
 
 import {
 	CURRENT_OUTFIT_SLOT,
@@ -1228,12 +1229,11 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 			const outfit = await getOutfit(c.env.DB, id, CURRENT_OUTFIT_SLOT)
 			if (outfit !== null) return c.json(outfit)
 
-			return c.json({
-				FaceFeatures: '',
-				HairColor: '',
-				OutfitSelections: '',
-				SkinColor: '',
-			})
+			// Return the default avatar instead of an empty envelope. The 2025 client
+			// cannot render empty avatar data and falls back to generating a random
+			// avatar locally on each launch. The default ensures a consistent avatar
+			// until the user saves their own customization.
+			return c.json(defaultAvatar)
 		}
 	)
 
