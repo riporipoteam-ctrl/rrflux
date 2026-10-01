@@ -146,6 +146,19 @@ pub fn hidden_tokio_command(program: &str) -> tokio::process::Command {
 pub fn launch_hidden(exe: &Path, args: &[&str]) {
     let mut cmd = std::process::Command::new(exe);
     cmd.args(args);
+    // v0.3.2: run the child with the exe's own folder as its working
+    // directory — exactly like double-clicking it in Explorer, and exactly
+    // like the official 2025Patch .bat (`cd /d "%~dp0"`). The injector
+    // resolves 2025Patch.dll / 2025patch.ini relative to its working
+    // directory: launched from anywhere else (setup temp dir after an
+    // auto-update, a shortcut with no WorkingDirectory, …) it silently
+    // failed to find the patch, the game booted unpatched, and the client
+    // died on the "An error occurred" screen with no 2025patch.log.
+    if let Some(parent) = exe.parent() {
+        if !parent.as_os_str().is_empty() {
+            cmd.current_dir(parent);
+        }
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

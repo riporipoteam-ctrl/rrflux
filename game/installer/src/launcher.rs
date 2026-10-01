@@ -328,17 +328,47 @@ fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> bool {
 /// 2025Patch.dll once GameAssembly.dll + Referee.dll are loaded), then start
 /// the game exe. Injector skips already-patched instances, so re-running is
 /// safe. Infallible: a missing exe shows a readable status instead of panicking.
+///
+/// v0.3.2: pre-flight check — the game is USELESS without the patch (it
+/// boots unpatched, hits the dead backend, and dies on "An error occurred"
+/// with no 2025patch.log). If Injector.exe / 2025Patch.dll / 2025patch.ini
+/// is missing (e.g. antivirus quarantine), say so plainly instead of
+/// launching into that guaranteed failure. Re-running setup restores them.
 pub fn launch_game(dir: &Path, progress: &Progress) {
     match crate::find_game_exe(dir) {
         Some(exe) => {
+            let injector = dir.join("Injector.exe");
+            let patch_dll = dir.join("2025Patch.dll");
+            let patch_ini = dir.join("2025patch.ini");
+            let mut missing = Vec::new();
+            if !injector.is_file() {
+                missing.push("Injector.exe");
+            }
+            if !patch_dll.is_file() {
+                missing.push("2025Patch.dll");
+            }
+            if !patch_ini.is_file() {
+                missing.push("2025patch.ini");
+            }
+            if !missing.is_empty() {
+                let msg = format!(
+                    "Patch files missing ({}): the game cannot reach Flux Rec without them. Re-run setup to restore them.",
+                    missing.join(", ")
+                );
+                eprintln!("[launcher] {msg}");
+                progress.set_status(&msg, 100);
+                std::thread::sleep(Duration::from_secs(10));
+                return;
+            }
             progress.set_status("Launching game\u{2026}", 100);
             // 2025Patch injector goes first — it attaches when the game loads.
-            let injector = dir.join("Injector.exe");
-            if injector.is_file() {
-                crate::stealth::launch_hidden(&injector, &[]);
-                // Brief beat so the injector's wait loop is up before the game.
-                std::thread::sleep(Duration::from_millis(500));
-            }
+            // (launch_hidden runs it with the game dir as its working dir,
+            // so it finds 2025Patch.dll / 2025patch.ini.)
+            println!("[launcher] starting injector: {}", injector.display());
+            crate::stealth::launch_hidden(&injector, &[]);
+            // Brief beat so the injector's wait loop is up before the game.
+            std::thread::sleep(Duration::from_millis(500));
+            println!("[launcher] starting game: {}", exe.display());
             crate::stealth::launch_hidden(&exe, &["+forcemode:screen"]);
             // Let the player see the "Launching game\u{2026}" state before the
             // window closes; the game outlives us.
