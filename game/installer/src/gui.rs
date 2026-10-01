@@ -59,7 +59,6 @@ mod imp {
     use windows::Win32::Foundation::*;
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::System::LibraryLoader::*;
-    use windows::Win32::System::Registry::*;
     use windows::Win32::System::SystemServices::*;
     use windows::Win32::UI::Controls::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
@@ -88,36 +87,17 @@ mod imp {
     /// Check if Windows is in dark mode for apps.
     /// Reads HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme
     /// Returns true for dark mode, false for light mode (default).
-    unsafe fn is_dark_mode() -> bool {
-        let key_path = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
-        let mut hkey = HKEY::default();
-        if RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            key_path,
-            0,
-            KEY_READ,
-            &mut hkey,
-        )
-        .is_err()
-        {
-            return false; // default to light mode
+    fn is_dark_mode() -> bool {
+        // Use winreg crate (already a dependency) instead of raw Win32 API.
+        let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+        let key_path = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+        match hkcu.open_subkey(key_path) {
+            Ok(key) => match key.get_value::<u32, _>("AppsUseLightTheme") {
+                Ok(v) => v == 0, // 0 = dark mode, 1 = light mode
+                Err(_) => false,
+            },
+            Err(_) => false, // default to light mode
         }
-        let mut value: u32 = 1; // default light
-        let mut size = std::mem::size_of::<u32>() as u32;
-        let mut value_type: u32 = 0;
-        let result = RegQueryValueExW(
-            hkey,
-            w!("AppsUseLightTheme"),
-            None,
-            Some(&mut value_type),
-            Some(&mut value as *mut u32 as *mut u8),
-            Some(&mut size),
-        );
-        let _ = RegCloseKey(hkey);
-        if result.is_err() {
-            return false;
-        }
-        value == 0 // 0 = dark mode, 1 = light mode
     }
 
     // Theme colors (COLORREF = 0x00BBGGRR).
