@@ -1,0 +1,60 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "img",
+	"main": "src/img.app.ts",
+	"compatibility_date": "2026-06-16",
+	"compatibility_flags": ["nodejs_compat"],
+	// Static fallback assets (e.g. room thumbnails in `static/`, DefaultProfileImage.jpg
+	// served when a key is missing). `run_worker_first` keeps the Worker in control of
+	// routing so image requests still hit the blob store / signing; assets are only
+	// fetched explicitly via the ASSETS binding.
+	"assets": {
+		"directory": "./static",
+		"binding": "ASSETS",
+		"run_worker_first": true
+	},
+	// Shared `recflare` D1 — the `img` worker owns the `images` metadata table
+	// (schema/migration here); the `api` worker writes/reads it. Its own
+	// migrations_table keeps its history separate on the shared database.
+	// The id is the real shared database (see apps/api/wrangler.deploy.jsonc).
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "recflare",
+			"database_id": "d08b35b7-ec2d-4730-90ea-9d217f84c4b5",
+			"migrations_dir": "migrations",
+			"migrations_table": "d1_migrations_img"
+		}
+	],
+	// Shared Secrets Store holding the HS256 JWT signing key. Every worker binds the
+	// same store as JWT_SECRET so tokens signed by `auth` verify here.
+	"secrets_store_secrets": [
+		{
+			"binding": "JWT_SECRET",
+			"store_id": "7d4feb60781e43039e9371b91af646f4",
+			"secret_name": "JWT_SECRET"
+		}
+	],
+	"upload_source_maps": true,
+	"observability": {
+		"logs": {
+			"enabled": true,
+			"head_sampling_rate": 1 // 100%
+		}
+	},
+	"vars": {
+		"ENVIRONMENT": "production",
+		"SENTRY_RELEASE": "unknown",
+		// Feature flag for REAL `?sig=p1` signing. OFF: the client only needs a
+		// Content-Signature header to EXIST, and never checks it, while signing for
+		// real buffers the whole blob into the isolate instead of serving the stored
+		// one and pays a SHA-1 over the full body plus an RSA-2048 private-key op on
+		// every edge-cache miss. So the header is filled with a placeholder derived
+		// from the object key (see stubSignature in src/img.app.ts). Flip to true if
+		// anything ever needs to verify it.
+		"IMG_SIGNING_ENABLED": false,
+		// Firestore project whose `flux_blobs` collection backs the shared blob store.
+		// Auth comes from the FIRESTORE_SA_JSON secret — never commit a key here.
+		"FIRESTORE_PROJECT_ID": "flux-544a6"
+	}
+}

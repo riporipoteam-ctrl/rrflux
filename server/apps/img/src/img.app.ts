@@ -14,7 +14,7 @@ import { withCleanSpec, withNotFound, withOnError } from '@repo/hono-helpers'
 
 import { imageBytes, json, ServiceStatus } from './openapi'
 
-import type { BlobBinding } from '@repo/blob-store'
+import type { BlobBinding, BlobRead } from '@repo/blob-store'
 import type { App, Env } from './context'
 
 /** Key id the client uses to look up the public half of the signing key. */
@@ -252,6 +252,35 @@ function applyStubSignature(headers: Headers, signing: Signing): void {
 /** Whether serving this response requires the full body in the isolate. */
 function needsBody(transform: Transform | null, signing: Signing): boolean {
 	return transform !== null || signing.mode === 'rsa'
+}
+
+/**
+ * Upper bound for a single blob-store round trip. Reads against Firestore normally
+ * land in a few hundred milliseconds; if one hasn't answered by now something is
+ * wrong upstream, and the request answers with the missing-image fallback instead
+ * of hanging the thumbnail.
+ */
+const BLOB_READ_TIMEOUT_MS = 8000
+
+/** Rejection reason when a blob-store read exceeds {@link BLOB_READ_TIMEOUT_MS}. */
+class BlobReadTimeoutError extends Error {
+	constructor() {
+		super('blob store read timed out')
+		this.name = 'BlobReadTimeoutError'
+	}
+}
+
+/**
+ * Race `promise` against a timer. The caller's `catch` treats a
+ * {@link BlobReadTimeoutError} like a missing blob and serves the fallback, so a
+ * stalled upstream degrades to a fast placeholder instead of a hanging request.
+ */
+function withBlobTimeout<T>(promise: Promise<T>): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const timeout = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new BlobReadTimeoutError()), BLOB_READ_TIMEOUT_MS)
+	})
+	return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
 /**
@@ -513,16 +542,23 @@ app.get(
 		// Prefer a bundled static asset when one exists for this key, before hitting
 		// the blob store. This lets us ship canonical images (e.g. room thumbnails in
 		// `static/`) that always win over whatever, if anything, is stored.
-		const staticAsset = await c.env.ASSETS.fetch(new URL(`/${key}`, c.req.url))
-		if (staticAsset.ok) {
-			return serveStaticAsset(c.env, staticAsset, transform, signing)
+		//
+		// Every bundled asset carries an extension, so an extensionless key — every
+		// room thumbnail, which is a `storage` upload resolved into `CDN_ASSETS` —
+		// can never match one: skip the assets subrequest for those instead of
+		// paying it on every room-thumbnail request.
+		const { binding, objectKey } = resolveObject(key)
+		if (binding === 'IMAGES') {
+			const staticAsset = await c.env.ASSETS.fetch(new URL(`/${key}`, c.req.url))
+			if (staticAsset.ok) {
+				return serveStaticAsset(c.env, staticAsset, transform, signing)
+			}
 		}
 
 		// Conditional requests only make sense for the untransformed object: a
 		// resized response carries no etag, so the client can never send a matching
 		// one. Skip the precondition when a transform is requested.
 		const ifNoneMatch = transform ? undefined : c.req.header('if-none-match')?.replace(/"/g, '')
-		const { binding, objectKey } = resolveObject(key)
 
 		// Serve a 1x1 transparent PNG when the key is in neither static assets nor
 		// the blob store — an honest "no image" instead of a branded placeholder.
@@ -548,22 +584,44 @@ app.get(
 			return new Response(transparentPng, { status: 200, headers })
 		}
 
-		let meta
+		// Read the blob (and its metadata, which rides along with the bytes) in a
+		// single blob-store round trip. The old code did a separate `headBlob` first
+		// and then `getBlob` re-read the same metadata document, doubling the
+		// Firestore reads on every cache miss. Every read is bounded by
+		// BLOB_READ_TIMEOUT_MS: a stalled upstream answers with the missing-image
+		// fallback instead of hanging the thumbnail.
+		//
+		// A `Range` still needs the object size up front to resolve against, so a
+		// ranged read of the untouched stream keeps the metadata-first lookup.
+		const rangeHeader = !needsBody(transform, signing) ? c.req.header('range') : null
+
+		let read: BlobRead | null
+		let parsedRange: { offset: number; length: number } | null = null
 		try {
-			meta = await headBlob(c.env, binding, objectKey)
+			if (rangeHeader) {
+				const meta = await withBlobTimeout(headBlob(c.env, binding, objectKey))
+				if (!meta) return serveFallback()
+				parsedRange = parseRangeHeader(rangeHeader, meta.size)
+				read = await withBlobTimeout(
+					getBlob(c.env, binding, objectKey, parsedRange ? { range: parsedRange } : undefined)
+				)
+			} else {
+				read = await withBlobTimeout(getBlob(c.env, binding, objectKey))
+			}
 		} catch (e) {
 			if (e instanceof BlobStoreNotConfiguredError) return serveFallback()
+			if (e instanceof BlobReadTimeoutError) return serveFallback()
 			throw e
 		}
-		if (!meta) return serveFallback()
+		if (!read) return serveFallback()
 
 		// The deterministic etag replaces the R2 `httpEtag` the old code served: a
 		// new upload under an existing key changes `updatedAt`, so conditional
 		// requests keep working.
-		const etag = await blobEtag(meta)
+		const etag = await blobEtag(read)
 
 		const headers = new Headers()
-		headers.set('content-type', meta.contentType)
+		headers.set('content-type', read.contentType)
 		headers.set('etag', etag)
 		headers.set('cache-control', CACHE_CONTROL)
 
@@ -577,8 +635,6 @@ app.get(
 		applyStubSignature(headers, signing)
 
 		if (needsBody(transform, signing)) {
-			const read = await getBlob(c.env, binding, objectKey)
-			if (!read) return serveFallback()
 			return finalizeImage(c.env, read.data, headers, transform, signing)
 		}
 
@@ -589,15 +645,7 @@ app.get(
 		// turns every `bytes=` value into a concrete range (malformed or unsatisfiable
 		// ones become the whole object), and such a request is always answered 206
 		// with a `Content-Range`, never a bare 200.
-		const parsedRange = parseRangeHeader(c.req.header('range'), meta.size)
-		const read = await getBlob(
-			c.env,
-			binding,
-			objectKey,
-			parsedRange ? { range: parsedRange } : undefined
-		)
-		if (!read) return serveFallback()
-
+		//
 		// Only the untouched stream can honour a range, so only it advertises the fact.
 		// The transformed and static-asset paths above serve the whole thing regardless,
 		// which is the legal answer to a range you cannot honour — but claiming
@@ -607,7 +655,7 @@ app.get(
 			headers.set('content-length', String(parsedRange.length))
 			headers.set(
 				'content-range',
-				`bytes ${parsedRange.offset}-${parsedRange.offset + parsedRange.length - 1}/${meta.size}`
+				`bytes ${parsedRange.offset}-${parsedRange.offset + parsedRange.length - 1}/${read.size}`
 			)
 			return new Response(read.data, { status: 206, headers })
 		}
