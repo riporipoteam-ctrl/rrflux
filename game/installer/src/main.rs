@@ -113,7 +113,11 @@ const PHOTON_CHAT_DEFAULT: &str = match option_env!("FLUXREC_PHOTON_CHAT") {
 };
 /// Stall detection: any stream silent this long is aborted and retried.
 const STALL_SECS: u64 = 60;
-const MAX_ATTEMPTS: u32 = 3;
+const MAX_ATTEMPTS: u32 = 5;
+/// Time to wait for the server to start responding (headers) before
+/// aborting the attempt and retrying. The client archive host can be
+/// very slow to first byte; without this the request hangs indefinitely.
+const FIRST_BYTE_TIMEOUT_SECS: u64 = 180;
 
 fn default_install_dir() -> PathBuf {
     let drive = std::env::var("SYSTEMDRIVE").unwrap_or_else(|_| "C:".to_string());
@@ -299,7 +303,13 @@ pub(crate) async fn download(
             req = req.header("Range", format!("bytes={resume_from}-"));
             println!("[{label}] resuming at byte {resume_from}.");
         }
-        let resp = req.send().await.map_err(|e| e.to_string())?;
+        let resp = tokio::time::timeout(
+            Duration::from_secs(FIRST_BYTE_TIMEOUT_SECS),
+            req.send(),
+        )
+        .await
+        .map_err(|_| "timed out waiting for server response (slow host)".to_string())?
+        .map_err(|e| e.to_string())?;
         let status = resp.status();
         if !(status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT) {
             let msg = format!("HTTP {status}");

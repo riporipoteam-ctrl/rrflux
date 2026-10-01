@@ -32,6 +32,8 @@ pub const SEGMENT_MIN_SIZE: u64 = 8 * 1024 * 1024;
 const SEGMENT_ATTEMPTS: u32 = 5;
 /// No data for this long -> the segment is stalled, abort and retry.
 const STALL_SECS: u64 = 60;
+/// Time to wait for response headers before aborting the attempt.
+const FIRST_BYTE_TIMEOUT_SECS: u64 = 180;
 
 /// Compute inclusive byte ranges for `n` segments covering `total` bytes.
 /// Pure and unit-tested.
@@ -83,8 +85,12 @@ fn file_ok(path: &Path, expected_md5: Option<&str>, expected_size: Option<u64>) 
 }
 
 async fn probe_range(client: &reqwest::Client, url: &str) -> bool {
-    let r = client.get(url).header("Range", "bytes=0-0").send().await;
-    matches!(r, Ok(resp) if resp.status() == reqwest::StatusCode::PARTIAL_CONTENT)
+    let r = tokio::time::timeout(
+        Duration::from_secs(FIRST_BYTE_TIMEOUT_SECS),
+        client.get(url).header("Range", "bytes=0-0").send(),
+    )
+    .await;
+    matches!(r, Ok(Ok(resp)) if resp.status() == reqwest::StatusCode::PARTIAL_CONTENT)
 }
 
 /// Download one byte range into `dest`, with retries and resume.
@@ -204,7 +210,13 @@ async fn fetch_single(
         p.set_stage(stage);
     }
     let part = dest.with_extension("part");
-    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let resp = tokio::time::timeout(
+        Duration::from_secs(FIRST_BYTE_TIMEOUT_SECS),
+        client.get(url).send(),
+    )
+    .await
+    .map_err(|_| "timed out waiting for server response (slow host)".to_string())?
+    .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("[{label}] HTTP {}", resp.status()));
     }
@@ -282,12 +294,13 @@ pub async fn download_segmented(
     let total: u64 = match expected_size {
         Some(s) => s,
         None => {
-            let r = client
-                .get(url)
-                .header("Range", "bytes=0-0")
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
+            let r = tokio::time::timeout(
+                Duration::from_secs(FIRST_BYTE_TIMEOUT_SECS),
+                client.get(url).header("Range", "bytes=0-0").send(),
+            )
+            .await
+            .map_err(|_| "timed out waiting for server response (slow host)".to_string())?
+            .map_err(|e| e.to_string())?;
             match r.headers().get("content-range").and_then(|v| v.to_str().ok()) {
                 Some(cr) => cr
                     .rsplit('/')
