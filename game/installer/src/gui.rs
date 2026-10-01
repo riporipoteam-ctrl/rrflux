@@ -88,16 +88,10 @@ mod imp {
     /// Reads HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme
     /// Returns true for dark mode, false for light mode (default).
     fn is_dark_mode() -> bool {
-        // Use winreg crate (already a dependency) instead of raw Win32 API.
-        let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-        let key_path = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
-        match hkcu.open_subkey(key_path) {
-            Ok(key) => match key.get_value::<u32, _>("AppsUseLightTheme") {
-                Ok(v) => v == 0, // 0 = dark mode, 1 = light mode
-                Err(_) => false,
-            },
-            Err(_) => false, // default to light mode
-        }
+        // Theme detection via registry was causing Windows build issues.
+        // Default to light mode for v0.3.4; theme detection can be added
+        // back once the build is stable.
+        false
     }
 
     // Theme colors (COLORREF = 0x00BBGGRR).
