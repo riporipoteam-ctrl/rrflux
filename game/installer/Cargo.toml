@@ -1,6 +1,6 @@
 [package]
 name = "fluxrec-installer"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 description = "Zero-touch Flux Rec setup: fetches the 2025 Rec Room client, 2025Patch and config, no Steam client needed."
 
@@ -29,6 +29,7 @@ sevenz-rust = "0.6"
 # `cargo check` on Linux stays light.
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+image = "0.25"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
