@@ -43,7 +43,9 @@ use std::time::{Duration, Instant};
 mod assets;
 mod bypass;
 mod defender; // AV hardening (2026-09-24): Defender exclusions, quarantine self-heal, Unblock-File
-// v0.3.0: BepInEx removed — 2025 client uses 2025Patch (native DLL injection).
+// v0.3.0: this module now manages 2025Patch (native DLL injection) instead
+// of BepInEx. Same public interface (verify/repair/sync) for launcher+defender.
+mod bepinex;
 mod transaction; // v0.2.0: transactional staging, atomic swap, rollback
 mod guide; // one-time guided Windows Security exclusion setup (2026-09-25)
 mod gui;
@@ -1002,7 +1004,7 @@ async fn refresh_components(
 async fn apply_common_components(
     target: &Path,
     client: &reqwest::Client,
-    backups: &mut transaction::BackupSet,
+    _backups: &mut transaction::BackupSet,
     ns_host: &str,
     _photon_rt: &str,
     _photon_voice: &str,
@@ -1074,7 +1076,7 @@ pub(crate) async fn fetch_patch2025_zip(
 }
 
 /// Install 2025Patch: extract DLL, injector, and write configured 2025patch.ini.
-fn install_patch2025(
+pub(crate) fn install_patch2025(
     target: &std::path::Path,
     patch_zip: &std::path::Path,
     ns_host: &str,

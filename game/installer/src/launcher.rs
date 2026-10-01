@@ -103,8 +103,8 @@ pub fn run_launcher(
     {
         let loader_state = crate::bepinex::verify_for_launcher(dir);
         if let Err(reason) = loader_state {
-            println!("[launcher] BepInEx broken ({reason}) — repairing.");
-            progress.set_status("Repairing BepInEx…", 8);
+            println!("[launcher] 2025Patch broken ({reason}) — repairing.");
+            progress.set_status("Repairing 2025Patch…", 8);
             let client = reqwest::Client::builder()
                 .user_agent("FluxRec-Setup/0.2.0")
                 .connect_timeout(Duration::from_secs(30))
@@ -115,20 +115,20 @@ pub fn run_launcher(
                         &c, dir, ns_host, photon_rt, photon_voice, photon_chat, &progress,
                     ))
                     .map_err(|e| {
-                        eprintln!("[launcher] BepInEx repair failed: {e}");
+                        eprintln!("[launcher] 2025Patch repair failed: {e}");
                         e
                     })
                     .is_ok(),
                 _ => false,
             };
             if !repaired {
-                progress.set_status("BepInEx repair failed — please re-run FluxRec-Setup.", 100);
+                progress.set_status("2025Patch repair failed — please re-run FluxRec-Setup.", 100);
                 std::thread::sleep(Duration::from_secs(6));
                 progress.done();
                 let _ = gui_thread.join();
                 std::process::exit(1);
             }
-            println!("[launcher] BepInEx repaired.");
+            println!("[launcher] 2025Patch repaired.");
         }
     }
 

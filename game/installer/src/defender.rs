@@ -369,12 +369,9 @@ pub fn describe_problems(problems: &[QuarantineProblem]) -> String {
 pub fn verify_quarantine_targets(dir: &Path, _ns_host: &str) -> Vec<QuarantineProblem> {
     let mut problems = Vec::new();
 
-    // 1. Redirect plugin — the #1 quarantine target (unsigned .NET DLL).
-    // v0.2.6: BepInEx layout (FluxLoader removed).
-    let plugin = dir
-        .join("BepInEx")
-        .join("plugins")
-        .join("RecNetPlugin.dll");
+    // 1. 2025Patch DLL — the #1 quarantine target (unsigned native DLL).
+    // v0.3.0: 2025 client (no BepInEx) — patch lives next to the exe.
+    let plugin = dir.join("2025Patch.dll");
     if !std::fs::metadata(&plugin).map(|m| m.len() > 0).unwrap_or(false) {
         problems.push(QuarantineProblem::PluginDllMissing);
     }
@@ -402,32 +399,36 @@ pub fn verify_quarantine_targets(dir: &Path, _ns_host: &str) -> Vec<QuarantinePr
     problems
 }
 
-/// Re-install the redirect plugin DLL from the embedded copy and unblock it.
-/// Returns true when the DLL is present and non-empty afterwards.
+/// Re-install the 2025Patch files from the release zip and unblock them.
+/// Returns true when 2025Patch.dll is present and non-empty afterwards.
 async fn repair_plugin_dll(
-    _client: &reqwest::Client,
+    client: &reqwest::Client,
     dir: &Path,
+    ns_host: &str,
     progress: &crate::progress::Progress,
 ) -> bool {
-    // v0.2.6: BepInEx layout — plugins live under BepInEx/plugins/.
-    let plugins_dir = dir.join("BepInEx").join("plugins");
-    if std::fs::create_dir_all(&plugins_dir).is_err() {
-        return false;
-    }
-    let dest = plugins_dir.join("RecNetPlugin.dll");
-    // DO NOT delete first — if the write fails after deletion, the file is
-    // gone and we can't recover. Just overwrite directly.
-    progress.set_stage("Repairing Flux Rec plugin…");
-    // v0.2.6: use the embedded BepInEx plugin build.
-    match std::fs::write(&dest, crate::bepinex::RECNET_PLUGIN_DLL) {
+    // v0.3.0: 2025 client — the "plugin" is 2025Patch.dll next to the exe
+    // (no BepInEx). Re-download the patch zip and reinstall.
+    progress.set_stage("Repairing 2025Patch…");
+    let patch_zip = match crate::fetch_patch2025_zip(client, progress).await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[patch-repair] download failed: {}", e);
+            return false;
+        }
+    };
+    let res = crate::install_patch2025(dir, &patch_zip, ns_host, progress);
+    let _ = std::fs::remove_file(&patch_zip);
+    match res {
         Ok(()) => {
+            let dest = dir.join("2025Patch.dll");
             unblock_file(&dest);
             std::fs::metadata(&dest)
                 .map(|m| m.len() > 0)
                 .unwrap_or(false)
         }
         Err(e) => {
-            eprintln!("[plugin-repair] failed: {}", e);
+            eprintln!("[patch-repair] failed: {}", e);
             false
         }
     }
@@ -456,7 +457,7 @@ pub async fn repair_quarantine_targets(
     for problem in problems {
         let fixed = match problem {
             QuarantineProblem::PluginDllMissing => {
-                repair_plugin_dll(client, dir, progress).await
+                repair_plugin_dll(client, dir, ns_host, progress).await
             }
             QuarantineProblem::HostsEntryMissing => {
                 progress.set_stage("Repairing network configuration…");
