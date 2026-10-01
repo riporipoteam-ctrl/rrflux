@@ -574,10 +574,10 @@ fn create_shortcut(
     }
 }
 
-/// Game exe: the mirror ships RecRoom.exe (capitalized). Fall back to
-/// lowercase for robustness.
+/// Game exe: v0.3.0 ships the 2025 client (`Recroom_Release.exe`). Fall back
+/// to the 2023 name for robustness.
 pub(crate) fn find_game_exe(dir: &Path) -> Option<PathBuf> {
-    for name in ["RecRoom.exe", "recroom.exe"] {
+    for name in ["Recroom_Release.exe", "RecRoom.exe", "recroom.exe"] {
         let p = dir.join(name);
         if p.exists() {
             return Some(p);

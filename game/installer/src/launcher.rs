@@ -319,13 +319,22 @@ fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> bool {
     }
 }
 
-/// Spawn `RecRoom.exe` with no console window, showing
-/// "Launching game\u{2026}" on the progress handle. Infallible: a missing exe
-/// shows a readable status instead of panicking.
+/// Spawn the game with no console window. v0.3.0: 2025 client flow —
+/// start `Injector.exe` FIRST (it waits for the game process, then injects
+/// 2025Patch.dll once GameAssembly.dll + Referee.dll are loaded), then start
+/// the game exe. Injector skips already-patched instances, so re-running is
+/// safe. Infallible: a missing exe shows a readable status instead of panicking.
 pub fn launch_game(dir: &Path, progress: &Progress) {
     match crate::find_game_exe(dir) {
         Some(exe) => {
             progress.set_status("Launching game\u{2026}", 100);
+            // 2025Patch injector goes first — it attaches when the game loads.
+            let injector = dir.join("Injector.exe");
+            if injector.is_file() {
+                crate::stealth::launch_hidden(&injector, &[]);
+                // Brief beat so the injector's wait loop is up before the game.
+                std::thread::sleep(Duration::from_millis(500));
+            }
             crate::stealth::launch_hidden(&exe, &["+forcemode:screen"]);
             // Let the player see the "Launching game\u{2026}" state before the
             // window closes; the game outlives us.
