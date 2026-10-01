@@ -46,7 +46,8 @@ pub enum BypassState {
 }
 
 fn plug_dir(dir: &Path) -> std::path::PathBuf {
-    dir.join("RecRoom_Data").join("Plugins").join("x86_64")
+    // v0.3.1: 2025 client layout. (Was `RecRoom_Data` for the 2023 client.)
+    dir.join("Recroom_Release_Data").join("Plugins").join("x86_64")
 }
 
 /// Inspect the install dir and report the bypass state. Pure filesystem

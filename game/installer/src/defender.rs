@@ -489,11 +489,13 @@ pub async fn repair_quarantine_targets(
     }
     // Re-apply the defenses that keep these files alive.
     ensure_defender_exclusions(dir);
-    // v0.2.6: BepInEx layout.
-    unblock_file(&dir.join("BepInEx").join("plugins").join("RecNetPlugin.dll"));
+    // v0.3.1: 2025 client — unblock the patch + injector + bypass DLL
+    // (was BepInEx/RecNetPlugin + RecRoom_Data paths for the 2023 client).
+    unblock_file(&dir.join("2025Patch.dll"));
+    unblock_file(&dir.join("Injector.exe"));
     unblock_file(
         &dir
-            .join("RecRoom_Data")
+            .join("Recroom_Release_Data")
             .join("Plugins")
             .join("x86_64")
             .join("steam_api64.dll"),
@@ -660,14 +662,13 @@ mod tests {
     fn verify_passes_plugin_when_present() {
         let d = std::env::temp_dir().join("fluxrec-defender-test-present");
         let _ = std::fs::remove_dir_all(&d);
-        // v0.2.6: BepInEx layout.
-        let plug = d.join("BepInEx").join("plugins");
-        std::fs::create_dir_all(&plug).unwrap();
-        std::fs::write(plug.join("RecNetPlugin.dll"), b"fake-dll").unwrap();
+        // v0.3.0+: 2025 client — the "plugin" is 2025Patch.dll next to the exe.
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("2025Patch.dll"), b"fake-dll").unwrap();
         let problems = verify_quarantine_targets(&d, "127.0.0.1");
         assert!(!problems.contains(&QuarantineProblem::PluginDllMissing));
         // A 0-byte file counts as missing too (quarantine remnant).
-        std::fs::write(plug.join("RecNetPlugin.dll"), b"").unwrap();
+        std::fs::write(d.join("2025Patch.dll"), b"").unwrap();
         let problems = verify_quarantine_targets(&d, "127.0.0.1");
         assert!(problems.contains(&QuarantineProblem::PluginDllMissing));
         let _ = std::fs::remove_dir_all(&d);

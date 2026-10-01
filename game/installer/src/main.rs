@@ -574,10 +574,14 @@ fn create_shortcut(
     }
 }
 
-/// Game exe: v0.3.0 ships the 2025 client (`Recroom_Release.exe`). Fall back
-/// to the 2023 name for robustness.
+/// Game exe: v0.3.1+ ships ONLY the 2025 client (`Recroom_Release.exe`).
+/// The 2023 name (`RecRoom.exe`) is deliberately NOT matched anymore:
+/// v0.3.0 treated a stale 2023 install as a valid game, skipped the 2025
+/// client download, overlaid 2025Patch onto the 2023 tree, and launched the
+/// OLD client with its BepInEx stack (black screen on Armin's PC, no
+/// 2025patch.log). A 2023 tree is never a valid 2025 install.
 pub(crate) fn find_game_exe(dir: &Path) -> Option<PathBuf> {
-    for name in ["Recroom_Release.exe", "RecRoom.exe", "recroom.exe"] {
+    for name in ["Recroom_Release.exe", "recroom_release.exe"] {
         let p = dir.join(name);
         if p.exists() {
             return Some(p);
@@ -586,13 +590,52 @@ pub(crate) fn find_game_exe(dir: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Detect a leftover 2023-era install in `dir`: the old exe name, the
+/// BepInEx loader, or the Doorstop proxy DLL. Used to trigger the clean
+/// migration path (quarantine the old tree, fresh-install 2025) instead of
+/// the upgrade path, which must never run against a 2023 tree.
+pub(crate) fn is_2023_install(dir: &Path) -> bool {
+    dir.join("RecRoom.exe").exists()
+        || dir.join("recroom.exe").exists()
+        || dir.join("BepInEx").is_dir()
+        || dir.join("winhttp.dll").exists()
+        || dir.join("doorstop_config.ini").exists()
+}
+
 /// Upgrade-mode decision (pure): skip the ~3.8GB client.zip download +
-/// extract when the game exe is already present in the dir. Re-running setup
-/// then only repairs/refreshes the Steam bypass, logo bundle, BepInEx,
-/// plugin, config, and shortcuts in place — never re-downloading the client,
-/// and never wiping the dir.
+/// extract only when a real 2025 install (`Recroom_Release.exe`) is already
+/// present in the dir. A 2023 tree (old exe / BepInEx / Doorstop files)
+/// NEVER counts — it takes the migration path instead.
 pub(crate) fn should_skip_client_download(dir: &Path) -> bool {
     find_game_exe(dir).is_some()
+}
+
+/// Quarantine a stale 2023 install before a clean 2025 migration: rename
+/// the whole tree to `<dir>.2023-backup` (kept, never deleted) so the fresh
+/// 2025 install lands in a guaranteed-clean directory. Returns the backup
+/// path on success.
+fn quarantine_2023_tree(dir: &Path) -> Result<PathBuf, String> {
+    let base = dir.as_os_str().to_owned();
+    for i in 0..100 {
+        let mut name = base.clone();
+        if i == 0 {
+            name.push(".2023-backup");
+        } else {
+            name.push(format!(".2023-backup-{i}"));
+        }
+        let backup = PathBuf::from(name);
+        if backup.exists() {
+            continue;
+        }
+        std::fs::rename(dir, &backup)
+            .map_err(|e| format!("could not quarantine old 2023 install: {e}"))?;
+        println!(
+            "[migrate] quarantined 2023 tree -> {} (kept, not deleted).",
+            backup.display()
+        );
+        return Ok(backup);
+    }
+    Err("could not find a free .2023-backup name".to_string())
 }
 
 fn create_shortcuts(dir: &Path) -> Result<(), String> {
@@ -804,7 +847,20 @@ async fn run_install(
     // in a staging directory and atomically swap it into place; upgrades
     // refresh components in place with per-file backups and rollback.
     // The live directory is NEVER deleted first.
+    //
+    // v0.3.1: the upgrade path only ever runs on a REAL 2025 install.
+    // A 2023-era tree (old exe / BepInEx / Doorstop) is quarantined aside
+    // first, then 2025 is fresh-installed into the clean dir. Upgrading a
+    // 2023 tree in place is what bricked v0.3.0 (black screen, old BepInEx
+    // stack launching instead of the 2025 client).
     if find_game_exe(dir).is_none() {
+        if is_2023_install(dir) {
+            println!("[install] 2023-era install detected — migrating to a clean 2025 tree.");
+            progress.set_stage("Migrating…");
+            progress.set_detail("Moving the old 2023 install aside (kept as backup)…".to_string());
+            quarantine_2023_tree(dir)?;
+            progress.set_detail(String::new());
+        }
         println!("[install] fresh install — building in staging.");
         fresh_install(
             dir,
@@ -971,8 +1027,9 @@ async fn refresh_components(
     progress: &progress::Progress,
 ) -> Result<(), String> {
     // Protect the Steam bypass files before the pipeline touches them.
+    // v0.3.1: 2025 client layout (`Recroom_Release_Data`, not `RecRoom_Data`).
     let plug = dir
-        .join("RecRoom_Data")
+        .join("Recroom_Release_Data")
         .join("Plugins")
         .join("x86_64");
     for rel in [
@@ -1105,7 +1162,7 @@ pub(crate) fn install_patch2025(
     // Write configured 2025patch.ini with Flux Rec backend
     let ini_content = format!(
         "; Flux Rec 2025 patch configuration\n\
-         ; Auto-generated by Flux Rec installer v0.3.0\n\
+         ; Auto-generated by Flux Rec installer v0.3.1\n\
          \n\
          [config]\n\
          \n\
@@ -1159,13 +1216,30 @@ fn finish_live_dir(dir: &Path, ns_host: &str, progress: &progress::Progress) {
 
 /// Strict final verification: a broken install is NEVER silent.
 /// Fails hard — the caller rolls back / aborts on error.
+///
+/// v0.3.1: verifies the 2025 install (2025Patch, native DLL injection).
+/// The old BepInEx checks are gone — a 2025 tree must NOT contain them.
 fn verify_install(dir: &Path) -> Result<(), String> {
     let mut missing = Vec::new();
     if find_game_exe(dir).is_none() {
-        missing.push("RecRoom.exe");
+        missing.push("Recroom_Release.exe (2025 client)");
+    }
+    if !dir.join("Recroom_Release_Data").is_dir() {
+        missing.push("Recroom_Release_Data/");
+    }
+    for rel in [
+        "GameAssembly.dll",
+        "Referee.dll",
+        "Injector.exe",
+        "2025Patch.dll",
+        "2025patch.ini",
+    ] {
+        if !dir.join(rel).is_file() {
+            missing.push(rel);
+        }
     }
     let steam_settings = dir
-        .join("RecRoom_Data")
+        .join("Recroom_Release_Data")
         .join("Plugins")
         .join("x86_64")
         .join("steam_settings");
@@ -1174,20 +1248,6 @@ fn verify_install(dir: &Path) -> Result<(), String> {
     }
     if !steam_settings.join("steam_interfaces.txt").exists() {
         missing.push("steam_settings/steam_interfaces.txt (Steam bypass)");
-    }
-    // BepInEx (v0.2.6) — every piece required.
-    for rel in [
-        "winhttp.dll (Doorstop proxy)",
-        "doorstop_config.ini",
-        "BepInEx/core/BepInEx.Unity.IL2CPP.dll",
-        "BepInEx/plugins/RecNetPlugin.dll",
-        "BepInEx/config/net.rec.plugin.cfg",
-    ] {
-        // Strip the human-readable suffix for the actual path check.
-        let path_part = rel.split(" (").next().unwrap_or(rel);
-        if !dir.join(path_part).exists() {
-            missing.push(rel);
-        }
     }
     if missing.is_empty() {
         println!("[verify] all critical files present: game is ready.");
@@ -1204,11 +1264,14 @@ fn verify_install(dir: &Path) -> Result<(), String> {
 /// our cloud test runs use to boot the 2023 client with no Steam client
 /// installed anywhere on the machine.
 ///
+/// v0.3.1: retargeted to the 2025 client layout (`Recroom_Release_Data`,
+/// not `RecRoom_Data`). Same pipeline otherwise.
+///
 /// What it does:
 ///   1. Downloads the pinned emulator release archive.
 ///   2. Extracts `release/regular/x64/steam_api64.dll` from it.
 ///   3. Backs up the stock DLL once (`steam_api64.dll.fluxrec-stock`), then
-///      overwrites `RecRoom_Data/Plugins/x86_64/steam_api64.dll` with it.
+///      overwrites `Recroom_Release_Data/Plugins/x86_64/steam_api64.dll` with it.
 ///   4. Writes `steam_settings/steam_appid.txt` (= 471710, Rec Room's real
 ///      app ID, no trailing newline) + the embedded `steam_interfaces.txt`.
 ///   5. Deletes the legacy root `steam_appid.txt` (the old 480 trick) if a
@@ -1224,7 +1287,7 @@ pub(crate) async fn apply_goldberg_steam_fix(
     progress: &progress::Progress,
 ) -> Result<(), String> {
     progress.set_stage("Applying Steam bypass…");
-    let plug_dir = dir.join("RecRoom_Data").join("Plugins").join("x86_64");
+    let plug_dir = dir.join("Recroom_Release_Data").join("Plugins").join("x86_64");
     let stock_dll = plug_dir.join("steam_api64.dll");
     if !stock_dll.exists() {
         return Err(format!(
@@ -1542,24 +1605,46 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_skips_client_download_only_when_exe_present() {
+    fn upgrade_skips_client_download_only_when_2025_exe_present() {
+        // A real 2025 install: skip the download.
         let with_exe = tmp_dir("upgrade-with-exe");
-        std::fs::write(with_exe.join("RecRoom.exe"), b"fake-exe").unwrap();
+        std::fs::write(with_exe.join("Recroom_Release.exe"), b"fake-exe").unwrap();
         assert!(should_skip_client_download(&with_exe));
 
-        // The lowercase fallback counts as present too.
+        // The lowercase variant counts as present too.
         let lower = tmp_dir("upgrade-lower");
-        std::fs::write(lower.join("recroom.exe"), b"fake-exe").unwrap();
+        std::fs::write(lower.join("recroom_release.exe"), b"fake-exe").unwrap();
         assert!(should_skip_client_download(&lower));
+
+        // A STALE 2023 install must NEVER count as a valid game:
+        // v0.3.0 treated RecRoom.exe as valid, skipped the 2025 download,
+        // and launched the old BepInEx client (black screen).
+        let old = tmp_dir("upgrade-2023");
+        std::fs::write(old.join("RecRoom.exe"), b"fake-exe").unwrap();
+        assert!(!should_skip_client_download(&old));
+        assert!(is_2023_install(&old));
+
+        // BepInEx / Doorstop leftovers also mark a 2023 tree.
+        let bep = tmp_dir("upgrade-2023-bepinex");
+        std::fs::create_dir_all(bep.join("BepInEx")).unwrap();
+        assert!(is_2023_install(&bep));
+        assert!(!should_skip_client_download(&bep));
+        let door = tmp_dir("upgrade-2023-doorstop");
+        std::fs::write(door.join("winhttp.dll"), b"fake").unwrap();
+        assert!(is_2023_install(&door));
 
         // A dir with other files but no game exe: no skip (fresh install).
         let no_exe = tmp_dir("upgrade-no-exe");
         std::fs::write(no_exe.join("some-other-file.txt"), b"junk").unwrap();
         assert!(!should_skip_client_download(&no_exe));
+        assert!(!is_2023_install(&no_exe));
 
-        let _ = std::fs::remove_dir_all(&with_exe);
-        let _ = std::fs::remove_dir_all(&lower);
-        let _ = std::fs::remove_dir_all(&no_exe);
+        // A clean 2025 tree is not a 2023 install.
+        assert!(!is_2023_install(&with_exe));
+
+        for d in [&with_exe, &lower, &old, &bep, &door, &no_exe] {
+            let _ = std::fs::remove_dir_all(d);
+        }
     }
 
     #[test]

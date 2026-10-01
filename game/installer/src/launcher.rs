@@ -16,9 +16,13 @@
 //!      already launched the game, so we just exit. On any failure we fall
 //!      through and launch the installed game — an update must never strand
 //!      the player with nothing running.
-//!   3. Otherwise: "Launching game\u{2026}" — `RecRoom.exe` is spawned with
-//!      no console window (so the BepInEx console never flashes), the
-//!      window lingers a moment, then this exits.
+//!   3. Otherwise: "Launching game…" — `Injector.exe` is started first (it
+//!      injects 2025Patch.dll once the game loads), then
+//!      `Recroom_Release.exe +forcemode:screen` is spawned with no console
+//!      window, the window lingers a moment, then this exits.
+//!
+//! v0.3.1: 2025-only. The 2023 client (`RecRoom.exe`, BepInEx) is never
+//! launched — a 2023 tree triggers the setup migration path instead.
 //!
 //! Every failure path still ends with the game launching (or a readable
 //! status) — an update check can never strand the player.
