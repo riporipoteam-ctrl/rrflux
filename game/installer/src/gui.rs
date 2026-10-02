@@ -1,9 +1,11 @@
-// Flux Rec Setup — branded installer window.
+// Flux Rec Setup — branded installer window v0.3.7.
 //
-// Replaces the black console window the user used to see while the installer
-// downloads / extracts / brands the game. The console logic is kept but
-// hidden; this module is the small window the user actually watches: logo,
-// brand title, stage line, blue progress bar, big percentage, footer.
+// Light-mode redesign:
+// - Clean white background with Flux Rec blue accents
+// - Larger 600x440 window
+// - "Flux Rec Setup" title with version
+// - Blue progress bar with correct percentage (bytes-based)
+// - NO speed indicator (per user request)
 //
 // Design rules:
 //   * Raw Win32 only (no GUI framework) so the setup binary stays tiny.
@@ -65,19 +67,19 @@ mod imp {
     /// Silent-failure result: Err(()) just means "no window, carry on".
     type Silent = std::result::Result<(), ()>;
 
-    const WIN_W: i32 = 480;
-    const WIN_H: i32 = 344;
+    const WIN_W: i32 = 600;
+    const WIN_H: i32 = 440;
     const TIMER_ID: usize = 1;
     /// Channel poll interval: progress feels live without busy-looping.
     const TIMER_MS: u32 = 100;
 
-    // Flux Rec brand palette (COLORREF = 0x00BBGGRR).
-    const BG: COLORREF = COLORREF(0x00261A12); // deep navy (#121A26)
+    // Flux Rec light-mode palette (COLORREF = 0x00BBGGRR).
+    const BG: COLORREF = COLORREF(0x00FFFFFF); // white
     const BLUE: COLORREF = COLORREF(0x00E87B2D); // Flux blue (#2D7BE8)
-    const TRACK: COLORREF = COLORREF(0x003A2A24); // dark track (#242A3A)
-    const WHITE: COLORREF = COLORREF(0x00FFFFFF);
-    const LIGHT: COLORREF = COLORREF(0x00CFCFCF); // stage text
-    const DIM: COLORREF = COLORREF(0x008A8A8A); // footer
+    const TRACK: COLORREF = COLORREF(0x00E8E8E8); // light gray track
+    const WHITE: COLORREF = COLORREF(0x001A1A1A); // near-black text
+    const LIGHT: COLORREF = COLORREF(0x00444444); // stage text (dark gray)
+    const DIM: COLORREF = COLORREF(0x00888888); // footer (mid gray)
 
     struct GuiState {
         bar: HWND,
