@@ -1,11 +1,13 @@
-// Flux Rec Setup — branded installer window v0.3.7.
+// Flux Rec Setup — branded installer window v0.3.8.
 //
-// Light-mode redesign:
-// - Clean white background with Flux Rec blue accents
-// - Larger 600x440 window
-// - "Flux Rec Setup" title with version
-// - Blue progress bar with correct percentage (bytes-based)
-// - NO speed indicator (per user request)
+// Sketch-faithful redesign (dark mode):
+// - Dark navy background (#0A0F1E)
+// - FR logo monogram (blue gradient) + "FLUX REC" + "Record • Create • Share"
+// - 5-slide carousel with tutorial content (auto-advances, arrows, dots)
+// - "Installing Flux Rec..." heading + subtitle
+// - Blue progress bar with percentage
+// - "Downloading files..." + byte counts
+// - Bottom info bar: Downloading, Speed, Time Remaining, Auto Updates, Safe & Secure
 //
 // Design rules:
 //   * Raw Win32 only (no GUI framework) so the setup binary stays tiny.
@@ -16,6 +18,8 @@
 //   * All Win32 code is behind `#[cfg(windows)]`. Other platforms get a
 //     stub that drains the channel and returns, so `cargo check` passes
 //     on Linux.
+//   * NO Registry API (caused Windows build failures in v0.3.4-0.3.6).
+//     Dark mode is fixed, matching the sketch.
 
 use std::sync::mpsc::Receiver;
 
@@ -26,7 +30,7 @@ pub struct GuiMsg {
     /// Stage line, e.g. "Downloading game files…".
     /// The special value "done" (after trimming) closes the window at once.
     pub stage: String,
-    /// Detail line, e.g. "1,234 / 3,800 MB • 12.5 MB/s • ETA 4:32".
+    /// Detail line, e.g. "128 MB / 206 MB".
     /// Empty string leaves the current detail text untouched.
     pub detail: String,
 }
@@ -54,66 +58,62 @@ mod imp {
     use super::{GuiMsg, Receiver};
     use std::ffi::c_void;
     use std::sync::mpsc::TryRecvError;
-    // NOTE: `windows::core::*` is deliberately NOT glob-imported: it would
-    // shadow `std::result::Result` with `windows_result::Result<T>`.
-    use windows::core::{HSTRING, PCWSTR, w};
+    use windows::core::{PCWSTR, w};
     use windows::Win32::Foundation::*;
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::System::LibraryLoader::*;
-    use windows::Win32::System::SystemServices::*;
-    use windows::Win32::UI::Controls::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
-    /// Silent-failure result: Err(()) just means "no window, carry on".
     type Silent = std::result::Result<(), ()>;
 
-    const WIN_W: i32 = 600;
-    const WIN_H: i32 = 440;
+    // Window dimensions matching the sketch (16:10-ish).
+    const WIN_W: i32 = 900;
+    const WIN_H: i32 = 650;
     const TIMER_ID: usize = 1;
-    /// Channel poll interval: progress feels live without busy-looping.
     const TIMER_MS: u32 = 100;
+    const SLIDE_TIMER_ID: usize = 2;
+    const SLIDE_MS: u32 = 5000; // auto-advance carousel every 5s
 
-    // Flux Rec light-mode palette (COLORREF = 0x00BBGGRR).
-    const BG: COLORREF = COLORREF(0x00FFFFFF); // white
-    const BLUE: COLORREF = COLORREF(0x00E87B2D); // Flux blue (#2D7BE8)
-    const TRACK: COLORREF = COLORREF(0x00E8E8E8); // light gray track
-    const WHITE: COLORREF = COLORREF(0x001A1A1A); // near-black text
-    const LIGHT: COLORREF = COLORREF(0x00444444); // stage text (dark gray)
-    const DIM: COLORREF = COLORREF(0x00888888); // footer (mid gray)
+    // Sketch palette (COLORREF = 0x00BBGGRR).
+    const BG: COLORREF = COLORREF(0x001E0F0A); // dark navy #0A0F1E
+    const BG_PANEL: COLORREF = COLORREF(0x00241A12); // slightly lighter panel
+    const BLUE: COLORREF = COLORREF(0x00FF9B2E); // Flux blue #2E9BFF
+    const BLUE_DIM: COLORREF = COLORREF(0x0080501A); // dim blue
+    const WHITE: COLORREF = COLORREF(0x00FFFFFF);
+    const GRAY: COLORREF = COLORREF(0x00A0A0A0); // subtitle gray
+    const DIM: COLORREF = COLORREF(0x00606060); // dim gray
+    const TRACK: COLORREF = COLORREF(0x00302A20); // progress track
+
+    // Carousel slides: (title, subtitle).
+    const SLIDES: &[(&str, &str)] = &[
+        ("Welcome to Flux Rec", "Your private Rec Room revival\nRecord • Create • Share"),
+        ("Play Together", "Join friends in the Rec Center\nand explore thousands of rooms"),
+        ("Compete", "Battle in Paintball, Bowling\nand Quests with players worldwide"),
+        ("Customize", "Express yourself with thousands\nof avatar items and outfits"),
+        ("Create", "Build your own rooms and games\nwith the in-game maker tools"),
+    ];
 
     struct GuiState {
-        bar: HWND,
-        pct_label: HWND,
-        stage_label: HWND,
-        detail_label: HWND,
-        title_label: HWND,
-        footer: HWND,
+        hwnd: HWND,
+        percent: u8,
+        stage: String,
+        detail: String,
+        slide: usize,
         bg_brush: HBRUSH,
-        font_big: HFONT,
+        font_logo: HFONT,
         font_title: HFONT,
+        font_sub: HFONT,
         font_small: HFONT,
+        font_tiny: HFONT,
         rx: Receiver<GuiMsg>,
     }
 
     pub(super) fn run(rx: Receiver<GuiMsg>) -> Silent {
-        // SAFETY: all Win32 calls below check their results; failures map to
-        // Err(()) and the caller swallows it silently.
         unsafe { run_inner(rx) }
     }
 
     unsafe fn run_inner(rx: Receiver<GuiMsg>) -> Silent {
-        // The progress-bar window class needs explicit init.
-        let icc = INITCOMMONCONTROLSEX {
-            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
-            dwICC: ICC_PROGRESS_CLASS,
-        };
-        if !InitCommonControlsEx(&icc).as_bool() {
-            return Err(());
-        }
-
         let hinstance = HINSTANCE(GetModuleHandleW(None).map_err(|_| ())?.0);
-
-        // Dark background brush, owned by the window class lifetime.
         let bg_brush = CreateSolidBrush(BG);
         if bg_brush.is_invalid() {
             return Err(());
@@ -133,14 +133,8 @@ mod imp {
             return Err(());
         }
 
-        // Fixed dialog-style window, centered on the primary monitor.
-        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
-        let mut rc = RECT {
-            left: 0,
-            top: 0,
-            right: WIN_W,
-            bottom: WIN_H,
-        };
+        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        let mut rc = RECT { left: 0, top: 0, right: WIN_W, bottom: WIN_H };
         if AdjustWindowRect(&mut rc, style, false).is_err() {
             let _ = DeleteObject(bg_brush);
             return Err(());
@@ -150,51 +144,84 @@ mod imp {
         let sy = GetSystemMetrics(SM_CYSCREEN);
         let (x, y) = ((sx - ww) / 2, (sy - hh) / 2);
 
+        // Fonts.
+        let font_logo = create_font(64, true);
+        let font_title = create_font(28, true);
+        let font_sub = create_font(18, false);
+        let font_small = create_font(15, false);
+        let font_tiny = create_font(12, false);
+        if font_logo.is_invalid() || font_title.is_invalid() {
+            let _ = DeleteObject(bg_brush);
+            return Err(());
+        }
+
         let state = Box::new(GuiState {
-            bar: HWND::default(),
-            pct_label: HWND::default(),
-            stage_label: HWND::default(),
-            detail_label: HWND::default(),
-            title_label: HWND::default(),
-            footer: HWND::default(),
+            hwnd: HWND::default(),
+            percent: 0,
+            stage: String::from("Downloading files..."),
+            detail: String::new(),
+            slide: 0,
             bg_brush,
-            font_big: HFONT::default(),
-            font_title: HFONT::default(),
-            font_small: HFONT::default(),
+            font_logo,
+            font_title,
+            font_sub,
+            font_small,
+            font_tiny,
             rx,
         });
+        let ptr = Box::into_raw(state);
 
-        // If WM_CREATE fails, wnd_proc returns -1, creation reports Err here,
-        // and WM_DESTROY reclaims the boxed state — nothing leaks, nothing
-        // panics, the install just continues without a window.
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             w!("FluxRecSetupGui"),
             w!("Flux Rec Setup"),
             style,
-            x,
-            y,
-            ww,
-            hh,
-            HWND::default(),
-            HMENU::default(),
-            hinstance,
-            Some(Box::into_raw(state) as *const c_void),
-        )
-        .map_err(|_| ())?;
-
+            x, y, ww, hh,
+            None, None, hinstance,
+            Some(ptr as *const c_void),
+        );
+        if hwnd.is_err() {
+            let _ = Box::from_raw(ptr);
+            let _ = DeleteObject(bg_brush);
+            return Err(());
+        }
+        let hwnd = hwnd.unwrap_or_default();
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
-        // Brand the title bar + taskbar with the embedded Flux Rec icon.
-        // Never fails the install: failures are swallowed inside.
-        set_window_icon(hwnd, hinstance);
+
+        // Timers: progress poll + carousel auto-advance.
+        SetTimer(hwnd, TIMER_ID, TIMER_MS, None);
+        SetTimer(hwnd, SLIDE_TIMER_ID, SLIDE_MS, None);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+
+        KillTimer(hwnd, TIMER_ID);
+        KillTimer(hwnd, SLIDE_TIMER_ID);
+        let _ = DeleteObject(font_logo);
+        let _ = DeleteObject(font_title);
+        let _ = DeleteObject(font_sub);
+        let _ = DeleteObject(font_small);
+        let _ = DeleteObject(font_tiny);
+        let _ = DeleteObject(bg_brush);
         Ok(())
+    }
+
+    unsafe fn create_font(px: i32, bold: bool) -> HFONT {
+        CreateFontW(
+            px, 0, 0, 0,
+            if bold { FW_BOLD.0 as i32 } else { FW_NORMAL.0 as i32 },
+            0, 0, 0,
+            DEFAULT_CHARSET.0 as u32,
+            OUT_DEFAULT_PRECIS.0 as u32,
+            CLIP_DEFAULT_PRECIS.0 as u32,
+            CLEARTYPE_QUALITY.0 as u32,
+            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+            w!("Segoe UI"),
+        )
     }
 
     unsafe extern "system" fn wnd_proc(
@@ -205,45 +232,74 @@ mod imp {
     ) -> LRESULT {
         match msg {
             WM_CREATE => {
-                let cs = lparam.0 as *const CREATESTRUCTW;
-                let ok = !cs.is_null() && on_create(hwnd, &*cs);
-                LRESULT(if ok { 0 } else { -1 })
+                let cs = &*(lparam.0 as *const CREATESTRUCTW);
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, cs.lpCreateParams as isize);
+                let state = &mut *(cs.lpCreateParams as *mut GuiState);
+                state.hwnd = hwnd;
+                LRESULT(0)
             }
             WM_TIMER => {
-                on_timer(hwnd);
+                let state = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut GuiState);
+                if wparam.0 == TIMER_ID {
+                    // Drain progress messages.
+                    loop {
+                        match state.rx.try_recv() {
+                            Ok(m) => {
+                                if m.stage.trim().eq_ignore_ascii_case("done") {
+                                    let _ = DestroyWindow(hwnd);
+                                    break;
+                                }
+                                state.percent = m.percent.min(100);
+                                if !m.stage.is_empty() {
+                                    state.stage = m.stage;
+                                }
+                                if !m.detail.is_empty() {
+                                    state.detail = m.detail;
+                                }
+                                let _ = InvalidateRect(hwnd, None, false);
+                            }
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => break,
+                        }
+                    }
+                } else if wparam.0 == SLIDE_TIMER_ID {
+                    state.slide = (state.slide + 1) % SLIDES.len();
+                    let _ = InvalidateRect(hwnd, None, false);
+                }
+                LRESULT(0)
+            }
+            WM_LBUTTONDOWN => {
+                // Click left/right arrows to change slides.
+                let state = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut GuiState);
+                let x = (lparam.0 & 0xFFFF) as i32;
+                let y = ((lparam.0 >> 16) & 0xFFFF) as i32;
+                // Left arrow zone.
+                if x >= 40 && x <= 90 && y >= 200 && y <= 320 {
+                    state.slide = (state.slide + SLIDES.len() - 1) % SLIDES.len();
+                    let _ = InvalidateRect(hwnd, None, false);
+                }
+                // Right arrow zone.
+                if x >= WIN_W - 90 && x <= WIN_W - 40 && y >= 200 && y <= 320 {
+                    state.slide = (state.slide + 1) % SLIDES.len();
+                    let _ = InvalidateRect(hwnd, None, false);
+                }
                 LRESULT(0)
             }
             WM_PAINT => {
-                on_paint(hwnd);
+                let state = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut GuiState);
+                let mut ps = PAINTSTRUCT::default();
+                let hdc = BeginPaint(hwnd, &mut ps);
+                if !hdc.is_invalid() {
+                    draw_all(hdc, state);
+                    let _ = EndPaint(hwnd, &ps);
+                }
                 LRESULT(0)
             }
-            WM_CTLCOLORSTATIC => {
-                // Dark theme: transparent statics, per-control text color,
-                // shared navy brush behind.
-                let ctl = HWND(lparam.0 as *mut c_void);
-                let hdc = HDC(wparam.0 as *mut c_void);
-                let color = state_of(hwnd)
-                    .map(|st| {
-                        if ctl == st.footer {
-                            DIM
-                        } else if ctl == st.stage_label {
-                            LIGHT
-                        } else if ctl == st.detail_label {
-                            LIGHT
-                        } else {
-                            WHITE
-                        }
-                    })
-                    .unwrap_or(WHITE);
-                SetTextColor(hdc, color);
-                SetBkMode(hdc, TRANSPARENT);
-                let brush = state_of(hwnd)
-                    .map(|st| st.bg_brush)
-                    .unwrap_or(HBRUSH::default());
-                LRESULT(brush.0 as isize)
-            }
             WM_DESTROY => {
-                on_destroy(hwnd);
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut GuiState;
+                if !ptr.is_null() {
+                    let _ = Box::from_raw(ptr);
+                }
                 PostQuitMessage(0);
                 LRESULT(0)
             }
@@ -251,351 +307,204 @@ mod imp {
         }
     }
 
-    unsafe fn create_child(
-        parent: HWND,
-        class: PCWSTR,
-        text: PCWSTR,
-        style: WINDOW_STYLE,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        hi: HINSTANCE,
-    ) -> Option<HWND> {
-        CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
-            class,
-            text,
-            WS_CHILD | WS_VISIBLE | style,
-            x,
-            y,
-            w,
-            h,
-            parent,
-            HMENU::default(),
-            hi,
-            None,
-        )
-        .ok()
+    unsafe fn draw_all(hdc: HDC, s: &GuiState) {
+        // Background.
+        let mut rc = RECT::default();
+        let _ = GetClientRect(s.hwnd, &mut rc);
+        let bg = CreateSolidBrush(BG);
+        let _ = FillRect(hdc, &rc, bg);
+        let _ = DeleteObject(bg);
+
+        let _ = SetBkMode(hdc, TRANSPARENT);
+
+        // --- Logo: "FR" monogram ---
+        let _ = SelectObject(hdc, s.font_logo);
+        let _ = SetTextColor(hdc, BLUE);
+        draw_text_center(hdc, "FR", WIN_W / 2, 30, WIN_W, 70);
+
+        // --- "FLUX REC" ---
+        let _ = SelectObject(hdc, s.font_title);
+        // Draw "FLUX " in white and "REC" in blue.
+        let flux_w = text_width(hdc, "FLUX ");
+        let rec_w = text_width(hdc, "REC");
+        let total_w = flux_w + rec_w;
+        let start_x = (WIN_W - total_w) / 2;
+        let _ = SetTextColor(hdc, WHITE);
+        draw_text_at(hdc, "FLUX ", start_x, 110);
+        let _ = SetTextColor(hdc, BLUE);
+        draw_text_at(hdc, "REC", start_x + flux_w, 110);
+
+        // --- Tagline ---
+        let _ = SelectObject(hdc, s.font_sub);
+        let _ = SetTextColor(hdc, GRAY);
+        draw_text_center(hdc, "Record  •  Create  •  Share", WIN_W / 2, 150, WIN_W, 25);
+
+        // --- Carousel ---
+        draw_carousel(hdc, s);
+
+        // --- "Installing Flux Rec..." ---
+        let _ = SelectObject(hdc, s.font_title);
+        let _ = SetTextColor(hdc, WHITE);
+        draw_text_center(hdc, "Installing Flux Rec...", WIN_W / 2, 400, WIN_W, 35);
+
+        let _ = SelectObject(hdc, s.font_sub);
+        let _ = SetTextColor(hdc, GRAY);
+        draw_text_center(hdc, "Please wait while we set things up for you.", WIN_W / 2, 435, WIN_W, 25);
+
+        // --- Progress bar ---
+        let bar_x = 120;
+        let bar_w = WIN_W - 240 - 60; // leave room for % text
+        let bar_y = 475;
+        let bar_h = 14;
+        // Track.
+        let track = CreateSolidBrush(TRACK);
+        let track_rect = RECT { left: bar_x, top: bar_y, right: bar_x + bar_w, bottom: bar_y + bar_h };
+        let _ = FillRect(hdc, &track_rect, track);
+        let _ = DeleteObject(track);
+        // Fill.
+        let fill_w = (bar_w * s.percent as i32) / 100;
+        if fill_w > 0 {
+            let fill = CreateSolidBrush(BLUE);
+            let fill_rect = RECT { left: bar_x, top: bar_y, right: bar_x + fill_w, bottom: bar_y + bar_h };
+            let _ = FillRect(hdc, &fill_rect, fill);
+            let _ = DeleteObject(fill);
+        }
+        // Percentage.
+        let _ = SelectObject(hdc, s.font_sub);
+        let _ = SetTextColor(hdc, WHITE);
+        let pct = format!("{}%", s.percent);
+        draw_text_at(hdc, &pct, bar_x + bar_w + 15, bar_y - 4);
+
+        // --- Stage / detail ---
+        let _ = SelectObject(hdc, s.font_small);
+        let _ = SetTextColor(hdc, GRAY);
+        draw_text_at(hdc, &s.stage, bar_x, bar_y + 25);
+        if !s.detail.is_empty() {
+            draw_text_at(hdc, &s.detail, bar_x, bar_y + 45);
+        }
+
+        // --- Bottom info bar ---
+        draw_bottom_bar(hdc, s);
     }
 
-    /// Segoe UI at `px` height; `bold` selects 700 vs 400 weight.
-    /// Returns a null HFONT on failure (caller falls back to stock font).
-    unsafe fn make_font(px: i32, bold: bool) -> HFONT {
-        CreateFontW(
-            px,
-            0,
-            0,
-            0,
-            if bold { 700 } else { 400 },
-            0,
-            0,
-            0,
-            1, // DEFAULT_CHARSET
-            0,
-            0,
-            0,
-            0,
-            w!("Segoe UI"),
-        )
+    unsafe fn draw_carousel(hdc: HDC, s: &GuiState) {
+        let cy = 260; // carousel center y
+        let cw = 380; // center slide width
+        let ch = 150; // slide height
+        let cx = WIN_W / 2;
+
+        // Side slides (dimmed).
+        let side_w = 220;
+        let side_alpha = 60; // dimmed
+
+        // Left slide.
+        let left_idx = (s.slide + SLIDES.len() - 1) % SLIDES.len();
+        draw_slide(hdc, s, left_idx, cx - cw / 2 - side_w - 20, cy - ch / 2, side_w, ch, true);
+
+        // Right slide.
+        let right_idx = (s.slide + 1) % SLIDES.len();
+        draw_slide(hdc, s, right_idx, cx + cw / 2 + 20, cy - ch / 2, side_w, ch, true);
+
+        // Center slide (focused).
+        draw_slide(hdc, s, s.slide, cx - cw / 2, cy - ch / 2, cw, ch, false);
+
+        // Arrows.
+        let _ = SelectObject(hdc, s.font_title);
+        let _ = SetTextColor(hdc, GRAY);
+        draw_text_center(hdc, "<", 65, cy - 20, 50, 40);
+        draw_text_center(hdc, ">", WIN_W - 65, cy - 20, 50, 40);
+
+        // Dots.
+        let dot_y = cy + ch / 2 + 20;
+        let dot_r = 5;
+        let dot_gap = 20;
+        let total_w = (SLIDES.len() as i32 - 1) * dot_gap;
+        let start_x = cx - total_w / 2;
+        for i in 0..SLIDES.len() {
+            let x = start_x + (i as i32) * dot_gap;
+            let brush = CreateSolidBrush(if i == s.slide { BLUE } else { DIM });
+            let _ = Ellipse(hdc, x - dot_r, dot_y - dot_r, x + dot_r, dot_y + dot_r);
+            let _ = DeleteObject(brush);
+        }
+        let _ = side_alpha; // suppress unused warning
     }
 
-    unsafe fn set_font(ctl: HWND, font: HFONT) {
-        if !font.is_invalid() {
-            SendMessageW(ctl, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
-        }
-    }
+    unsafe fn draw_slide(hdc: HDC, s: &GuiState, idx: usize, x: i32, y: i32, w: i32, h: i32, dimmed: bool) {
+        // Slide background (gradient-like: use solid with border).
+        let bg = CreateSolidBrush(if dimmed { COLORREF(0x00181010) } else { BG_PANEL });
+        let rc = RECT { left: x, top: y, right: x + w, bottom: y + h };
+        let _ = FillRect(hdc, &rc, bg);
+        let _ = DeleteObject(bg);
 
-    /// Set the setup window's title-bar + taskbar icon from the icon embedded
-    /// in the EXE by build.rs (winres stores the first icon at resource id 1).
-    /// Silent no-op on any failure: the window works fine with the default icon.
-    unsafe fn set_window_icon(hwnd: HWND, hinstance: HINSTANCE) {
-        // Integer resource id == MAKEINTRESOURCEW(1).
-        let res_id = PCWSTR(1 as *const u16);
-        let load = |metric: SYSTEM_METRICS_INDEX| -> HICON {
-            let size = GetSystemMetrics(metric);
-            match LoadImageW(hinstance, res_id, IMAGE_ICON, size, size, IMAGE_FLAGS(0)) {
-                Ok(handle) => HICON(handle.0),
-                Err(_) => HICON::default(),
-            }
-        };
-        let big = load(SM_CXICON);
-        if !big.is_invalid() {
-            SendMessageW(
-                hwnd,
-                WM_SETICON,
-                WPARAM(ICON_BIG as usize),
-                LPARAM(big.0 as isize),
-            );
-        }
-        let small = load(SM_CXSMICON);
-        if !small.is_invalid() {
-            SendMessageW(
-                hwnd,
-                WM_SETICON,
-                WPARAM(ICON_SMALL as usize),
-                LPARAM(small.0 as isize),
-            );
-        }
-    }
+        // Border.
+        let pen = CreatePen(PS_SOLID, 1, if dimmed { DIM } else { BLUE_DIM });
+        let old_pen = SelectObject(hdc, pen);
+        let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        let _ = Rectangle(hdc, x, y, x + w, y + h);
+        let _ = SelectObject(hdc, old_pen);
+        let _ = SelectObject(hdc, old_brush);
+        let _ = DeleteObject(pen);
 
-    unsafe fn on_create(hwnd: HWND, cs: &CREATESTRUCTW) -> bool {
-        let state_ptr = cs.lpCreateParams as *mut GuiState;
-        if state_ptr.is_null() {
-            return false;
-        }
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr as isize);
-        let st = &mut *state_ptr;
-        let hi = cs.hInstance;
+        // Slide text.
+        let (title, sub) = SLIDES[idx];
+        let _ = SelectObject(hdc, s.font_small);
+        let _ = SetTextColor(hdc, if dimmed { DIM } else { WHITE });
+        draw_text_center(hdc, title, x + w / 2, y + 30, w, 25);
 
-        // Layout (client area 480x344):
-        //   logo (painted)  y=16..104
-        //   title           y=112 h=30
-        //   stage line      y=150 h=20
-        //   progress bar    y=178 h=20
-        //   percent         y=206 h=34
-        //   detail line     y=248 h=20   (speed / ETA / byte counts)
-        //   footer          y=300 h=18
-        let title = create_child(
-            hwnd,
-            w!("STATIC"),
-            w!("FLUX REC"),
-            WINDOW_STYLE(SS_CENTER.0),
-            20,
-            112,
-            440,
-            30,
-            hi,
-        );
-        let stage = create_child(
-            hwnd,
-            w!("STATIC"),
-            w!("Starting…"),
-            WINDOW_STYLE(SS_CENTER.0),
-            20,
-            150,
-            440,
-            20,
-            hi,
-        );
-        let bar = create_child(
-            hwnd,
-            PROGRESS_CLASSW,
-            w!(""),
-            WINDOW_STYLE(PBS_SMOOTH),
-            50,
-            178,
-            380,
-            20,
-            hi,
-        );
-        let pct = create_child(
-            hwnd,
-            w!("STATIC"),
-            w!("0%"),
-            WINDOW_STYLE(SS_CENTER.0),
-            20,
-            206,
-            440,
-            34,
-            hi,
-        );
-        // v0.2.0: live detail line — speed / ETA / byte counts, e.g.
-        // "Downloading: 1,234 / 3,800 MB • 12.5 MB/s • ETA 4:32".
-        let detail = create_child(
-            hwnd,
-            w!("STATIC"),
-            w!(""),
-            WINDOW_STYLE(SS_CENTER.0),
-            20,
-            248,
-            440,
-            20,
-            hi,
-        );
-        let footer = create_child(
-            hwnd,
-            w!("STATIC"),
-            w!("Ripo Team"),
-            WINDOW_STYLE(SS_CENTER.0),
-            20,
-            300,
-            440,
-            18,
-            hi,
-        );
-        let (title, stage, bar, pct, detail, footer) = match (title, stage, bar, pct, detail, footer) {
-            (Some(a), Some(b), Some(c), Some(d), Some(e), Some(f)) => (a, b, c, d, e, f),
-            _ => return false,
-        };
-        st.title_label = title;
-        st.stage_label = stage;
-        st.bar = bar;
-        st.pct_label = pct;
-        st.detail_label = detail;
-        st.footer = footer;
-
-        // Brand typography (fall back to stock font if creation fails).
-        st.font_title = make_font(26, true);
-        st.font_big = make_font(24, true);
-        st.font_small = make_font(15, false);
-        set_font(title, st.font_title);
-        set_font(stage, st.font_small);
-        set_font(pct, st.font_big);
-        set_font(detail, st.font_small);
-        set_font(footer, st.font_small);
-
-        // v0.1.55: Show version in footer (e.g., "Ripo Team • v0.1.55")
-        // env!("CARGO_PKG_VERSION") is baked in at compile time from Cargo.toml
-        {
-            let version_text = format!("Ripo Team • v{}", env!("CARGO_PKG_VERSION"));
-            let wide: Vec<u16> = version_text.encode_utf16().chain(std::iter::once(0)).collect();
-            unsafe {
-                SetWindowTextW(footer, PCWSTR(wide.as_ptr()));
-            }
-        }
-
-        // Native progress range 0..100 + Flux blue fill on dark track.
-        SendMessageW(bar, PBM_SETRANGE, WPARAM(0), LPARAM(0x0064_0000));
-        SendMessageW(bar, PBM_SETPOS, WPARAM(0), LPARAM(0));
-        SendMessageW(bar, PBM_SETBARCOLOR, WPARAM(0), LPARAM(BLUE.0 as isize));
-        SendMessageW(bar, PBM_SETBKCOLOR, WPARAM(0), LPARAM(TRACK.0 as isize));
-
-        // ~100ms channel poll driving the bar + labels.
-        if SetTimer(hwnd, TIMER_ID, TIMER_MS, None) == 0 {
-            return false;
-        }
-        true
-    }
-
-    unsafe fn state_of(hwnd: HWND) -> Option<&'static mut GuiState> {
-        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
-        if ptr == 0 {
-            None
-        } else {
-            Some(&mut *(ptr as *mut GuiState))
+        let _ = SelectObject(hdc, s.font_tiny);
+        let _ = SetTextColor(hdc, if dimmed { DIM } else { GRAY });
+        // Multi-line subtitle.
+        for (i, line) in sub.split('\n').enumerate() {
+            draw_text_center(hdc, line, x + w / 2, y + 65 + (i as i32) * 20, w, 20);
         }
     }
 
-    unsafe fn set_text(hwnd: HWND, text: &str) {
-        let hs = HSTRING::from(text);
-        let _ = SetWindowTextW(hwnd, &hs);
-    }
+    unsafe fn draw_bottom_bar(hdc: HDC, s: &GuiState) {
+        let bar_y = WIN_H - 80;
+        // Separator line.
+        let pen = CreatePen(PS_SOLID, 1, COLORREF(0x00201A15));
+        let old_pen = SelectObject(hdc, pen);
+        let _ = MoveToEx(hdc, 0, bar_y, None);
+        let _ = LineTo(hdc, WIN_W, bar_y);
+        let _ = SelectObject(hdc, old_pen);
+        let _ = DeleteObject(pen);
 
-    unsafe fn on_timer(hwnd: HWND) {
-        let st = match state_of(hwnd) {
-            Some(s) => s,
-            None => return,
-        };
-        let mut close = false;
-        loop {
-            match st.rx.try_recv() {
-                Ok(m) => {
-                    let pct = m.percent.min(100);
-                    SendMessageW(st.bar, PBM_SETPOS, WPARAM(pct as usize), LPARAM(0));
-                    set_text(st.pct_label, &format!("{pct}%"));
-                    if !m.stage.is_empty() {
-                        set_text(st.stage_label, &m.stage);
-                    }
-                    // Detail line: always applied — an empty string clears it
-                    // (stages clear it when they begin).
-                    set_text(st.detail_label, &m.detail);
-                    if m.stage.trim() == "done" {
-                        close = true;
-                        break;
-                    }
-                }
-                Err(TryRecvError::Empty) => break,
-                // Sender gone: at 100% the install finished; otherwise the
-                // installer thread is gone too — never leave a hung window.
-                Err(TryRecvError::Disconnected) => {
-                    close = true;
-                    break;
-                }
-            }
-        }
-        if close {
-            let _ = DestroyWindow(hwnd);
+        // 5 info items.
+        let items: &[(&str, &str)] = &[
+            ("Downloading", if s.detail.is_empty() { "—" } else { &s.detail }),
+            ("Speed", "—"),
+            ("Time Remaining", "—"),
+            ("Auto Updates", "Enabled"),
+            ("Safe & Secure", "Verified Installer"),
+        ];
+        let col_w = WIN_W / 5;
+        let _ = SelectObject(hdc, s.font_tiny);
+        for (i, (label, value)) in items.iter().enumerate() {
+            let cx = (i as i32) * col_w + col_w / 2;
+            let _ = SetTextColor(hdc, BLUE);
+            draw_text_center(hdc, label, cx, bar_y + 12, col_w, 18);
+            let _ = SetTextColor(hdc, GRAY);
+            draw_text_center(hdc, value, cx, bar_y + 32, col_w, 18);
         }
     }
 
-    unsafe fn on_destroy(hwnd: HWND) {
-        let _ = KillTimer(hwnd, TIMER_ID);
-        let ptr = SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-        if ptr != 0 {
-            let st = Box::from_raw(ptr as *mut GuiState);
-            for font in [st.font_big, st.font_title, st.font_small] {
-                if !font.is_invalid() {
-                    let _ = DeleteObject(font);
-                }
-            }
-            if !st.bg_brush.is_invalid() {
-                let _ = DeleteObject(st.bg_brush);
-            }
-        }
+    unsafe fn draw_text_center(hdc: HDC, text: &str, cx: i32, y: i32, w: i32, h: i32) {
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut rc = RECT { left: cx - w / 2, top: y, right: cx + w / 2, bottom: y + h };
+        // DrawTextW needs &mut [u16]; use the wide vec without the trailing NUL.
+        let mut buf = wide[..wide.len() - 1].to_vec();
+        let _ = DrawTextW(hdc, &mut buf, &mut rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
-    unsafe fn on_paint(hwnd: HWND) {
-        let mut ps = PAINTSTRUCT::default();
-        let hdc = BeginPaint(hwnd, &mut ps);
-        if !hdc.is_invalid() {
-            draw_logo(hdc);
-        }
-        let _ = EndPaint(hwnd, &ps);
+    unsafe fn draw_text_at(hdc: HDC, text: &str, x: i32, y: i32) {
+        let wide: Vec<u16> = text.encode_utf16().collect();
+        let _ = TextOutW(hdc, x, y, &wide);
     }
 
-    /// Minimal BMP parser: accepts 24/32-bit BITMAPINFOHEADER file images.
-    /// Returns (info-header pointer, pixel bytes, width, |height|).
-    fn parse_bmp(bytes: &[u8]) -> Option<(*const BITMAPINFOHEADER, &[u8], i32, i32)> {
-        if bytes.len() < 54 || &bytes[0..2] != b"BM" {
-            return None;
-        }
-        let u32le = |r: std::ops::Range<usize>| -> Option<u32> {
-            bytes.get(r)?.try_into().ok().map(u32::from_le_bytes)
-        };
-        let off = u32le(10..14)? as usize;
-        if u32le(14..18)? != 40 {
-            return None; // BITMAPINFOHEADER only
-        }
-        let w = u32le(18..22)? as i32;
-        let h = u32le(22..26)? as i32;
-        let bpp = bytes.get(28..30)?.try_into().ok().map(u16::from_le_bytes)?;
-        if w <= 0 || h == 0 || (bpp != 24 && bpp != 32) {
-            return None;
-        }
-        if off > bytes.len() {
-            return None;
-        }
-        let info = bytes[14..].as_ptr() as *const BITMAPINFOHEADER;
-        Some((info, &bytes[off..], w, h.abs()))
-    }
-
-    unsafe fn draw_logo(hdc: HDC) {
-        let (info, bits, w, h) = match parse_bmp(crate::assets::LOGO_BMP_BYTES) {
-            Some(v) => v,
-            None => return, // no/invalid logo: paint nothing, stay silent
-        };
-        // Fit into a 120x88 box, centered horizontally near the top.
-        let scale = (120.0 / w as f64).min(88.0 / h as f64);
-        let (dw, dh) = ((w as f64 * scale) as i32, (h as f64 * scale) as i32);
-        if dw <= 0 || dh <= 0 {
-            return;
-        }
-        let (dx, dy) = ((WIN_W - dw) / 2, 16);
-        StretchDIBits(
-            hdc,
-            dx,
-            dy,
-            dw,
-            dh,
-            0,
-            0,
-            w,
-            h,
-            Some(bits.as_ptr() as *const c_void),
-            info as *const BITMAPINFO,
-            DIB_RGB_COLORS,
-            SRCCOPY,
-        );
+    unsafe fn text_width(hdc: HDC, text: &str) -> i32 {
+        let wide: Vec<u16> = text.encode_utf16().collect();
+        let mut sz = SIZE::default();
+        let _ = GetTextExtentPoint32W(hdc, &wide, &mut sz);
+        sz.cx
     }
 }
