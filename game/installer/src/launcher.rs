@@ -327,6 +327,48 @@ fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> bool {
 /// start `Injector.exe` FIRST (it waits for the game process, then injects
 /// 2025Patch.dll once GameAssembly.dll + Referee.dll are loaded), then start
 /// the game exe. Injector skips already-patched instances, so re-running is
+/// v0.3.9: Clear Unity's HTTP cache so the client fetches fresh backend data
+/// on every launch. Unity caches HTTP responses (including the storefront
+/// JSON) in LocalLow; stale cache was causing the client to use old
+/// AvatarItemType data even after backend fixes deployed.
+fn clear_unity_http_cache(progress: &Progress) {
+    progress.set_status("Clearing cache…", 100);
+    // Unity player cache locations for Rec Room on Windows
+    let mut cleared = 0;
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        let base = std::path::PathBuf::from(profile);
+        // LocalLow/Rec Room/* — Unity player prefs and HTTP cache
+        let locallow = base.join("AppData").join("LocalLow");
+        for company in ["Rec Room", "RecRoom", "recroom"] {
+            let dir = locallow.join(company);
+            // Only clear cache subdirs, never the whole tree (player prefs
+            // like login tokens live here too). Unity's HTTP cache is in
+            // names like "cache", "Cache", or versioned subdirs.
+            if dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_lowercase();
+                        if name.contains("cache") {
+                            let p = entry.path();
+                            if p.is_dir() {
+                                if std::fs::remove_dir_all(&p).is_ok() {
+                                    cleared += 1;
+                                    println!("[launcher] cleared cache dir: {}", p.display());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if cleared > 0 {
+        println!("[launcher] cleared {cleared} Unity cache dir(s)");
+    } else {
+        println!("[launcher] no Unity cache dirs found to clear");
+    }
+}
+
 /// safe. Infallible: a missing exe shows a readable status instead of panicking.
 ///
 /// v0.3.2: pre-flight check — the game is USELESS without the patch (it
@@ -335,6 +377,10 @@ fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> bool {
 /// is missing (e.g. antivirus quarantine), say so plainly instead of
 /// launching into that guaranteed failure. Re-running setup restores them.
 pub fn launch_game(dir: &Path, progress: &Progress) {
+    // v0.3.9: Clear Unity HTTP cache before launch so the client always
+    // fetches fresh backend data (storefront types, box art, etc.) instead
+    // of using stale cached responses from before backend fixes deployed.
+    clear_unity_http_cache(progress);
     match crate::find_game_exe(dir) {
         Some(exe) => {
             let injector = dir.join("Injector.exe");
