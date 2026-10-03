@@ -210,6 +210,10 @@ async fn fetch_single(
     if let Some((p, stage)) = progress {
         p.set_stage(stage);
     }
+    // Ensure parent dir exists — "system cannot find the path specified" if not.
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dest dir: {e}"))?;
+    }
     let part = dest.with_extension("part");
     let resp = tokio::time::timeout(
         Duration::from_secs(FIRST_BYTE_TIMEOUT_SECS),
@@ -276,6 +280,10 @@ pub async fn download_segmented(
     if dest.exists() {
         println!("[{label}] existing file failed verification, re-downloading.");
         std::fs::remove_file(dest).map_err(|e| e.to_string())?;
+    }
+    // Ensure parent dir exists.
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dest dir: {e}"))?;
     }
     if let Some((p, stage)) = progress {
         p.set_stage(stage);
