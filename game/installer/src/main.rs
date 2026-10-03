@@ -996,7 +996,9 @@ async fn build_full_install(
     photon_chat: &str,
     progress: &progress::Progress,
 ) -> Result<(), String> {
-    // 1. Game client (~3.8GB).
+    // 1. Game client (~4.2GB). Create target dir first — the download fails
+    // with "system cannot find the path specified" if it doesn't exist.
+    std::fs::create_dir_all(target).map_err(|e| format!("create game dir: {e}"))?;
     let client_zip = target.join("client.zip");
     download_mirrored(
         client,
