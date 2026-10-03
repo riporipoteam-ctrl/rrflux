@@ -591,7 +591,12 @@ fn create_shortcut(
 /// OLD client with its BepInEx stack (black screen on Armin's PC, no
 /// 2025patch.log). A 2023 tree is never a valid 2025 install.
 pub(crate) fn find_game_exe(dir: &Path) -> Option<PathBuf> {
-    for name in ["Recroom_Release.exe", "recroom_release.exe"] {
+    for name in [
+        "Recroom_Release.exe",
+        "recroom_release.exe",
+        "RecRoom.exe",
+        "recroom.exe",
+    ] {
         let p = dir.join(name);
         if p.exists() {
             return Some(p);
@@ -605,9 +610,9 @@ pub(crate) fn find_game_exe(dir: &Path) -> Option<PathBuf> {
 /// migration path (quarantine the old tree, fresh-install 2025) instead of
 /// the upgrade path, which must never run against a 2023 tree.
 pub(crate) fn is_2023_install(dir: &Path) -> bool {
-    dir.join("RecRoom.exe").exists()
-        || dir.join("recroom.exe").exists()
-        || dir.join("BepInEx").is_dir()
+    // 2026 client also uses RecRoom.exe, so don't use exe name alone.
+    // 2023 is identified by BepInEx/Doorstop loader files.
+    dir.join("BepInEx").is_dir()
         || dir.join("winhttp.dll").exists()
         || dir.join("doorstop_config.ini").exists()
 }
@@ -1007,7 +1012,7 @@ async fn build_full_install(
     // archive before extracting it.
     defender::unblock_file(&client_zip);
     progress.set_stage("Extracting game files…");
-    progress.set_detail("Extracting 7,136 game files…".to_string());
+    progress.set_detail("Extracting game files…".to_string());
     extract_zip(&client_zip, target, "client")?;
     let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
     progress.set_detail(String::new());
@@ -1233,10 +1238,16 @@ fn finish_live_dir(dir: &Path, ns_host: &str, progress: &progress::Progress) {
 fn verify_install(dir: &Path) -> Result<(), String> {
     let mut missing = Vec::new();
     if find_game_exe(dir).is_none() {
-        missing.push("Recroom_Release.exe (2025 client)");
+        missing.push("game exe (RecRoom.exe / Recroom_Release.exe)");
     }
-    if !dir.join("Recroom_Release_Data").is_dir() {
-        missing.push("Recroom_Release_Data/");
+    // 2026 client uses RecRoom_Data, 2025 uses Recroom_Release_Data.
+    let data_dir = if dir.join("RecRoom_Data").is_dir() {
+        dir.join("RecRoom_Data")
+    } else {
+        dir.join("Recroom_Release_Data")
+    };
+    if !data_dir.is_dir() {
+        missing.push("RecRoom_Data/ or Recroom_Release_Data/");
     }
     for rel in [
         "GameAssembly.dll",
@@ -1249,8 +1260,7 @@ fn verify_install(dir: &Path) -> Result<(), String> {
             missing.push(rel);
         }
     }
-    let steam_settings = dir
-        .join("Recroom_Release_Data")
+    let steam_settings = data_dir
         .join("Plugins")
         .join("x86_64")
         .join("steam_settings");
@@ -1298,7 +1308,14 @@ pub(crate) async fn apply_goldberg_steam_fix(
     progress: &progress::Progress,
 ) -> Result<(), String> {
     progress.set_stage("Applying Steam bypass…");
-    let plug_dir = dir.join("Recroom_Release_Data").join("Plugins").join("x86_64");
+    // 2026 client uses RecRoom_Data, 2025 uses Recroom_Release_Data — support both.
+    let plug_dir_2026 = dir.join("RecRoom_Data").join("Plugins").join("x86_64");
+    let plug_dir_2025 = dir.join("Recroom_Release_Data").join("Plugins").join("x86_64");
+    let plug_dir = if plug_dir_2026.join("steam_api64.dll").exists() {
+        plug_dir_2026
+    } else {
+        plug_dir_2025
+    };
     let stock_dll = plug_dir.join("steam_api64.dll");
     if !stock_dll.exists() {
         return Err(format!(
@@ -1628,11 +1645,12 @@ mod tests {
         std::fs::write(lower.join("recroom_release.exe"), b"fake-exe").unwrap();
         assert!(!should_skip_client_download(&lower));
 
-        // A STALE 2023 install must NEVER count as a valid game:
-        // v0.3.0 treated RecRoom.exe as valid, skipped the 2025 download,
-        // and launched the old BepInEx client (black screen).
+        // A STALE 2023 install must NEVER count as a valid game.
+        // 2023 is identified by BepInEx/Doorstop files, NOT by RecRoom.exe
+        // (the 2026 client also uses RecRoom.exe).
         let old = tmp_dir("upgrade-2023");
         std::fs::write(old.join("RecRoom.exe"), b"fake-exe").unwrap();
+        std::fs::create_dir_all(old.join("BepInEx")).unwrap();
         assert!(!should_skip_client_download(&old));
         assert!(is_2023_install(&old));
 
