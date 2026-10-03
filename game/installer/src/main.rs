@@ -612,12 +612,13 @@ pub(crate) fn is_2023_install(dir: &Path) -> bool {
         || dir.join("doorstop_config.ini").exists()
 }
 
-/// Upgrade-mode decision (pure): skip the ~3.8GB client.zip download +
+/// Upgrade-mode decision (pure): skip the ~4.2GB client.zip download +
 /// extract only when a real 2025 install (`Recroom_Release.exe`) is already
 /// present in the dir. A 2023 tree (old exe / BepInEx / Doorstop files)
 /// NEVER counts — it takes the migration path instead.
-pub(crate) fn should_skip_client_download(dir: &Path) -> bool {
-    find_game_exe(dir).is_some()
+/// v0.4.1: Force re-download to upgrade from 2022 client to 2026 client.
+pub(crate) fn should_skip_client_download(_dir: &Path) -> bool {
+    false
 }
 
 /// Quarantine a stale 2023 install before a clean 2025 migration: rename
@@ -1616,15 +1617,16 @@ mod tests {
 
     #[test]
     fn upgrade_skips_client_download_only_when_2025_exe_present() {
-        // A real 2025 install: skip the download.
+        // v0.4.1: Force re-download to upgrade from 2022 to 2026 client.
+        // Never skip the download.
         let with_exe = tmp_dir("upgrade-with-exe");
         std::fs::write(with_exe.join("Recroom_Release.exe"), b"fake-exe").unwrap();
-        assert!(should_skip_client_download(&with_exe));
+        assert!(!should_skip_client_download(&with_exe));
 
         // The lowercase variant counts as present too.
         let lower = tmp_dir("upgrade-lower");
         std::fs::write(lower.join("recroom_release.exe"), b"fake-exe").unwrap();
-        assert!(should_skip_client_download(&lower));
+        assert!(!should_skip_client_download(&lower));
 
         // A STALE 2023 install must NEVER count as a valid game:
         // v0.3.0 treated RecRoom.exe as valid, skipped the 2025 download,
