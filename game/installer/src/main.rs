@@ -62,9 +62,9 @@ mod vcredist;
 /// (benchmark 2026-09-24: Mega 16-seg 5.4 MB/s beats HF 16-seg 1.5 MB/s;
 /// HF throttles parallel ranges, so Mega is primary, HF is the fallback).
 const CLIENT_ZIP_MIRRORS: &[&str] = &[
-    "https://archive.recagain.site/download/manifest/1151455856673601091",
+    "https://archive.recagain.site/download/manifest/5037299340901764828",
 ];
-const CLIENT_ZIP_MD5: &str = "94456722dda0633b8b1913732b06533f";
+const CLIENT_ZIP_MD5: &str = "dcf411174908aa2b7109a7d0bf5c592e";
 // 2025 client uses 2025Patch (native DLL injection) instead of BepInEx.
 // v0.3.0: 2025 client migration — BepInEx removed.
 const PATCH2025_URL: &str = "https://github.com/recflare/patch-2025/releases/download/v0.0.8/2025Patch-v0.0.8-x64.zip";
