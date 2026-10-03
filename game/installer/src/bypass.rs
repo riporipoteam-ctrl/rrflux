@@ -46,7 +46,13 @@ pub enum BypassState {
 }
 
 fn plug_dir(dir: &Path) -> std::path::PathBuf {
-    // v0.3.1: 2025 client layout. (Was `RecRoom_Data` for the 2023 client.)
+    // 2026 client uses RecRoom_Data, 2025 uses Recroom_Release_Data.
+    // (2023 also used RecRoom_Data, but that's identified by BepInEx.)
+    let p2026 = dir.join("RecRoom_Data").join("Plugins").join("x86_64");
+    if p2026.join("steam_api64.dll").exists() || dir.join("RecRoom_Data").is_dir() {
+        return p2026;
+    }
+    // v0.3.1: 2025 client layout.
     dir.join("Recroom_Release_Data").join("Plugins").join("x86_64")
 }
 
