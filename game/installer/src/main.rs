@@ -59,9 +59,8 @@ mod vcredist;
 
 /// Client mirrors, fastest first. All serve the byte-identical client.zip
 /// (same MD5) — the downloader falls through to the next on any failure.
-/// (benchmark 2026-09-24: Mega 16-seg 5.4 MB/s beats HF 16-seg 1.5 MB/s;
-/// HF throttles parallel ranges, so Mega is primary, HF is the fallback).
 const CLIENT_ZIP_MIRRORS: &[&str] = &[
+    "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/client-2026-03/march-2026-client.zip",
     "https://archive.recagain.site/download/manifest/5037299340901764828",
 ];
 const CLIENT_ZIP_MD5: &str = "dcf411174908aa2b7109a7d0bf5c592e";
