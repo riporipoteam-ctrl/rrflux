@@ -337,28 +337,41 @@ fn clear_unity_http_cache(progress: &Progress) {
     let mut cleared = 0;
     if let Ok(profile) = std::env::var("USERPROFILE") {
         let base = std::path::PathBuf::from(profile);
-        // LocalLow/Rec Room/* — Unity player prefs and HTTP cache
+        // LocalLow — Unity player prefs and HTTP cache
+        // v0.3.11: Recursively find and clear ALL cache dirs, not just one level.
+        // Unity's HTTP cache can be nested (e.g. LocalLow/Rec Room/Rec Room/cache).
         let locallow = base.join("AppData").join("LocalLow");
-        for company in ["Rec Room", "RecRoom", "recroom"] {
-            let dir = locallow.join(company);
-            // Only clear cache subdirs, never the whole tree (player prefs
-            // like login tokens live here too). Unity's HTTP cache is in
-            // names like "cache", "Cache", or versioned subdirs.
-            if dir.is_dir() {
+        // Also check Local (not just LocalLow) — Unity sometimes caches there too
+        let local = base.join("AppData").join("Local");
+        for base_dir in [&locallow, &local] {
+            if !base_dir.is_dir() { continue; }
+            // Walk the tree looking for cache dirs
+            let mut stack = vec![base_dir.clone()];
+            while let Some(dir) = stack.pop() {
                 if let Ok(entries) = std::fs::read_dir(&dir) {
                     for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().to_lowercase();
-                        if name.contains("cache") {
-                            let p = entry.path();
-                            if p.is_dir() {
-                                if std::fs::remove_dir_all(&p).is_ok() {
-                                    cleared += 1;
-                                    println!("[launcher] cleared cache dir: {}", p.display());
+                        let p = entry.path();
+                        if p.is_dir() {
+                            let name = entry.file_name().to_string_lossy().to_lowercase();
+                            // Clear anything with "cache" or "httpcache" in the name
+                            // BUT never delete the whole Rec Room folder (has login tokens)
+                            if name.contains("cache") || name.contains("httpcache") {
+                                // Safety: don't delete if it's a top-level company folder
+                                if p.parent() != Some(base_dir.as_path()) || !name.contains("rec") {
+                                    if std::fs::remove_dir_all(&p).is_ok() {
+                                        cleared += 1;
+                                        println!("[launcher] cleared cache dir: {}", p.display());
+                                    }
                                 }
+                            } else {
+                                // Not a cache dir, recurse deeper (limit depth to avoid infinite)
+                                stack.push(p);
                             }
                         }
                     }
                 }
+                // Safety: limit stack size
+                if stack.len() > 1000 { break; }
             }
         }
     }
