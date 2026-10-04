@@ -396,10 +396,13 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
     clear_unity_http_cache(progress);
     match crate::find_game_exe(dir) {
         Some(exe) => {
-            // 2026 client has Referee anti-cheat (Referee.dll) which kills the
-            // game if it detects DLL injection. Skip the 2025Patch injector
-            // for 2026 and rely on the hosts-file redirect instead.
-            let is_2026 = dir.join("Referee.dll").exists() || dir.join("RecRoom_Data").is_dir();
+            // 2026 client has Referee anti-cheat service (RefereeClientInstaller.exe)
+            // which kills the game if it detects DLL injection. Skip the
+            // 2025Patch injector for 2026 and rely on the hosts-file redirect
+            // instead. The 2025 client also has Referee.dll but no service —
+            // it NEEDS the injector.
+            let is_2026 = dir.join("RefereeClientInstaller.exe").exists()
+                || dir.join("RecRoom_Data").is_dir();
             if !is_2026 {
                 let injector = dir.join("Injector.exe");
                 let patch_dll = dir.join("2025Patch.dll");
