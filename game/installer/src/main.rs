@@ -60,10 +60,9 @@ mod vcredist;
 /// Client mirrors, fastest first. All serve the byte-identical client.zip
 /// (same MD5) — the downloader falls through to the next on any failure.
 const CLIENT_ZIP_MIRRORS: &[&str] = &[
-    "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/client-2026-03/march-2026-client.zip",
-    "https://archive.recagain.site/download/manifest/5037299340901764828",
+    "https://s3.g.megas4.com/2koayuyiwxv4groxzwdbbxg43cwustavrkvfb/recflare/2025/client.zip",
 ];
-const CLIENT_ZIP_MD5: &str = "dcf411174908aa2b7109a7d0bf5c592e";
+const CLIENT_ZIP_MD5: &str = "6820e89bff41906ded7f5c066027f1d6";
 // 2025 client uses 2025Patch (native DLL injection) instead of BepInEx.
 // v0.3.0: 2025 client migration — BepInEx removed.
 const PATCH2025_URL: &str = "https://github.com/recflare/patch-2025/releases/download/v0.0.8/2025Patch-v0.0.8-x64.zip";
@@ -1024,14 +1023,15 @@ async fn build_full_install(
     progress.set_detail("Extracting game files…".to_string());
     extract_zip(&client_zip, target, "client")?;
     let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
-    // 2026 client: install the Referee anti-cheat Windows service the way
+    // 2026 client only: install the Referee anti-cheat Windows service the way
     // Steam did (installscript.vdf runs `RefereeClientInstaller.exe -install`
-    // on first install). The March 2026 RecRoom.exe cannot start without it:
-    // its Referee.dll import terminates the process when the service isn't
-    // available. v0.5.9 tried renaming the Referee files away — that broke
-    // the game load entirely. The files must stay as shipped.
-    install_referee_service(target, progress);
-    progress.set_detail(String::new());
+    // on first install). The March 2026 RecRoom.exe cannot start without it.
+    // The 2025 client has no service files (no RefereeClientInstaller.exe) —
+    // its 2025Patch handles the anti-cheat in-memory, so skip the service.
+    if target.join("RefereeClientInstaller.exe").exists() {
+        install_referee_service(target, progress);
+        progress.set_detail(String::new());
+    }
 
     apply_common_components(
         target,
