@@ -90,7 +90,7 @@ pub(crate) const STEAM_APP_ID: &str = "471710";
 /// steam_interfaces.txt, embedded from assets/ (same file the cloud tests copy).
 pub(crate) const STEAM_INTERFACES: &str = include_str!("../assets/steam_interfaces.txt");
 
-const NS_PLACEHOLDER: &str = "fluxrec-auth.ripo-ripoteam.workers.dev";
+const NS_PLACEHOLDER: &str = "fluxrec-api.ripo-ripoteam.workers.dev";
 /// Compile-time wiring (GitHub Secrets -> CI env -> baked in at build).
 /// Keeps the IDs out of the repo; runtime args/env still override.
 const NS_HOST_DEFAULT: &str = match option_env!("FLUXREC_NS_HOST") {
