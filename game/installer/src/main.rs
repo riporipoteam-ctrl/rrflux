@@ -619,6 +619,15 @@ pub(crate) fn is_2023_install(dir: &Path) -> bool {
         || dir.join("doorstop_config.ini").exists()
 }
 
+/// Detect a March 2026 client install: it has the Referee service installer
+/// or the 2026 data dir name. v0.6.0 migrates 2026 -> 2025 (quarantine + fresh
+/// 2025 download) because the 2026 Referee chain cannot launch.
+pub(crate) fn is_2026_install(dir: &Path) -> bool {
+    dir.join("RefereeClientInstaller.exe").exists()
+        || dir.join("RefereeClientApp.exe").exists()
+        || dir.join("RecRoom_Data").is_dir()
+}
+
 /// Upgrade-mode decision (pure): skip the ~4.2GB client.zip download +
 /// extract only when a real 2025 install (`Recroom_Release.exe`) is already
 /// present in the dir. A 2023 tree (old exe / BepInEx / Doorstop files)
@@ -890,6 +899,25 @@ async fn run_install(
             progress,
         )
         .await
+    } else if is_2026_install(dir) {
+        // v0.6.0: March 2026 client cannot launch (Referee service dead).
+        // Quarantine the 2026 tree and fresh-install the 2025 client.
+        println!("[install] 2026-era install detected — migrating to a clean 2025 tree.");
+        progress.set_stage("Migrating…");
+        progress.set_detail("Moving the old 2026 install aside (kept as backup)…".to_string());
+        quarantine_2023_tree(dir)?;
+        progress.set_detail(String::new());
+        println!("[install] fresh install — building in staging.");
+        fresh_install(
+            dir,
+            &client,
+            ns_host,
+            photon_rt,
+            photon_voice,
+            photon_chat,
+            progress,
+        )
+        .await
     } else {
         println!("[install] upgrade — refreshing components in place with rollback.");
         upgrade_install(
@@ -976,7 +1004,10 @@ async fn upgrade_install(
             // 2026: ensure the Referee service is installed and any v0.5.9
             // *.disabled renames are repaired (upgrade path skips the fresh
             // client download, so this wouldn't otherwise run).
-            install_referee_service(dir, progress);
+            // v0.6.0: only for 2026 installs (2025 has no service files).
+            if dir.join("RefereeClientInstaller.exe").exists() {
+                install_referee_service(dir, progress);
+            }
             finish_live_dir(dir, ns_host, progress);
             progress.set_stage("Final checks…");
             verify_install(dir)?;
