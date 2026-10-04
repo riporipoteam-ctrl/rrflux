@@ -591,10 +591,12 @@ fn create_shortcut(
 /// 2025patch.log). A 2023 tree is never a valid 2025 install.
 pub(crate) fn find_game_exe(dir: &Path) -> Option<PathBuf> {
     for name in [
-        "Recroom_Release.exe",
-        "recroom_release.exe",
+        // 2026 client uses RecRoom.exe as main; 2025 uses Recroom_Release.exe.
+        // Check 2026 first since its zip contains both.
         "RecRoom.exe",
         "recroom.exe",
+        "Recroom_Release.exe",
+        "recroom_release.exe",
     ] {
         let p = dir.join(name);
         if p.exists() {
