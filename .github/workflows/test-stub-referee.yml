@@ -1,0 +1,65 @@
+name: Test stub Referee.dll on Windows
+
+# Tests whether replacing the Themida-packed Referee.dll with a minimal
+# stub (exporting TWpjzW as a no-op) allows the March 2026 RecRoom.exe
+# to start. If the game proceeds past anti-cheat init with the stub,
+# the Referee service is not required for launch.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-stub:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download March 2026 client
+        shell: powershell
+        run: |
+          $url = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/client-2026-03/march-2026-client.zip"
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\client.zip"
+          New-Item -ItemType Directory -Force -Path "C:\fluxrec-stubtest" | Out-Null
+          Expand-Archive -Path "$env:TEMP\client.zip" -DestinationPath "C:\fluxrec-stubtest" -Force
+          echo "Client ready."
+
+      - name: Backup real Referee.dll and install stub
+        shell: powershell
+        run: |
+          Move-Item "C:\fluxrec-stubtest\Referee.dll" "C:\fluxrec-stubtest\Referee.dll.real"
+          Copy-Item "game\installer\test-data\Referee-stub.dll" "C:\fluxrec-stubtest\Referee.dll"
+          echo "Stub installed."
+          # Verify the stub exports TWpjzW
+          $bytes = [System.IO.File]::ReadAllBytes("C:\fluxrec-stubtest\Referee.dll")
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+          if ($text -match "TWpjzW") { echo "Stub exports TWpjzW: YES" } else { echo "Stub exports TWpjzW: NO" }
+
+      - name: Launch RecRoom.exe with stub (60s)
+        shell: powershell
+        run: |
+          echo "Launching with stub Referee.dll..."
+          # Clear any old stub log
+          Remove-Item "C:\fluxrec-stubtest\referee_stub.log" -ErrorAction SilentlyContinue
+          $proc = Start-Process -FilePath "C:\fluxrec-stubtest\RecRoom.exe" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 60
+          if (!$proc.HasExited) {
+            echo "STILL RUNNING after 60s - game may have started!"
+            # Take a screenshot? Can't easily. Just report.
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          } else {
+            echo "Exited with code: $($proc.ExitCode)"
+          }
+          echo "--- Stub log ---"
+          if (Test-Path "C:\fluxrec-stubtest\referee_stub.log") {
+            Get-Content "C:\fluxrec-stubtest\referee_stub.log"
+          } else {
+            echo "No stub log (TWpjzW may not have been called, or CWD differs)"
+          }
+          echo "--- Player.log ---"
+          $logPath = "$env:USERPROFILE\AppData\LocalLow\Against Gravity\Rec Room\Player.log"
+          if (Test-Path $logPath) {
+            echo "Player.log EXISTS:"
+            Get-Content $logPath -Tail 30
+          } else {
+            echo "No Player.log"
+          }
