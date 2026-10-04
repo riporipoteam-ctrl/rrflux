@@ -14,15 +14,15 @@ use std::time::Instant;
 /// non-overlapping and ascending; the last one ends at 100.
 const STAGES: &[(&str, f64, f64)] = &[
     ("Preparing\u{2026}", 0.0, 2.0),
-    ("Downloading game files\u{2026}", 2.0, 48.0),
-    ("Extracting game files\u{2026}", 50.0, 12.0),
-    ("Applying Steam bypass\u{2026}", 62.0, 3.0),
-    ("Installing BepInEx\u{2026}", 65.0, 10.0),
-    ("Applying Flux Rec branding\u{2026}", 75.0, 8.0),
-    ("Writing configuration\u{2026}", 83.0, 5.0),
-    ("Creating shortcuts\u{2026}", 88.0, 4.0),
-    ("Final checks\u{2026}", 92.0, 5.0),
-    ("Committing installation\u{2026}", 97.0, 3.0),
+    ("Downloading game files\u{2026}", 2.0, 40.0),
+    ("Extracting game files\u{2026}", 42.0, 10.0),
+    ("Applying Steam bypass\u{2026}", 52.0, 3.0),
+    ("Installing BepInEx\u{2026}", 55.0, 8.0),
+    ("Applying Flux Rec branding\u{2026}", 63.0, 15.0),
+    ("Writing configuration\u{2026}", 78.0, 5.0),
+    ("Creating shortcuts\u{2026}", 83.0, 4.0),
+    ("Final checks\u{2026}", 87.0, 8.0),
+    ("Committing installation\u{2026}", 95.0, 5.0),
 ];
 
 struct Inner {

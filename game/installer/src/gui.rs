@@ -339,6 +339,17 @@ mod imp {
         let _ = SetTextColor(hdc, GRAY);
         draw_text_center(hdc, "Record  •  Create  •  Share", WIN_W / 2, 150, WIN_W, 25);
 
+        // --- Version ---
+        let _ = SetTextColor(hdc, GRAY);
+        draw_text_center(
+            hdc,
+            &format!("v{}", env!("CARGO_PKG_VERSION")),
+            WIN_W / 2,
+            175,
+            WIN_W,
+            20,
+        );
+
         // --- Carousel ---
         draw_carousel(hdc, s);
 
