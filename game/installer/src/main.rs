@@ -591,8 +591,10 @@ fn create_shortcut(
 /// 2025patch.log). A 2023 tree is never a valid 2025 install.
 pub(crate) fn find_game_exe(dir: &Path) -> Option<PathBuf> {
     for name in [
-        // 2025 and 2026 game exe is Recroom_Release.exe.
-        // RecRoom.exe (2026) is the Referee anti-cheat launcher — do NOT use it!
+        // 2025: Recroom_Release.exe IS the game.
+        // 2026: Recroom_Release.exe is the Referee Client Launcher — it
+        //   starts the Referee service and then launches RecRoom.exe (the
+        //   actual Unity game). Launching through it is the supported flow.
         "Recroom_Release.exe",
         "recroom_release.exe",
         "RecRoom.exe",
@@ -972,6 +974,10 @@ async fn upgrade_install(
     match refresh {
         Ok(()) => {
             backups.commit();
+            // 2026: ensure the Referee service is installed and any v0.5.9
+            // *.disabled renames are repaired (upgrade path skips the fresh
+            // client download, so this wouldn't otherwise run).
+            install_referee_service(dir, progress);
             finish_live_dir(dir, ns_host, progress);
             progress.set_stage("Final checks…");
             verify_install(dir)?;
@@ -1018,20 +1024,13 @@ async fn build_full_install(
     progress.set_detail("Extracting game files…".to_string());
     extract_zip(&client_zip, target, "client")?;
     let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
-    // 2026 client: disable Referee anti-cheat by renaming its files.
-    // Referee kills the game if it can't reach Rec Room's dead servers,
-    // or if it detects modifications. Renaming prevents it from loading.
-    for referee_file in ["Referee.dll", "RefereeClientApp.exe", "RefereeClientInstaller.exe"] {
-        let src = target.join(referee_file);
-        if src.exists() {
-            let dst = target.join(format!("{referee_file}.disabled"));
-            if let Err(e) = std::fs::rename(&src, &dst) {
-                eprintln!("[referee] WARNING: could not disable {referee_file}: {e}");
-            } else {
-                println!("[referee] disabled {referee_file}");
-            }
-        }
-    }
+    // 2026 client: install the Referee anti-cheat Windows service the way
+    // Steam did (installscript.vdf runs `RefereeClientInstaller.exe -install`
+    // on first install). The March 2026 RecRoom.exe cannot start without it:
+    // its Referee.dll import terminates the process when the service isn't
+    // available. v0.5.9 tried renaming the Referee files away — that broke
+    // the game load entirely. The files must stay as shipped.
+    install_referee_service(target, progress);
     progress.set_detail(String::new());
 
     apply_common_components(
@@ -1046,6 +1045,76 @@ async fn build_full_install(
     )
     .await
 }
+
+/// 2026 client: install the Referee anti-cheat Windows service the way Steam
+/// did (`installscript.vdf` runs `RefereeClientInstaller.exe -install` once on
+/// first install). The March 2026 `RecRoom.exe` statically imports `TWpjzW`
+/// from `Referee.dll`, and the anti-cheat terminates the game process when
+/// its service isn't installed/running — so the service setup is part of a
+/// working install, not optional.
+///
+/// Also repairs v0.5.9 installs: that version renamed the Referee files to
+/// `*.disabled`, which broke the game load entirely. The files are restored
+/// to their shipped names here.
+///
+/// Must run elevated (setup already relaunches as admin before installing).
+/// Fail-soft: if the install fails, the Referee Client Launcher
+/// (`Recroom_Release.exe`) retries the service start at play time, so a
+/// failure here logs loudly but doesn't abort the install.
+#[cfg(windows)]
+fn install_referee_service(target: &Path, progress: &progress::Progress) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    // v0.5.9 renamed these to *.disabled — restore the shipped names.
+    for referee_file in [
+        "Referee.dll",
+        "RefereeClientApp.exe",
+        "RefereeClientInstaller.exe",
+    ] {
+        let disabled = target.join(format!("{referee_file}.disabled"));
+        let src = target.join(referee_file);
+        if disabled.is_file() && !src.is_file() {
+            match std::fs::rename(&disabled, &src) {
+                Ok(()) => println!("[referee] restored {referee_file}"),
+                Err(e) => eprintln!("[referee] WARNING: could not restore {referee_file}: {e}"),
+            }
+        }
+    }
+    let installer = target.join("RefereeClientInstaller.exe");
+    if !installer.is_file() {
+        return; // not a Referee-era client, nothing to do
+    }
+    println!("[referee] installing Referee anti-cheat service…");
+    progress.set_stage("Installing anti-cheat service…");
+    match std::process::Command::new(&installer)
+        .arg("-install")
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+    {
+        Ok(s) if s.success() => println!("[referee] service installed."),
+        Ok(s) => eprintln!(
+            "[referee] WARNING: service installer exited with {s}; the game may fail to start."
+        ),
+        Err(e) => eprintln!("[referee] WARNING: could not run service installer: {e}"),
+    }
+    // Start it now so it's already running at first launch. `sc` failing
+    // (already running, service not registered) is fine — the game launcher
+    // starts it on demand.
+    let started = std::process::Command::new("sc")
+        .args(["start", "RefereeClientApp"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if started {
+        println!("[referee] service started.");
+    } else {
+        eprintln!("[referee] note: service not started yet (the game launcher will start it).");
+    }
+}
+
+#[cfg(not(windows))]
+fn install_referee_service(_target: &Path, _progress: &progress::Progress) {}
 
 /// Refresh managed components in an existing install. `backups` protects
 /// every file that gets overwritten.
