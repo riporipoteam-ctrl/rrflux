@@ -396,41 +396,45 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
     clear_unity_http_cache(progress);
     match crate::find_game_exe(dir) {
         Some(exe) => {
-            let injector = dir.join("Injector.exe");
-            let patch_dll = dir.join("2025Patch.dll");
-            let patch_ini = dir.join("2025patch.ini");
-            let mut missing = Vec::new();
-            if !injector.is_file() {
-                missing.push("Injector.exe");
+            // 2026 client has Referee anti-cheat (Referee.dll) which kills the
+            // game if it detects DLL injection. Skip the 2025Patch injector
+            // for 2026 and rely on the hosts-file redirect instead.
+            let is_2026 = dir.join("Referee.dll").exists() || dir.join("RecRoom_Data").is_dir();
+            if !is_2026 {
+                let injector = dir.join("Injector.exe");
+                let patch_dll = dir.join("2025Patch.dll");
+                let patch_ini = dir.join("2025patch.ini");
+                let mut missing = Vec::new();
+                if !injector.is_file() {
+                    missing.push("Injector.exe");
+                }
+                if !patch_dll.is_file() {
+                    missing.push("2025Patch.dll");
+                }
+                if !patch_ini.is_file() {
+                    missing.push("2025patch.ini");
+                }
+                if !missing.is_empty() {
+                    let msg = format!(
+                        "Patch files missing ({}): the game cannot reach Flux Rec without them. Re-run setup to restore them.",
+                        missing.join(", ")
+                    );
+                    eprintln!("[launcher] {msg}");
+                    progress.set_status(&msg, 100);
+                    std::thread::sleep(Duration::from_secs(10));
+                    return;
+                }
+                progress.set_status("Launching game\u{2026}", 100);
+                // 2025Patch injector goes first — it attaches when the game loads.
+                println!("[launcher] starting injector: {}", injector.display());
+                crate::stealth::launch_hidden(&injector, &[]);
+                std::thread::sleep(Duration::from_millis(500));
+            } else {
+                println!("[launcher] 2026 client detected (Referee anti-cheat) — skipping injector.");
+                progress.set_status("Launching game\u{2026}", 100);
             }
-            if !patch_dll.is_file() {
-                missing.push("2025Patch.dll");
-            }
-            if !patch_ini.is_file() {
-                missing.push("2025patch.ini");
-            }
-            if !missing.is_empty() {
-                let msg = format!(
-                    "Patch files missing ({}): the game cannot reach Flux Rec without them. Re-run setup to restore them.",
-                    missing.join(", ")
-                );
-                eprintln!("[launcher] {msg}");
-                progress.set_status(&msg, 100);
-                std::thread::sleep(Duration::from_secs(10));
-                return;
-            }
-            progress.set_status("Launching game\u{2026}", 100);
-            // 2025Patch injector goes first — it attaches when the game loads.
-            // (launch_hidden runs it with the game dir as its working dir,
-            // so it finds 2025Patch.dll / 2025patch.ini.)
-            println!("[launcher] starting injector: {}", injector.display());
-            crate::stealth::launch_hidden(&injector, &[]);
-            // Brief beat so the injector's wait loop is up before the game.
-            std::thread::sleep(Duration::from_millis(500));
             println!("[launcher] starting game: {}", exe.display());
             crate::stealth::launch_hidden(&exe, &["+forcemode:screen"]);
-            // Let the player see the "Launching game\u{2026}" state before the
-            // window closes; the game outlives us.
             std::thread::sleep(Duration::from_secs(3));
         }
         None => {
