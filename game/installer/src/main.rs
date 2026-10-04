@@ -1100,6 +1100,16 @@ fn install_referee_service(target: &Path, progress: &progress::Progress) {
     // Start it now so it's already running at first launch. `sc` failing
     // (already running, service not registered) is fine — the game launcher
     // starts it on demand.
+    //
+    // v0.5.9-fix: set the service to AUTO-START. The game launcher
+    // (Recroom_Release.exe) runs non-elevated and cannot start a stopped
+    // service (access denied) — if the service isn't already running, the
+    // launcher retries and gives up ("banner then close"). Auto-start
+    // ensures it's running after boot without needing elevation at play time.
+    let _ = std::process::Command::new("sc")
+        .args(["config", "RefereeClientApp", "start=", "auto"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
     let started = std::process::Command::new("sc")
         .args(["start", "RefereeClientApp"])
         .creation_flags(CREATE_NO_WINDOW)
