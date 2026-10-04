@@ -1018,6 +1018,20 @@ async fn build_full_install(
     progress.set_detail("Extracting game files…".to_string());
     extract_zip(&client_zip, target, "client")?;
     let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
+    // 2026 client: disable Referee anti-cheat by renaming its files.
+    // Referee kills the game if it can't reach Rec Room's dead servers,
+    // or if it detects modifications. Renaming prevents it from loading.
+    for referee_file in ["Referee.dll", "RefereeClientApp.exe", "RefereeClientInstaller.exe"] {
+        let src = target.join(referee_file);
+        if src.exists() {
+            let dst = target.join(format!("{referee_file}.disabled"));
+            if let Err(e) = std::fs::rename(&src, &dst) {
+                eprintln!("[referee] WARNING: could not disable {referee_file}: {e}");
+            } else {
+                println!("[referee] disabled {referee_file}");
+            }
+        }
+    }
     progress.set_detail(String::new());
 
     apply_common_components(
