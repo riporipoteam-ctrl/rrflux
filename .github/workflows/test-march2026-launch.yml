@@ -1,0 +1,107 @@
+name: Test March 2026 client launch on Windows
+
+# Manual test: runs the March 2026 Rec Room client on a real Windows
+# runner to diagnose the Referee anti-cheat startup chain.
+# Trigger manually from the Actions tab.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-launch:
+    runs-on: windows-latest
+    steps:
+      - name: Download March 2026 client
+        shell: powershell
+        run: |
+          $url = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/client-2026-03/march-2026-client.zip"
+          echo "Downloading client (4.4GB, this takes a while)..."
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\client.zip"
+          echo "Download complete."
+          (Get-Item "$env:TEMP\client.zip").Length
+
+      - name: Extract client
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "C:\fluxrec-test" | Out-Null
+          echo "Extracting..."
+          Expand-Archive -Path "$env:TEMP\client.zip" -DestinationPath "C:\fluxrec-test" -Force
+          echo "Extracted."
+          Get-ChildItem "C:\fluxrec-test" | Select-Object Name, Length | Format-Table
+
+      - name: Check Referee files present
+        shell: powershell
+        run: |
+          $files = @("RecRoom.exe", "Recroom_Release.exe", "Referee.dll", "RefereeClientApp.exe", "RefereeClientInstaller.exe")
+          foreach ($f in $files) {
+            $p = "C:\fluxrec-test\$f"
+            if (Test-Path $p) { echo "FOUND: $f ($((Get-Item $p).Length) bytes)" }
+            else { echo "MISSING: $f" }
+          }
+
+      - name: Install Referee service (as Steam did)
+        shell: powershell
+        run: |
+          echo "Running RefereeClientInstaller.exe -install..."
+          $proc = Start-Process -FilePath "C:\fluxrec-test\RefereeClientInstaller.exe" -ArgumentList "-install" -Wait -PassThru -NoNewWindow
+          echo "Installer exit code: $($proc.ExitCode)"
+
+      - name: Check service status
+        shell: powershell
+        run: |
+          sc.exe query RefereeClientApp
+          echo "---"
+          Get-Service -Name "RefereeClientApp" -ErrorAction SilentlyContinue | Format-List Name, Status, StartType
+
+      - name: Try launching via Referee Client Launcher
+        shell: powershell
+        run: |
+          echo "Launching Recroom_Release.exe (30s timeout)..."
+          $proc = Start-Process -FilePath "C:\fluxrec-test\Recroom_Release.exe" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 30
+          if (!$proc.HasExited) {
+            echo "Still running after 30s (good sign?)"
+            $proc | Format-List Id, ProcessName, HasExited
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          } else {
+            echo "Exited with code: $($proc.ExitCode)"
+          }
+          echo "--- Referee.Launcher.log ---"
+          if (Test-Path "C:\fluxrec-test\Referee.Launcher.log") {
+            Get-Content "C:\fluxrec-test\Referee.Launcher.log"
+          } else {
+            echo "NO LAUNCHER LOG FOUND"
+          }
+
+      - name: Try launching RecRoom.exe directly
+        shell: powershell
+        run: |
+          echo "Launching RecRoom.exe directly (30s timeout)..."
+          $proc = Start-Process -FilePath "C:\fluxrec-test\RecRoom.exe" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 30
+          if (!$proc.HasExited) {
+            echo "Still running after 30s"
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          } else {
+            echo "Exited with code: $($proc.ExitCode)"
+          }
+
+      - name: Check for Player.log
+        shell: powershell
+        run: |
+          $logPath = "$env:USERPROFILE\AppData\LocalLow\Against Gravity\Rec Room\Player.log"
+          if (Test-Path $logPath) {
+            echo "Player.log EXISTS, last lines:"
+            Get-Content $logPath -Tail 50
+          } else {
+            echo "NO Player.log"
+          }
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-test-logs
+          path: |
+            C:\fluxrec-test\Referee.Launcher.log
+            C:\fluxrec-test\*.log
