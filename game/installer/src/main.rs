@@ -67,16 +67,19 @@ const CLIENT_ZIP_MD5: &str = "6820e89bff41906ded7f5c066027f1d6";
 // v0.3.0: 2025 client migration — BepInEx removed.
 const PATCH2025_URL: &str = "https://github.com/recflare/patch-2025/releases/download/v0.0.8/2025Patch-v0.0.8-x64.zip";
 // (v0.3.0: 2025Patch files are embedded — see patch2025.rs.)
-/// Flux Rec logo bundle: gzipped patched Addressables UI bundle (loading
-/// screen logos replaced). Hosted on our Hugging Face dataset; verified by
-/// MD5 before use, then gunzipped over the stock bundle.
-const LOGO_BUNDLE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-bundle/logo-bundle.gz";
-const LOGO_BUNDLE_MD5: &str = "537b8583e64f27469874deb7ee00a32f";
-const LOGO_BUNDLE_SIZE: u64 = 39_155_393;
-const LOGO_BUNDLE_NAME: &str = "682ba40059cd6c037bace975e7aea07f.bundle";
-const LOGO_BUNDLE_UNZIPPED_SIZE: u64 = 86_361_811;
-/// MD5 of the gunzipped patched bundle (Flux Rec logo replacement).
-const LOGO_BUNDLE_UNZIPPED_MD5: &str = "47f1cd2a2c6004d196a539d208a7358d";
+/// Flux Rec logo bundles: 5 patched Addressables bundles with the blue Flux
+/// logo replacing Rec Room branding (loading screens, splash, UI icons).
+/// Hosted on our Hugging Face dataset; each verified by MD5 before use,
+/// then copied over the stock bundle. Backups are kept as .stock files.
+const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
+    // (filename, md5, size)
+    ("063b6b6653aa642616fd21d3d4701899.bundle", "95624fde710651e930d9f93b74438477", 27_981_907),
+    ("2b731967c40860818dbeadf308b851f5.bundle", "9432291269dc067ace03f76305638467", 11_326_577),
+    ("6d3223da354de646ab79d5660dcac9d2.bundle", "2a94ec3a870aca582cb7d2666fc2f81a", 19_822_299),
+    ("91aca73acb86d6607f0efa1f803348be.bundle", "c82afb3cf4106e2ff1e52770adce8b8a", 62_928_907),
+    ("94e46740de5686a7dc4491ef7d58c517.bundle", "59bacad169acb6eb3786ea1b2f46455f", 986_601),
+];
+const LOGO_BUNDLE_BASE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-patch-v2/";
 
 /// Goldberg Steam emulator (gbe_fork) release — pinned. This is the exact
 /// archive our cloud test runs use to make the 2023 client boot with no
@@ -803,50 +806,77 @@ async fn apply_logo_bundle(
     dir: &Path,
     progress: &progress::Progress,
 ) -> Result<(), String> {
-    // The stock UI bundle inside the extracted client layout.
-    let target = dir
+    let aa_dir = dir
         .join("RecRoom_Data")
         .join("StreamingAssets")
         .join("aa")
-        .join("StandaloneWindows64")
-        .join(LOGO_BUNDLE_NAME);
+        .join("StandaloneWindows64");
 
-    if !target.exists() {
-        println!("[logo] target bundle not found (fresh layout?), skipping.");
+    if !aa_dir.exists() {
+        println!("[logo] Addressables dir not found (fresh layout?), skipping.");
         return Ok(());
     }
 
-    // Idempotency: if the installed bundle already has our patched hash, done.
-    if let Ok(h) = md5_of_file(&target) {
-        if h.eq_ignore_ascii_case(LOGO_BUNDLE_UNZIPPED_MD5) {
-            println!("[logo] Flux Rec logo bundle already applied, skipping.");
-            return Ok(());
+    // Apply each of the 5 patched logo bundles.
+    for (idx, (filename, expected_md5, expected_size)) in LOGO_BUNDLES.iter().enumerate() {
+        let target = aa_dir.join(filename);
+
+        if !target.exists() {
+            println!("[logo] target {} not found, skipping.", filename);
+            continue;
         }
+
+        // Idempotency: if the installed bundle already has our patched hash, skip.
+        if let Ok(h) = md5_of_file(&target) {
+            if h.eq_ignore_ascii_case(expected_md5) {
+                println!("[logo] {} already patched, skipping.", filename);
+                continue;
+            }
+        }
+
+        // Download the patched bundle (verified by MD5 + size).
+        let url = format!("{}{}", LOGO_BUNDLE_BASE_URL, filename);
+        let tmp_path = dir.join(format!("logo-patch-{}.tmp", idx));
+        download(
+            client,
+            &url,
+            &tmp_path,
+            Some(expected_md5),
+            Some(*expected_size),
+            filename,
+            Some((progress, "Applying Flux Rec branding…")),
+        )
+        .await?;
+        // AV hardening (defender.rs): strip the Mark of the Web.
+        defender::unblock_file(&tmp_path);
+
+        if !file_ok(&tmp_path, Some(expected_md5), Some(*expected_size)) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(format!("logo bundle {} failed verification", filename));
+        }
+
+        // Back up the stock bundle once — never overwrite an existing backup.
+        let backup_path = target.with_extension("bundle.stock");
+        if !backup_path.exists() {
+            std::fs::copy(&target, &backup_path).map_err(|e| e.to_string())?;
+            println!("[logo] backed up {}.", filename);
+        }
+
+        // Atomic replace.
+        #[cfg(windows)]
+        if target.exists() {
+            std::fs::remove_file(&target).map_err(|e| e.to_string())?;
+        }
+        if let Err(e) = std::fs::rename(&tmp_path, &target) {
+            let _ = std::fs::remove_file(&tmp_path);
+            if backup_path.exists() {
+                let _ = std::fs::copy(&backup_path, &target);
+            }
+            return Err(e.to_string());
+        }
+        println!("[logo] Applied {} (Flux Rec branding).", filename);
     }
-
-    // Download the gzipped patched bundle (verified by MD5 + size).
-    let gz_path = dir.join("logo-bundle.gz");
-    download(
-        client,
-        LOGO_BUNDLE_URL,
-        &gz_path,
-        Some(LOGO_BUNDLE_MD5),
-        Some(LOGO_BUNDLE_SIZE),
-        "logo-bundle",
-        Some((progress, "Applying Flux Rec branding…")),
-    )
-    .await?;
-    // AV hardening (defender.rs): strip the Mark of the Web from the archive.
-    defender::unblock_file(&gz_path);
-
-    let res = install_logo_bundle(
-        &gz_path,
-        &target,
-        LOGO_BUNDLE_UNZIPPED_MD5,
-        LOGO_BUNDLE_UNZIPPED_SIZE,
-    );
-    let _ = std::fs::remove_file(&gz_path); // free ~39MB either way
-    res
+    Ok(())
 }
 
 async fn run_install(
