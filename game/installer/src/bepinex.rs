@@ -54,35 +54,29 @@ pub async fn repair_for_launcher(
     }
 }
 
-/// 2025Patch auto-update: force-installs the embedded fixed patch files
-/// (2025Patch.dll with jsonfix, Injector.exe, and 2025patch.ini) on every
-/// --play. This ensures the client gets the clothing tab fix via the
-/// installer's auto-update mechanism, even if the files were deleted or
-/// corrupted.
+/// 2025Patch restore: force-installs the ORIGINAL 2025Patch.dll (66KB)
+/// on every --play. This reverts the broken 338KB wrapper that was crashing
+/// Unity on startup. The game will launch again (clothing tab fix disabled).
 pub async fn sync_plugin_from_mirror(
     game_dir: &Path,
     _progress: &crate::progress::Progress,
 ) {
-    // Embedded fixed DLL (2025Patch.dll is the wrapper with jsonfix)
-    const FIXED_DLL: &[u8] = include_bytes!("../assets/2025Patch.dll");
+    // Embedded ORIGINAL DLL (66KB, no wrapper, no jsonfix)
+    // The 338KB wrapper was crashing Unity on startup — reverting to stock.
+    const ORIGINAL_DLL: &[u8] = include_bytes!("../assets/2025Patch.dll");
 
-    // 1. Backup original DLL as 2025Patch-orig.dll (if not already done)
     let dest_dll = game_dir.join("2025Patch.dll");
-    let orig_dll = game_dir.join("2025Patch-orig.dll");
-    if !orig_dll.exists() {
-        if let Ok(existing) = std::fs::read(&dest_dll) {
-            // Only backup if it's the old 66KB version, not the 338KB wrapper
-            if existing.len() < 100000 {
-                let _ = std::fs::write(&orig_dll, &existing);
-                println!("[2025Patch] backed up original as 2025Patch-orig.dll");
-            }
-        }
+
+    // Force-write the original DLL (always overwrite to remove the broken wrapper)
+    match std::fs::write(&dest_dll, ORIGINAL_DLL) {
+        Ok(_) => println!("[2025Patch] restored original 2025Patch.dll ({} bytes)", ORIGINAL_DLL.len()),
+        Err(e) => eprintln!("[2025Patch] failed to write DLL: {}", e),
     }
 
-    // 2. Force-write the fixed DLL (always overwrite to ensure correct version)
-    match std::fs::write(&dest_dll, FIXED_DLL) {
-        Ok(_) => println!("[2025Patch] installed fixed 2025Patch.dll ({} bytes, clothing tab fix)", FIXED_DLL.len()),
-        Err(e) => eprintln!("[2025Patch] failed to write DLL: {}", e),
+    // Remove the wrapper backup if it exists (cleanup)
+    let orig_dll = game_dir.join("2025Patch-orig.dll");
+    if orig_dll.exists() {
+        let _ = std::fs::remove_file(&orig_dll);
     }
 
     // 3. Ensure 2025patch.ini exists with correct ApiHost
