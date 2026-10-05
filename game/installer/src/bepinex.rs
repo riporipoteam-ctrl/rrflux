@@ -54,11 +54,27 @@ pub async fn repair_for_launcher(
     }
 }
 
-/// 2025Patch is versioned with the installer via GitHub releases — there is
-/// no HF mirror sidecar to sync. Kept as a no-op so the launcher call site
-/// stays unchanged. Fail-soft by construction.
+/// 2025Patch auto-update: copies the embedded fixed 2025Patch.dll (with
+/// jsonfix for clothing tab categorization) to the game folder on every
+/// --play. This ensures the client gets the tab fix via the installer's
+/// auto-update mechanism.
 pub async fn sync_plugin_from_mirror(
-    _game_dir: &Path,
+    game_dir: &Path,
     _progress: &crate::progress::Progress,
 ) {
+    // Embedded fixed DLL (built from patch2025/src with jsonfix)
+    const FIXED_PATCH: &[u8] = include_bytes!("../assets/2025Patch.dll");
+    let dest = game_dir.join("2025Patch.dll");
+    // Only overwrite if the embedded version is different (avoid unnecessary writes)
+    let needs_update = match std::fs::read(&dest) {
+        Ok(existing) => existing != FIXED_PATCH,
+        Err(_) => true,
+    };
+    if needs_update {
+        if let Err(e) = std::fs::write(&dest, FIXED_PATCH) {
+            eprintln!("[2025Patch] failed to update: {}", e);
+        } else {
+            println!("[2025Patch] updated to fixed version (clothing tab fix)");
+        }
+    }
 }
