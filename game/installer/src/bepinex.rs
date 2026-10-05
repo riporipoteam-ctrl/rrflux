@@ -63,9 +63,8 @@ pub async fn sync_plugin_from_mirror(
     game_dir: &Path,
     _progress: &crate::progress::Progress,
 ) {
-    // Embedded fixed files (2025Patch.dll is the wrapper with jsonfix)
+    // Embedded fixed DLL (2025Patch.dll is the wrapper with jsonfix)
     const FIXED_DLL: &[u8] = include_bytes!("../assets/2025Patch.dll");
-    const INJECTOR: &[u8] = include_bytes!("../assets/Injector.exe");
 
     // 1. Backup original DLL as 2025Patch-orig.dll (if not already done)
     let dest_dll = game_dir.join("2025Patch.dll");
@@ -86,17 +85,7 @@ pub async fn sync_plugin_from_mirror(
         Err(e) => eprintln!("[2025Patch] failed to write DLL: {}", e),
     }
 
-    // 3. Ensure Injector.exe exists
-    let injector = game_dir.join("Injector.exe");
-    if !injector.exists() {
-        if let Err(e) = std::fs::write(&injector, INJECTOR) {
-            eprintln!("[2025Patch] failed to write Injector.exe: {}", e);
-        } else {
-            println!("[2025Patch] installed Injector.exe");
-        }
-    }
-
-    // 4. Ensure 2025patch.ini exists with correct ApiHost
+    // 3. Ensure 2025patch.ini exists with correct ApiHost
     let ini = game_dir.join("2025patch.ini");
     if !ini.exists() {
         // ApiHost is baked in at compile time via env var, fallback to fluxrec-api
