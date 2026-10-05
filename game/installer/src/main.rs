@@ -806,11 +806,23 @@ async fn apply_logo_bundle(
     dir: &Path,
     progress: &progress::Progress,
 ) -> Result<(), String> {
-    let aa_dir = dir
-        .join("RecRoom_Data")
-        .join("StreamingAssets")
-        .join("aa")
-        .join("StandaloneWindows64");
+    // v0.6.6: 2025 client uses Recroom_Release_Data, not RecRoom_Data.
+    // Check both to support 2025 and 2026 layouts.
+    let aa_dir = {
+        let path2025 = dir
+            .join("Recroom_Release_Data")
+            .join("StreamingAssets")
+            .join("aa")
+            .join("StandaloneWindows64");
+        if path2025.exists() {
+            path2025
+        } else {
+            dir.join("RecRoom_Data")
+                .join("StreamingAssets")
+                .join("aa")
+                .join("StandaloneWindows64")
+        }
+    };
 
     if !aa_dir.exists() {
         println!("[logo] Addressables dir not found (fresh layout?), skipping.");
