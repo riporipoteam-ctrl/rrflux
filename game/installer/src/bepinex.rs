@@ -63,14 +63,25 @@ pub async fn sync_plugin_from_mirror(
     _progress: &crate::progress::Progress,
 ) {
     // Embedded fixed DLL (built from patch2025/src with jsonfix)
+    // This is a WRAPPER that loads the original as 2025Patch-orig.dll
     const FIXED_PATCH: &[u8] = include_bytes!("../assets/2025Patch.dll");
     let dest = game_dir.join("2025Patch.dll");
-    // Only overwrite if the embedded version is different (avoid unnecessary writes)
+    let orig = game_dir.join("2025Patch-orig.dll");
+    // Only update if the embedded version is different
     let needs_update = match std::fs::read(&dest) {
         Ok(existing) => existing != FIXED_PATCH,
         Err(_) => true,
     };
     if needs_update {
+        // Backup the original as 2025Patch-orig.dll (if it exists and isn't already the wrapper)
+        if !orig.exists() {
+            if let Ok(existing) = std::fs::read(&dest) {
+                // Check if it's already the wrapper (338KB) vs original (67KB)
+                if existing.len() < 100000 {
+                    let _ = std::fs::write(&orig, &existing);
+                }
+            }
+        }
         if let Err(e) = std::fs::write(&dest, FIXED_PATCH) {
             eprintln!("[2025Patch] failed to update: {}", e);
         } else {
