@@ -16,6 +16,7 @@ import { validateAndGetAccountId } from '@repo/jwt'
 
 import { COACH_ACCOUNT_ID } from '../../api/src/custom-avatar-items-load'
 import { CatalogKind, UNSELLABLE_RARITIES } from '../../econ/src/catalog-load'
+import sf32025 from '../../econ/static/storefronts/sf3-2025.json'
 import { placeholderCuratedList, resolveCuratedList, serializeCuratedList } from './curated-lists'
 import {
 	ALGORITHMIC_LIST_PARAM,
@@ -470,8 +471,57 @@ async function randomCustomAvatarItemIds(c: Context<App>, key: string): Promise<
  * than being implied by the row.
  */
 async function genericRowEntities(c: Context<App>, key: string): Promise<ListEntity[]> {
+	const storeItems = clothingStoreRowEntities(key)
+	if (storeItems !== null) return storeItems
+
 	const ids = await randomCustomAvatarItemIds(c, key)
 	return entities(ids.map((id) => `${GENERIC_ID_PREFIX.CustomAvatarItem}.${id}`))
+}
+
+/**
+ * The 2025 clothing page is made of Generic rows, whose ids can name a purchasable item with
+ * the `0.` prefix. Feed those rows from the authentic 2025 storefront snapshot so every card
+ * resolves to a real, priced item that the same build can buy. The old catalog-backed draw
+ * returned random first-party custom avatar items instead (often gift boxes), and capped each
+ * category at 50; that is why the clothing page showed a few boxes instead of the catalog.
+ *
+ * The capture has no canonical outfit-slot field, so these display-name groups follow the
+ * store's own clothing categories. Items not classified by a narrower category remain in the
+ * broad `newitems` row rather than disappearing from the clothing store.
+ */
+function clothingStoreRowEntities(key: string): ListEntity[] | null {
+	const categoryTerms: Record<string, string[]> = {
+		headwearitems: ['hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear'],
+		topsitems: ['shirt', 'jacket', 'dress', 'vest', 'sweater', 'jersey', 'coat', 'robe', 'tunic', 'top'],
+		bottomsitems: ['pants', 'shorts', 'leggings', 'skirt', 'trousers'],
+		footwearitems: ['shoes', 'sneakers', 'sandals', 'boots', 'slippers', 'footwear'],
+		waistitems: ['belt', 'waist'],
+		handsitems: ['glove', 'hand', 'wrist', 'mittens'],
+		shoulderitems: ['quiver', 'backpack', 'cape', 'shoulder', 'back accessory'],
+		hairitems: ['hair', 'hairstyle'],
+		facialhairitems: ['beard', 'mustache', 'moustache', 'facial hair'],
+		accessoriesitems: [
+			'glasses', 'goggles', 'eyewear', 'earring', 'earwear', 'necklace', 'scarf', 'mask',
+			'bow tie', 'hearing aid', 'accessory', 'accessories',
+		],
+	}
+	const terms = categoryTerms[key]
+	if (terms === undefined && key !== 'clothingitems') return null
+
+	const now = Date.now()
+	const ids = sf32025.StoreItems
+		.filter((item) => {
+			const drop = item.GiftDrop
+			if (!drop.AvatarItemDesc?.trim() || drop.IsQuery) return false
+			if (!item.Prices.some((price) => price.Price > 0)) return false
+			if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
+			if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
+			if (terms === undefined) return true
+			const name = drop.FriendlyName.toLocaleLowerCase()
+			return terms.some((term) => name.includes(term))
+		})
+		.map((item) => `${GENERIC_ID_PREFIX.PurchasableItem}.${item.PurchasableItemId}`)
+	return entities(ids)
 }
 
 /**
@@ -1012,3 +1062,4 @@ app.get(
 )
 
 export default app
+
