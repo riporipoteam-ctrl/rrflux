@@ -1,6 +1,6 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "api",
+	"name": "fluxrec-api",
 	"main": "src/api.app.ts",
 	"compatibility_date": "2026-06-16",
 	"compatibility_flags": ["nodejs_compat"],
@@ -86,3 +86,4 @@
 		"FIRESTORE_PROJECT_ID": "flux-544a6"
 	}
 }
+
