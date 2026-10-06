@@ -375,8 +375,11 @@
 		"LatestStoreBadgeDateTime": "2020-01-01T00:00:00Z"
 	},
 	"ConfigTable": [
-		{ "Key": "Gift.DropChance", "Value": "1" },
-		{ "Key": "Gift.XP", "Value": "0.5" }
+		{"Key":"Gift.DropChance","Value":"1"},
+		{"Key":"Gift.XP","Value":"0.5"},
+		{"Key":"Econ.Store.Categories","Value":"{\"Categories\":[{\"Name\":\"Featured\",\"Depth\":0,\"Icon\":1,\"DiscoveryPageSource\":\"StoreFeatured\",\"ClickAction\":1},{\"Name\":\"Appearance\",\"Depth\":0,\"Icon\":2,\"DiscoveryPageSource\":\"StoreClothing\",\"ClickAction\":1},{\"Name\":\"Clothing\",\"Depth\":1,\"DiscoveryPageSource\":\"StoreAppearance\",\"ClickAction\":1},{\"Name\":\"Tops\",\"Depth\":2,\"ClickAction\":3,\"Filters\":512,\"StoreCarouselType\":8,\"SortCriteria\":1},{\"Name\":\"Bottoms\",\"Depth\":2,\"ClickAction\":3,\"Filters\":8388608,\"StoreCarouselType\":17,\"SortCriteria\":1},{\"Name\":\"Footwear\",\"Depth\":2,\"ClickAction\":3,\"Filters\":16777216,\"StoreCarouselType\":18,\"SortCriteria\":1},{\"Name\":\"Accessories\",\"Depth\":1,\"DiscoveryPageSource\":\"StoreAccessories\",\"ClickAction\":1},{\"Name\":\"Headwear\",\"Depth\":2,\"ClickAction\":3,\"Filters\":64,\"StoreCarouselType\":7,\"SortCriteria\":1},{\"Name\":\"Eyewear\",\"Depth\":2,\"ClickAction\":3,\"Filters\":256,\"StoreCarouselType\":19,\"SortCriteria\":1},{\"Name\":\"Earwear\",\"Depth\":2,\"ClickAction\":3,\"Filters\":33554432,\"StoreCarouselType\":20,\"SortCriteria\":1},{\"Name\":\"Neckwear\",\"Depth\":2,\"ClickAction\":3,\"Filters\":67108864,\"StoreCarouselType\":21,\"SortCriteria\":1},{\"Name\":\"Shoulders & Back\",\"Depth\":2,\"ClickAction\":3,\"Filters\":134217728,\"StoreCarouselType\":22,\"SortCriteria\":1},{\"Name\":\"Waist\",\"Depth\":2,\"ClickAction\":3,\"Filters\":268435456,\"StoreCarouselType\":23,\"SortCriteria\":1},{\"Name\":\"Hands\",\"Depth\":2,\"ClickAction\":3,\"Filters\":1024,\"StoreCarouselType\":10,\"SortCriteria\":1},{\"Name\":\"Styling\",\"Depth\":1,\"DiscoveryPageSource\":\"StoreStyling\",\"ClickAction\":1},{\"Name\":\"Hairstyles\",\"Depth\":2,\"ClickAction\":3,\"Filters\":128,\"StoreCarouselType\":24,\"SortCriteria\":1},{\"Name\":\"Facial Hair\",\"Depth\":2,\"ClickAction\":3,\"Filters\":536870912,\"StoreCarouselType\":25,\"SortCriteria\":1},{\"Name\":\"Hair Dye\",\"Depth\":2,\"ClickAction\":3,\"Filters\":131072,\"StoreCarouselType\":6,\"SortCriteria\":1},{\"Name\":\"Equipment Skins\",\"Depth\":2,\"ClickAction\":3,\"Filters\":262144,\"StoreCarouselType\":5,\"SortCriteria\":1},{\"Name\":\"Inventions\",\"Depth\":0,\"Icon\":3,\"DiscoveryPageSource\":\"StoreInventions\",\"ClickAction\":1,\"Filters\":0,\"StoreCarouselType\":0},{\"Name\":\"Consumables\",\"Depth\":0,\"Icon\":4,\"DiscoveryPageSource\":\"StoreConsumables\",\"ClickAction\":1,\"Filters\":0,\"StoreCarouselType\":0}]}"},
+		{"Key":"Econ.StorefrontCarouselsToUseListsService","Value":"(StoreClothing)/HatsItems,(StoreClothing)/TorsoItems,(StoreClothing)/AccessoriesItems,(StoreClothing)/GlovesItems,(StoreClothing)/HairItems"},
+		{"Key":"Econ.StorefrontCarouselEndpointFriendlyNames","Value":"itemsforyou:Recommended For You||newitems:New Items||headwearitems:Headwear||topsitems:Tops||bottomsitems:Bottoms||footwearitems:Footwear||waistitems:Waist||handsitems:Hands||shoulderitems:Shoulders||skinsitems:Skins||accessoriesitems:Accessories||hairitems:Hairstyles||facialhairitems:Facial Hair||"}
 	],
 	"PhotonConfig": {
 		"CloudRegion": "us",
@@ -387,3 +390,4 @@
 		"MaxKeysPerRoom": 10
 	}
 }
+
