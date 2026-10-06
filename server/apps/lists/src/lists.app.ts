@@ -291,7 +291,7 @@ const STORE_ROW_RULES: Record<string, StoreRowRule> = {
 	hairitems: { kind: CatalogKind.AvatarItem, nameContains: ['hair'] },
 	facialhairitems: {
 		kind: CatalogKind.AvatarItem,
-		nameContains: ['beard', 'mustache'],
+		nameContains: ['beard', 'mustache', 'moustache', 'stache', 'facial hair'],
 	},
 	waistitems: { kind: CatalogKind.AvatarItem, nameContains: ['belt'] },
 	accessoriesitems: {
@@ -518,6 +518,8 @@ function clothingStoreRowEntities(key: string): ListEntity[] | null {
 			if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
 			if (terms === undefined) return true
 			const name = drop.FriendlyName.toLocaleLowerCase()
+			// Hair dye has its own store category; keep it out of Hairstyles.
+			if (key === 'hairitems' && /\bdye\b/.test(name)) return false
 			return terms.some((term) => name.includes(term))
 		})
 		.map((item) => `${GENERIC_ID_PREFIX.PurchasableItem}.${item.PurchasableItemId}`)
