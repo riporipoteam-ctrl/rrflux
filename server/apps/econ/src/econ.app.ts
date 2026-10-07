@@ -53,6 +53,25 @@ import defaultAvatar from '../static/default-avatar.json'
 import defaultBaseAvatarItems from '../static/default-base-avatar-items.json'
 import myProgress from '../static/my-progress.json'
 import questRewards from '../static/quest-rewards.json'
+
+/**
+ * The Customize screen treats /defaultunlocked as the source of genuinely free avatar
+ * items. The captured default list predates the Full Body avatar set, but the canonical
+ * avatar catalog contains 42 zero-rarity Full Body shoes/bottoms/etc. They are free
+ * compatibility pieces, not purchasable store inventory; omitting them makes the client
+ * classify equipped Full Body shoes/bottoms as paid and show the "pay for equipped items"
+ * warning on exit.
+ */
+const customizeDefaultAvatarItems = (() => {
+	const seen = new Set(defaultAvatarItems.map((item) => item.AvatarItemDesc))
+	const fullBodyFreeItems = avatarItemCatalog.filter(
+		(item) =>
+			item.Rarity === 0 &&
+			/\\[Full Body\\]/i.test(item.FriendlyName) &&
+			!seen.has(item.AvatarItemDesc)
+	)
+	return [...defaultAvatarItems, ...fullBodyFreeItems]
+})()
 import { getAvatar, setAvatar } from './avatar-db'
 import {
 	ALL_PLATFORMS,
@@ -3019,7 +3038,7 @@ const app = new Hono<App>({ strict: false })
 	.get(
 		'/api/avatar/v1/defaultunlocked',
 		listRoute('Default-unlocked avatar items', 'The bundled default avatar-item catalog'),
-		(c) => c.json(defaultAvatarItems)
+		(c) => c.json(customizeDefaultAvatarItems)
 	)
 
 	// The base items UGC clothing is built on top of — served from bundled static JSON,
@@ -3054,7 +3073,7 @@ const app = new Hono<App>({ strict: false })
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
 			const owned = await getInventory(c.env.DB, id)
-			return c.json([...owned, ...defaultAvatarItems].map(toAvatarItemV4))
+			return c.json([...owned, ...customizeDefaultAvatarItems].map(toAvatarItemV4))
 		}
 	)
 
