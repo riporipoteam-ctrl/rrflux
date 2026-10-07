@@ -2975,7 +2975,7 @@ function isBrokenRRO(room: Room): boolean {
 	if (!isRRO(room)) return false
 	if (BROKEN_RRO_ROOM_IDS.has(roomIdOf(room))) return true
 	const name = typeof room.Name === 'string' ? room.Name.trim().toLowerCase() : ''
-	return BROKEN_RRO_NAME_KEYS.has(name)
+	return [...BROKEN_RRO_NAME_KEYS].some((key) => name.includes(key))
 }
 
 /**
