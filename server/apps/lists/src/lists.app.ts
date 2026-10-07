@@ -490,6 +490,18 @@ async function genericRowEntities(c: Context<App>, key: string): Promise<ListEnt
  * broad `newitems` row rather than disappearing from the clothing store.
  */
 function clothingStoreRowEntities(key: string): ListEntity[] | null {
+	const ids = clothingStorePurchasableItemIds(key)
+	if (ids === null) return null
+	return entities(ids.map((id) => `${GENERIC_ID_PREFIX.PurchasableItem}.${id}`))
+}
+
+/**
+ * The 2025 Store requests type=4 for its category feeds. Those feeds need every matching
+ * purchasable avatar item from the same storefront snapshot as the type=5 Clothing page;
+ * drawing a random 50 from the older catalog is why the Store still showed boxes and a few
+ * unrelated items after its feed names were enabled.
+ */
+function clothingStorePurchasableItemIds(key: string): string[] | null {
 	const categoryTerms: Record<string, string[]> = {
 		headwearitems: ['hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear'],
 		topsitems: ['shirt', 'jacket', 'dress', 'vest', 'sweater', 'jersey', 'coat', 'robe', 'tunic', 'top'],
@@ -509,7 +521,7 @@ function clothingStoreRowEntities(key: string): ListEntity[] | null {
 	if (terms === undefined && key !== 'clothingitems') return null
 
 	const now = Date.now()
-	const ids = sf32025.StoreItems
+	return sf32025.StoreItems
 		.filter((item) => {
 			const drop = item.GiftDrop
 			if (!drop.AvatarItemDesc?.trim() || drop.IsQuery) return false
@@ -522,8 +534,7 @@ function clothingStoreRowEntities(key: string): ListEntity[] | null {
 			if (key === 'hairitems' && /\bdye\b/.test(name)) return false
 			return terms.some((term) => name.includes(term))
 		})
-		.map((item) => `${GENERIC_ID_PREFIX.PurchasableItem}.${item.PurchasableItemId}`)
-	return entities(ids)
+		.map((item) => String(item.PurchasableItemId))
 }
 
 /**
@@ -537,6 +548,9 @@ function clothingStoreRowEntities(key: string): ListEntity[] | null {
  * a purchasable item literally called "0.10000".
  */
 async function purchasableItemRowEntities(c: Context<App>, key: string): Promise<ListEntity[]> {
+	const storeIds = clothingStorePurchasableItemIds(key)
+	if (storeIds !== null) return entities(storeIds)
+
 	const ids = await randomCatalogIds(c, STORE_ROW_RULES[key] ?? DEFAULT_STORE_ROW_RULE)
 	return entities(ids.map((id) => String(id)))
 }
@@ -1064,4 +1078,5 @@ app.get(
 )
 
 export default app
+
 
