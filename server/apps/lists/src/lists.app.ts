@@ -471,7 +471,7 @@ async function randomCustomAvatarItemIds(c: Context<App>, key: string): Promise<
  * than being implied by the row.
  */
 async function genericRowEntities(c: Context<App>, key: string): Promise<ListEntity[]> {
-	const storeItems = clothingStoreRowEntities(key)
+	const storeItems = await clothingStoreRowEntities(c, key)
 	if (storeItems !== null) return storeItems
 
 	const ids = await randomCustomAvatarItemIds(c, key)
@@ -489,98 +489,90 @@ async function genericRowEntities(c: Context<App>, key: string): Promise<ListEnt
  * store's own clothing categories. Items not classified by a narrower category remain in the
  * broad `newitems` row rather than disappearing from the clothing store.
  */
-function clothingStoreRowEntities(key: string): ListEntity[] | null {
-	const ids = clothingStorePurchasableItemIds(key)
-	if (ids === null) return null
-	return entities(ids.map((id) => `${GENERIC_ID_PREFIX.PurchasableItem}.${id}`))
+async function clothingStoreRowEntities(c: Context<App>, key: string): Promise<ListEntity[] | null> {
+  const ids = await clothingStorePurchasableItemIds(c, key)
+  if (ids === null) return null
+  return entities(ids.map((id) => `${GENERIC_ID_PREFIX.PurchasableItem}.${id}`))
 }
 
 /**
- * The 2025 Store requests type=4 for its category feeds. Those feeds need every matching
- * purchasable avatar item from the same storefront snapshot as the type=5 Clothing page;
- * drawing a random 50 from the older catalog is why the Store still showed boxes and a few
- * unrelated items after its feed names were enabled.
+ * The 2025 Store requests type=4 for its category feeds, while the broad Clothing page uses
+ * type=5 Generic ids. Both paths must draw from the same 2025 storefront snapshot. Never fall
+ * back to random legacy catalog rows for a known 2025 clothing/backpack feed.
  */
-function clothingStorePurchasableItemIds(key: string): string[] | null {
-	/**
-	 * These feeds are a display taxonomy, not a property recorded in the 2025 storefront
-	 * capture. Keep the match intentionally broad so real wearables such as hoodies,
-	 * jeans, wings, hair styles, and facial-hair variants do not disappear merely because
-	 * their friendly name uses a different word than the first capture sample.
-	 *
-	 * The broad clothingitems row is different: it is the complete wearable storefront
-	 * snapshot, so it deliberately has no category-name filter.
-	 */
-	const categoryTerms: Record<string, string[]> = {
-		headwearitems: [
-			'hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear', 'tiara', 'visor',
-			'beret', 'fedora', 'sombrero', 'hood',
-		],
-		topsitems: [
-			'shirt', 'tee', 't-shirt', 'tank', 'polo', 'blouse', 'jacket', 'dress', 'vest', 'sweater',
-			'jersey', 'coat', 'robe', 'tunic', 'top', 'hoodie', 'sweatshirt', 'pullover',
-		],
-		bottomsitems: [
-			'pants', 'shorts', 'leggings', 'skirt', 'trousers', 'jeans', 'joggers', 'sweatpants',
-			'slacks', 'greaves',
-		],
-		footwearitems: [
-			'shoes', 'sneakers', 'sandals', 'boots', 'slippers', 'footwear', 'socks', 'heels',
-			'loafers', 'cleats',
-		],
-		waistitems: ['belt', 'waist', 'sash', 'waistband'],
-		handsitems: [
-			'glove', 'hand', 'wrist', 'mittens', 'mitten', 'gauntlet', 'bracer', 'wristband', 'bracelet',
-		],
-		shoulderitems: [
-			'quiver', 'backpack', 'cape', 'shoulder', 'back accessory', 'wing', 'wings', 'jetpack',
-		],
-		hairitems: [
-			'hair', 'hairstyle', 'wig', 'ponytail', 'pony tail', 'mohawk', 'afro', 'braid', 'braids',
-			'bob', 'pigtail', 'pigtails', 'dread', 'dreads', 'locs', 'locks', 'curly', 'curls',
-			'buzz', 'undercut', 'fade', 'pompadour', 'bangs', 'hair bow',
-		],
-		facialhairitems: [
-			'beard', 'mustache', 'moustache', 'facial hair', 'goatee', 'stubble', 'sideburn',
-			'soul patch', 'mutton chops', 'whisker', 'whiskers',
-		],
-		accessoriesitems: [
-			'glasses', 'goggles', 'eyewear', 'earring', 'earrings', 'earwear', 'necklace', 'scarf',
-			'mask', 'bow tie', 'hearing aid', 'piercing', 'accessory', 'accessories',
-		],
-	}
-	const terms = categoryTerms[key]
-	if (terms === undefined && key !== 'clothingitems') return null
+async function clothingStorePurchasableItemIds(c: Context<App>, key: string): Promise<string[] | null> {
+  const categoryTerms: Record<string, string[]> = {
+    headwearitems: [
+      'hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear', 'tiara', 'visor',
+      'beret', 'fedora', 'sombrero', 'hood',
+    ],
+    topsitems: [
+      'shirt', 'tee', 't-shirt', 'tank', 'polo', 'blouse', 'jacket', 'dress', 'vest', 'sweater',
+      'jersey', 'coat', 'robe', 'tunic', 'top', 'hoodie', 'sweatshirt', 'pullover',
+    ],
+    bottomsitems: [
+      'pants', 'shorts', 'leggings', 'skirt', 'trousers', 'jeans', 'joggers', 'sweatpants',
+      'slacks', 'greaves',
+    ],
+    footwearitems: [
+      'shoes', 'sneakers', 'sandals', 'boots', 'slippers', 'footwear', 'socks', 'heels',
+      'loafers', 'cleats',
+    ],
+    waistitems: ['belt', 'waist', 'sash', 'waistband'],
+    handsitems: [
+      'glove', 'hand', 'wrist', 'mittens', 'mitten', 'gauntlet', 'bracer', 'wristband', 'bracelet',
+    ],
+    shoulderitems: [
+      'quiver', 'backpack', 'cape', 'shoulder', 'back accessory', 'wing', 'wings', 'jetpack',
+    ],
+    backpackitems: ['backpack', 'rucksack', 'knapsack', 'satchel', 'bookbag'],
+    hairitems: [
+      'hair', 'hairstyle', 'wig', 'ponytail', 'pony tail', 'mohawk', 'afro', 'braid', 'braids',
+      'bob', 'pigtail', 'pigtails', 'dread', 'dreads', 'locs', 'locks', 'curly', 'curls',
+      'buzz', 'undercut', 'fade', 'pompadour', 'bangs', 'hair bow',
+    ],
+    facialhairitems: [
+      'beard', 'mustache', 'moustache', 'facial hair', 'goatee', 'stubble', 'sideburn',
+      'soul patch', 'mutton chops', 'whisker', 'whiskers',
+    ],
+    hairdyeitems: ['hair dye', 'permanent hair dye', 'dye'],
+    accessoriesitems: [
+      'glasses', 'goggles', 'eyewear', 'earring', 'earrings', 'earwear', 'necklace', 'scarf',
+      'mask', 'bow tie', 'hearing aid', 'piercing', 'accessory', 'accessories',
+    ],
+  }
 
-	const now = Date.now()
-	const ids = sf32025.StoreItems
-		.filter((item) => {
-			const drop = item.GiftDrop
-			// Query drops are boxes/rolls, not wearable avatar items. A real AvatarItemDesc plus
-			// a positive storefront price is the 2025 capture's signal that this row is a
-			// purchasable wearable. This intentionally keeps hair dyes in the broad clothing feed;
-			// they are real avatar items even though the captured category list has no separate
-			// hair-dye section.
-			if (!drop.AvatarItemDesc?.trim() || drop.IsQuery) return false
-			if (!item.Prices.some((price) => price.Price > 0)) return false
-			if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
-			if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
-			if (terms === undefined) return true
+  const broadKeys = new Set(['clothingitems', 'clothing', 'appearance', 'storeclothing', 'allwearables'])
+  const terms = categoryTerms[key]
+  if (terms === undefined && !broadKeys.has(key)) return null
 
-			const name = drop.FriendlyName.toLocaleLowerCase()
-			// Hair dye has its own legacy treatment; do not accidentally put it in the hairstyle
-			// row just because the word hair appears in its name.
-			if (key === 'hairitems' && /\bdye\b/.test(name)) return false
-			return terms.some((term) => name.includes(term))
-		})
-		.map((item) => String(item.PurchasableItemId))
+  const now = Date.now()
+  const ids = sf32025.StoreItems
+    .filter((item) => {
+      const drop = item.GiftDrop
+      // Query drops are boxes/rolls, not wearable avatar items. A real AvatarItemDesc plus
+      // a positive storefront price is the 2025 snapshot's signal that this row is a
+      // purchasable wearable. This prevents the Clothing page from turning into a box carousel.
+      if (!drop.AvatarItemDesc?.trim() || drop.IsQuery) return false
+      if (!item.Prices.some((price) => price.Price > 0)) return false
+      if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
+      if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
+      if (broadKeys.has(key)) return true
 
-	// Preserve storefront order while defending the wire feed against a future capture that
-	// accidentally repeats a PurchasableItemId.
-	return [...new Set(ids)]
+      const name = drop.FriendlyName.toLocaleLowerCase()
+      if (key === 'hairdyeitems') {
+        return drop.AvatarItemType === 1 || terms!.some((term) => name.includes(term))
+      }
+      if (key === 'hairitems' && (drop.AvatarItemType === 1 || /\bdye\b/.test(name))) return false
+      return terms!.some((term) => name.includes(term))
+    })
+    .map((item) => String(item.PurchasableItemId))
+
+  return [...new Set(ids)]
 }
+
 async function purchasableItemRowEntities(c: Context<App>, key: string): Promise<ListEntity[]> {
-	const storeIds = clothingStorePurchasableItemIds(key)
+	const storeIds = await clothingStorePurchasableItemIds(c, key)
 	if (storeIds !== null) return entities(storeIds)
 
 	const ids = await randomCatalogIds(c, STORE_ROW_RULES[key] ?? DEFAULT_STORE_ROW_RULE)
