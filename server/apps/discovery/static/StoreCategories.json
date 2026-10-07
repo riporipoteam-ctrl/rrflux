@@ -86,5 +86,29 @@
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "skinsitems",
     "displayMetadata": "{\"DisplayTitle\":\"Equipment Skins\",\"categoryDepth\":1,\"categoryCarouselType\":5,\"categoryUriNames\":\"SkinsItems\",\"itemCount\":5000}"
+  },
+  {
+    "id": "StoreItemCarousel_UnifiedAlgorithmicList_Eyewear",
+    "sectionType": 4,
+    "sectionSubType": "Items_Eyewear",
+    "source": "UnifiedAlgorithmicList",
+    "sourceMetadata": "eyewearitems",
+    "displayMetadata": "{\"DisplayTitle\":\"Eyewear\",\"categoryDepth\":1,\"categoryCarouselType\":19,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+  },
+  {
+    "id": "StoreItemCarousel_UnifiedAlgorithmicList_Earwear",
+    "sectionType": 4,
+    "sectionSubType": "Items_Earwear",
+    "source": "UnifiedAlgorithmicList",
+    "sourceMetadata": "earwearitems",
+    "displayMetadata": "{\"DisplayTitle\":\"Earwear\",\"categoryDepth\":1,\"categoryCarouselType\":20,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+  },
+  {
+    "id": "StoreItemCarousel_UnifiedAlgorithmicList_Neckwear",
+    "sectionType": 4,
+    "sectionSubType": "Items_Neckwear",
+    "source": "UnifiedAlgorithmicList",
+    "sourceMetadata": "neckwearitems",
+    "displayMetadata": "{\"DisplayTitle\":\"Neckwear\",\"categoryDepth\":1,\"categoryCarouselType\":21,\"itemCount\":5000,\"minItemsToShowSection\":1}"
   }
 ]
