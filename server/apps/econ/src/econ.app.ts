@@ -54,24 +54,7 @@ import defaultBaseAvatarItems from '../static/default-base-avatar-items.json'
 import myProgress from '../static/my-progress.json'
 import questRewards from '../static/quest-rewards.json'
 
-/**
- * The Customize screen treats /defaultunlocked as the source of genuinely free avatar
- * items. The captured default list predates the Full Body avatar set, but the canonical
- * avatar catalog contains 42 zero-rarity Full Body shoes/bottoms/etc. They are free
- * compatibility pieces, not purchasable store inventory; omitting them makes the client
- * classify equipped Full Body shoes/bottoms as paid and show the "pay for equipped items"
- * warning on exit.
- */
-const customizeDefaultAvatarItems = (() => {
-	const seen = new Set(defaultAvatarItems.map((item) => item.AvatarItemDesc))
-	const fullBodyFreeItems = avatarItemCatalog.filter(
-		(item) =>
-			item.Rarity === 0 &&
-			/\\[Full Body\\]/i.test(item.FriendlyName) &&
-			!seen.has(item.AvatarItemDesc)
-	)
-	return [...defaultAvatarItems, ...fullBodyFreeItems]
-})()
+
 import { getAvatar, setAvatar } from './avatar-db'
 import {
 	ALL_PLATFORMS,
@@ -222,6 +205,25 @@ import type { Equipment } from './equipment-db'
 import type { AvatarItem } from './inventory-db'
 import type { RoomConsumable } from './room-consumable-db'
 import type { RoomCurrency, RoomCurrencyPurchaseOffer } from './room-currency-db'
+
+/**
+ * The Customize screen treats /defaultunlocked as the source of genuinely free avatar
+ * items. The captured default list predates the Full Body avatar set, but the canonical
+ * avatar catalog contains 42 zero-rarity Full Body shoes/bottoms/etc. They are free
+ * compatibility pieces, not purchasable store inventory; omitting them makes the client
+ * classify equipped Full Body shoes/bottoms as paid and show the "pay for equipped items"
+ * warning on exit.
+ */
+const customizeDefaultAvatarItems = (() => {
+	const seen = new Set(defaultAvatarItems.map((item) => item.AvatarItemDesc))
+	const fullBodyFreeItems = avatarItemCatalog.filter(
+		(item) =>
+			item.Rarity === 0 &&
+			/\[Full Body\]/i.test(item.FriendlyName) &&
+			!seen.has(item.AvatarItemDesc)
+	)
+	return [...defaultAvatarItems, ...fullBodyFreeItems]
+})()
 
 // Invention storage (owned by the `api` worker, on this same `recflare` database).
 // Imported directly rather than copied: these are plain D1 helpers with no bindings of
