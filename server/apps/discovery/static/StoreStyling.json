@@ -1,0 +1,26 @@
+[
+  {
+    "Id": "StoreItemCarousel_UnifiedAlgorithmicList_Hairstyles_Styling",
+    "SectionType": 4,
+    "SectionSubType": "Items_Hairstyles",
+    "Source": "UnifiedAlgorithmicList",
+    "SourceMetadata": "hairitems",
+    "DisplayMetadata": "{\"DisplayTitle\":\"Hairstyles\",\"categoryDepth\":2,\"categoryCarouselType\":24,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+  },
+  {
+    "Id": "StoreItemCarousel_UnifiedAlgorithmicList_FacialHair_Styling",
+    "SectionType": 4,
+    "SectionSubType": "Items_FacialHair",
+    "Source": "UnifiedAlgorithmicList",
+    "SourceMetadata": "facialhairitems",
+    "DisplayMetadata": "{\"DisplayTitle\":\"Facial Hair\",\"categoryDepth\":2,\"categoryCarouselType\":25,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+  },
+  {
+    "Id": "StoreItemCarousel_UnifiedAlgorithmicList_HairDye_Styling",
+    "SectionType": 4,
+    "SectionSubType": "Items_HairDye",
+    "Source": "UnifiedAlgorithmicList",
+    "SourceMetadata": "hairdyeitems",
+    "DisplayMetadata": "{\"DisplayTitle\":\"Hair Dye\",\"categoryDepth\":2,\"categoryCarouselType\":6,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+  }
+]
