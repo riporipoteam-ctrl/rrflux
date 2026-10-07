@@ -504,28 +504,35 @@ async function clothingStorePurchasableItemIds(c: Context<App>, key: string): Pr
   const categoryTerms: Record<string, string[]> = {
     headwearitems: [
       'hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear', 'tiara', 'visor',
-      'beret', 'fedora', 'sombrero', 'hood',
+      'beret', 'fedora', 'sombrero', 'hood', 'bandana', 'horn', 'horns', 'antlers',
+      'headphones', 'earphones', 'headset', 'head mirror', 'muffs', 'ear muffs',
+      'diadem', 'halo', 'headpiece',
     ],
     topsitems: [
       'shirt', 'tee', 't-shirt', 'tank', 'polo', 'blouse', 'jacket', 'dress', 'vest', 'sweater',
       'jersey', 'coat', 'robe', 'tunic', 'top', 'hoodie', 'sweatshirt', 'pullover',
+      'suit', 'blazer', 'turtleneck', 'apron', 'gown', 'cardigan', 'windbreaker',
+      'uniform', 'armor', 'onesie', 'outfit', 'costume', 'wetsuit', 'singlet',
+      'toga', 'techwear',
     ],
     bottomsitems: [
       'pants', 'shorts', 'leggings', 'skirt', 'trousers', 'jeans', 'joggers', 'sweatpants',
-      'slacks', 'greaves',
+      'slacks', 'greaves', 'tutu', 'kilt',
     ],
     footwearitems: [
       'shoes', 'sneakers', 'sandals', 'boots', 'slippers', 'footwear', 'socks', 'heels',
-      'loafers', 'cleats',
+      'loafers', 'cleats', 'flats',
     ],
     waistitems: ['belt', 'waist', 'sash', 'waistband'],
     handsitems: [
-      'glove', 'hand', 'wrist', 'mittens', 'mitten', 'gauntlet', 'bracer', 'wristband', 'bracelet',
+      'glove', 'hand', 'wrist', 'mittens', 'mitten', 'gauntlet', 'bracer', 'wristband',
+      'bracelet', 'cuff', 'cuffs', 'floatie',
     ],
     shoulderitems: [
       'quiver', 'backpack', 'cape', 'shoulder', 'back accessory', 'wing', 'wings', 'jetpack',
+      'back ', 'on back', 'harness', 'scythe', 'board', 'bag',
     ],
-    backpackitems: ['backpack', 'rucksack', 'knapsack', 'satchel', 'bookbag'],
+    backpackitems: ['backpack', 'rucksack', 'knapsack', 'satchel', 'bookbag', 'purse'],
     hairitems: [
       'hair', 'hairstyle', 'wig', 'ponytail', 'pony tail', 'mohawk', 'afro', 'braid', 'braids',
       'bob', 'pigtail', 'pigtails', 'dread', 'dreads', 'locs', 'locks', 'curly', 'curls',
@@ -539,7 +546,9 @@ async function clothingStorePurchasableItemIds(c: Context<App>, key: string): Pr
     accessoriesitems: [
       'glasses', 'goggles', 'eyewear', 'earring', 'earrings', 'earwear', 'necklace', 'scarf',
       'mask', 'bow tie', 'hearing aid', 'piercing', 'accessory', 'accessories',
+      'shades', 'sunglasses', 'spectacles', 'ears', 'neck', 'choker', 'binoculars', 'camera',
     ],
+    skinsitems: ['skin', 'equipment skin'],
   }
 
   const broadKeys = new Set(['clothingitems', 'clothing', 'appearance', 'storeclothing', 'allwearables'])
