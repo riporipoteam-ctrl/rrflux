@@ -70,6 +70,21 @@
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "facialhairitems",
     "displayMetadata": "{\"DisplayTitle\":\"Facial Hair\",\"categoryDepth\":1,\"categoryCarouselType\":25,\"categoryUriNames\":\"FacialHairItems\",\"itemCount\":5000}"
+  },
+  {
+    "id": "StoreItemCarousel_UnifiedAlgorithmicList_HairDye",
+    "sectionType": 4,
+    "sectionSubType": "Items_HairDye",
+    "source": "UnifiedAlgorithmicList",
+    "sourceMetadata": "hairdyeitems",
+    "displayMetadata": "{\"DisplayTitle\":\"Hair Dye\",\"categoryDepth\":1,\"categoryCarouselType\":6,\"categoryUriNames\":\"HairDyeItems\",\"itemCount\":5000}"
+  },
+  {
+    "id": "StoreItemCarousel_UnifiedAlgorithmicList_Skins",
+    "sectionType": 4,
+    "sectionSubType": "Items_Skins",
+    "source": "UnifiedAlgorithmicList",
+    "sourceMetadata": "skinsitems",
+    "displayMetadata": "{\"DisplayTitle\":\"Equipment Skins\",\"categoryDepth\":1,\"categoryCarouselType\":5,\"categoryUriNames\":\"SkinsItems\",\"itemCount\":5000}"
   }
 ]
-
