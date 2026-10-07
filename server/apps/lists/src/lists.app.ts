@@ -502,6 +502,9 @@ const STORE_FEED_ALIASES: Record<string, string> = {
   facialhairitems: 'facialhairitems',
   accessoriesitems: 'accessoriesitems',
   backpackitems: 'backpackitems',
+  eyewearitems: 'eyewearitems',
+  earwearitems: 'earwearitems',
+  neckwearitems: 'neckwearitems',
 }
 
 const canonicalAvatarNamesByDesc = new Map(
@@ -586,6 +589,9 @@ async function clothingStorePurchasableItemIds(c: Context<App>, rawKey: string):
       'glasses', 'goggles', 'eyewear', 'earring', 'earrings', 'earwear', 'necklace', 'scarf',
       'mask', 'bow tie', 'hearing aid', 'piercing', 'accessory', 'accessories', 'clip', 'tie',
     ],
+    eyewearitems: ['glasses', 'goggles', 'eyewear', 'sunglasses', 'spectacles', 'monocle'],
+    earwearitems: ['earring', 'earrings', 'earwear', 'earmuff', 'earmuffs', 'headphones', 'earpiece'],
+    neckwearitems: ['necklace', 'neckwear', 'scarf', 'tie', 'bow tie', 'cravat', 'bandana'],
   }
 
   const broadKeys = new Set(['clothingitems', 'clothing', 'appearance', 'storeclothing', 'allwearables'])
