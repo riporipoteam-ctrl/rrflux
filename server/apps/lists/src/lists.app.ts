@@ -502,52 +502,84 @@ function clothingStoreRowEntities(key: string): ListEntity[] | null {
  * unrelated items after its feed names were enabled.
  */
 function clothingStorePurchasableItemIds(key: string): string[] | null {
+	/**
+	 * These feeds are a display taxonomy, not a property recorded in the 2025 storefront
+	 * capture. Keep the match intentionally broad so real wearables such as hoodies,
+	 * jeans, wings, hair styles, and facial-hair variants do not disappear merely because
+	 * their friendly name uses a different word than the first capture sample.
+	 *
+	 * The broad clothingitems row is different: it is the complete wearable storefront
+	 * snapshot, so it deliberately has no category-name filter.
+	 */
 	const categoryTerms: Record<string, string[]> = {
-		headwearitems: ['hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear'],
-		topsitems: ['shirt', 'jacket', 'dress', 'vest', 'sweater', 'jersey', 'coat', 'robe', 'tunic', 'top'],
-		bottomsitems: ['pants', 'shorts', 'leggings', 'skirt', 'trousers'],
-		footwearitems: ['shoes', 'sneakers', 'sandals', 'boots', 'slippers', 'footwear'],
-		waistitems: ['belt', 'waist'],
-		handsitems: ['glove', 'hand', 'wrist', 'mittens'],
-		shoulderitems: ['quiver', 'backpack', 'cape', 'shoulder', 'back accessory'],
-		hairitems: ['hair', 'hairstyle'],
-		facialhairitems: ['beard', 'mustache', 'moustache', 'facial hair'],
+		headwearitems: [
+			'hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear', 'tiara', 'visor',
+			'beret', 'fedora', 'sombrero', 'hood',
+		],
+		topsitems: [
+			'shirt', 'tee', 't-shirt', 'tank', 'polo', 'blouse', 'jacket', 'dress', 'vest', 'sweater',
+			'jersey', 'coat', 'robe', 'tunic', 'top', 'hoodie', 'sweatshirt', 'pullover',
+		],
+		bottomsitems: [
+			'pants', 'shorts', 'leggings', 'skirt', 'trousers', 'jeans', 'joggers', 'sweatpants',
+			'slacks', 'greaves',
+		],
+		footwearitems: [
+			'shoes', 'sneakers', 'sandals', 'boots', 'slippers', 'footwear', 'socks', 'heels',
+			'loafers', 'cleats',
+		],
+		waistitems: ['belt', 'waist', 'sash', 'waistband'],
+		handsitems: [
+			'glove', 'hand', 'wrist', 'mittens', 'mitten', 'gauntlet', 'bracer', 'wristband', 'bracelet',
+		],
+		shoulderitems: [
+			'quiver', 'backpack', 'cape', 'shoulder', 'back accessory', 'wing', 'wings', 'jetpack',
+		],
+		hairitems: [
+			'hair', 'hairstyle', 'wig', 'ponytail', 'pony tail', 'mohawk', 'afro', 'braid', 'braids',
+			'bob', 'pigtail', 'pigtails', 'dread', 'dreads', 'locs', 'locks', 'curly', 'curls',
+			'buzz', 'undercut', 'fade', 'pompadour', 'bangs', 'hair bow',
+		],
+		facialhairitems: [
+			'beard', 'mustache', 'moustache', 'facial hair', 'goatee', 'stubble', 'sideburn',
+			'soul patch', 'mutton chops', 'whisker', 'whiskers',
+		],
 		accessoriesitems: [
-			'glasses', 'goggles', 'eyewear', 'earring', 'earwear', 'necklace', 'scarf', 'mask',
-			'bow tie', 'hearing aid', 'accessory', 'accessories',
+			'glasses', 'goggles', 'eyewear', 'earring', 'earrings', 'earwear', 'necklace', 'scarf',
+			'mask', 'bow tie', 'hearing aid', 'piercing', 'accessory', 'accessories',
 		],
 	}
 	const terms = categoryTerms[key]
 	if (terms === undefined && key !== 'clothingitems') return null
 
 	const now = Date.now()
-	return sf32025.StoreItems
+	const ids = sf32025.StoreItems
 		.filter((item) => {
 			const drop = item.GiftDrop
+			// Query drops are boxes/rolls, not wearable avatar items. A real AvatarItemDesc plus
+			// a positive storefront price is the 2025 capture's signal that this row is a
+			// purchasable wearable. This intentionally keeps hair dyes in the broad clothing feed;
+			// they are real avatar items even though the captured category list has no separate
+			// hair-dye section.
 			if (!drop.AvatarItemDesc?.trim() || drop.IsQuery) return false
 			if (!item.Prices.some((price) => price.Price > 0)) return false
 			if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
 			if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
 			if (terms === undefined) return true
+
 			const name = drop.FriendlyName.toLocaleLowerCase()
-			// Hair dye has its own store category; keep it out of Hairstyles.
+			// Hair dye has its own legacy treatment; do not accidentally put it in the hairstyle
+			// row just because the word hair appears in its name.
 			if (key === 'hairitems' && /\bdye\b/.test(name)) return false
 			return terms.some((term) => name.includes(term))
 		})
 		.map((item) => String(item.PurchasableItemId))
-}
 
-/**
- * A PURCHASABLE ITEMS row's entities: the same store items as the Generic row, but with BARE
- * ids and no prefix.
- *
- * That difference is the whole distinction between the two types and must not be tidied away.
- * A typed row's `Type` is what tells the client which service to resolve its ids against, so
- * the ids themselves are plain; only a Generic row, which can name things of more than one
- * sort, carries the sort inside each id. Serving `0.10000` here would have the client look up
- * a purchasable item literally called "0.10000".
- */
-async function purchasableItemRowEntities(c: Context<App>, key: string): Promise<ListEntity[]> {
+	// Preserve storefront order while defending the wire feed against a future capture that
+	// accidentally repeats a PurchasableItemId.
+	return [...new Set(ids)]
+}
+function purchasableItemRowEntities(c: Context<App>, key: string): Promise<ListEntity[]> {
 	const storeIds = clothingStorePurchasableItemIds(key)
 	if (storeIds !== null) return entities(storeIds)
 
