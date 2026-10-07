@@ -579,7 +579,7 @@ function clothingStorePurchasableItemIds(key: string): string[] | null {
 	// accidentally repeats a PurchasableItemId.
 	return [...new Set(ids)]
 }
-function purchasableItemRowEntities(c: Context<App>, key: string): Promise<ListEntity[]> {
+async function purchasableItemRowEntities(c: Context<App>, key: string): Promise<ListEntity[]> {
 	const storeIds = clothingStorePurchasableItemIds(key)
 	if (storeIds !== null) return entities(storeIds)
 
