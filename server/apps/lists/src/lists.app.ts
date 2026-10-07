@@ -596,13 +596,14 @@ async function clothingStorePurchasableItemIds(c: Context<App>, rawKey: string):
   const ids = sf32025.StoreItems
     .filter((item) => {
       const drop = item.GiftDrop
-      // Query drops are boxes/rolls, not wearable avatar items.
-      // AvatarItemType 0 is the authentic wearable signal in the 2025 snapshot.
-      if (!drop.AvatarItemDesc?.trim() || drop.IsQuery || drop.AvatarItemType !== 0) return false
+      // Query drops are boxes/rolls, not wearable avatar items. The 2025 capture uses
+      // AvatarItemType 0 for worn avatar items and 1 for hair dye; both are real Store feeds.
+      const isAvatarStoreItem = drop.AvatarItemType === 0 || drop.AvatarItemType === 1
+      if (!drop.AvatarItemDesc?.trim() || drop.IsQuery || !isAvatarStoreItem) return false
       if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
       if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
 
-      if (broadKeys.has(key)) return true
+      if (broadKeys.has(key)) return drop.AvatarItemType === 0
 
       const names = itemNames(item)
       if (key === 'hairdyeitems') {
