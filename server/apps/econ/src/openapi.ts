@@ -336,7 +336,7 @@ export const ItemPurchaseMethodId = z.object({
 		.string()
 		.nullable()
 		.optional()
-		.describe('The `CustomAvatarItemId` of a custom avatar item, for Type 1'),
+		.describe('The item id: numeric `PurchasableItemId` when `itemType` is 0, or `CustomAvatarItemId` when `itemType` is 3 of a custom avatar item, for Type 1'),
 })
 
 /**
@@ -523,7 +523,7 @@ export const UgcPurchasableItemList = z.array(UgcPurchasableItemDto)
 export const ItemPurchaseInfosRequest = z.object({
 	Ids: z.array(
 		z.object({
-			itemType: z.number().int().describe('3 = custom avatar item (the only type served)'),
+			itemType: z.number().int().describe('0 = numbered storefront PurchasableItem; 3 = custom avatar item'),
 			itemId: z.string().describe('The `CustomAvatarItemId`'),
 		})
 	),
