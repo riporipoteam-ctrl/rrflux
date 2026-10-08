@@ -17,6 +17,7 @@ import { validateAndGetAccountId } from '@repo/jwt'
 import { COACH_ACCOUNT_ID } from '../../api/src/custom-avatar-items-load'
 import { CatalogKind, UNSELLABLE_RARITIES } from '../../econ/src/catalog-load'
 import sf32025 from '../../econ/static/storefronts/sf3-2025.json'
+import avatarItemCatalog from '../../econ/static/db/avatar-items.json'
 import { placeholderCuratedList, resolveCuratedList, serializeCuratedList } from './curated-lists'
 import {
 	ALGORITHMIC_LIST_PARAM,
@@ -489,102 +490,184 @@ async function genericRowEntities(c: Context<App>, key: string): Promise<ListEnt
  * store's own clothing categories. Items not classified by a narrower category remain in the
  * broad `newitems` row rather than disappearing from the clothing store.
  */
-async function clothingStoreRowEntities(c: Context<App>, key: string): Promise<ListEntity[] | null> {
-  const ids = await clothingStorePurchasableItemIds(c, key)
-  if (ids === null) return null
-  return entities(ids.map((id) => `${GENERIC_ID_PREFIX.PurchasableItem}.${id}`))
+const STORE_FEED_ALIASES: Record<string, string> = {
+  hatsitems: 'headwearitems',
+  torsoitems: 'topsitems',
+  bottomsitems: 'bottomsitems',
+  shoesitems: 'footwearitems',
+  waistitems: 'waistitems',
+  glovesitems: 'handsitems',
+  shoulderitems: 'shoulderitems',
+  headhairitems: 'hairitems',
+  facialhairitems: 'facialhairitems',
+  accessoriesitems: 'accessoriesitems',
+  backpackitems: 'backpackitems',
+  eyewearitems: 'eyewearitems',
+  earwearitems: 'earwearitems',
+  neckwearitems: 'neckwearitems',
 }
 
+const STORE_CATEGORY_TERMS: Record<string, string[]> = {
+  headwearitems: [
+    'hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear', 'tiara', 'visor',
+    'beret', 'fedora', 'sombrero', 'bandana', 'horn', 'horns', 'antlers', 'headset',
+    'head mirror', 'muffs', 'ear muffs', 'diadem', 'halo', 'headpiece', 'veil', 'cowl',
+    'head wrap', 'antenna', 'antennae',
+  ],
+  topsitems: [
+    'shirt', 'tee', 't-shirt', 'tank', 'polo', 'blouse', 'jacket', 'dress', 'vest', 'sweater',
+    'jersey', 'coat', 'robe', 'tunic', 'top', 'hoodie', 'sweatshirt', 'pullover',
+    'suit', 'blazer', 'turtleneck', 'apron', 'gown', 'cardigan', 'windbreaker',
+    'uniform', 'armor', 'onesie', 'outfit', 'costume', 'wetsuit', 'singlet', 'toga',
+    'techwear', 'garb', 'overalls', 'bodysuit', 'leotard', 'poncho', 'flannel',
+  ],
+  bottomsitems: [
+    'pants', 'shorts', 'leggings', 'skirt', 'trousers', 'jeans', 'joggers', 'sweatpants',
+    'slacks', 'greaves', 'legguards', 'pantaloons', 'culottes', 'bike shorts', 'tutu', 'kilt',
+  ],
+  footwearitems: [
+    'shoe', 'shoes', 'sneaker', 'sneakers', 'sandals', 'boots', 'boot', 'slippers', 'footwear',
+    'socks', 'heels', 'flats', 'loafers', 'cleats', 'moccasin', 'high tops', 'stomper', 'skate',
+  ],
+  waistitems: ['belt', 'waist', 'sash', 'waistband', 'waist pack', 'fanny pack'],
+  handsitems: [
+    'glove', 'hand', 'wrist', 'mittens', 'mitten', 'gauntlet', 'bracer', 'wristband',
+    'bracelet', 'cuff', 'cuffs', 'floatie',
+  ],
+  shoulderitems: [
+    'quiver', 'backpack', 'cape', 'shoulder', 'back accessory', 'wing', 'wings', 'jetpack',
+    'back ', 'on back', 'harness', 'scythe', 'board', 'bag',
+  ],
+  backpackitems: ['backpack', 'rucksack', 'knapsack', 'satchel', 'bookbag', 'purse', 'schoolbag'],
+  hairitems: [
+    'hairstyle', 'wig', 'ponytail', 'pony tail', 'mohawk', 'afro', 'braid', 'braids',
+    'bob hair', 'pigtail', 'pigtails', 'dread', 'dreads', 'locs', 'locks', 'curly',
+    'curls', 'buzz cut', 'undercut', 'fade', 'pompadour', 'bangs', 'hair bow', 'mullet',
+    'cornrows', 'twists hair', 'hair clip',
+  ],
+  facialhairitems: [
+    'beard', 'mustache', 'moustache', 'stache', 'facial hair', 'goatee', 'stubble', 'sideburn',
+    'soul patch', 'mutton chops', 'whisker', 'whiskers',
+  ],
+  hairdyeitems: ['hair dye', 'permanent hair dye', 'dye'],
+  accessoriesitems: [
+    'glasses', 'goggles', 'eyewear', 'earring', 'earrings', 'earwear', 'necklace', 'scarf',
+    'mask', 'bow tie', 'hearing aid', 'piercing', 'accessory', 'accessories', 'shades',
+    'sunglasses', 'spectacles', 'ears', 'neck', 'choker', 'binoculars', 'camera',
+    'headphones', 'earmuffs', 'earpiece', 'pendant',
+  ],
+}
+
+const STORE_BROAD_FEED_KEYS = new Set([
+  'clothingitems',
+  'clothing',
+  'appearance',
+  'storeclothing',
+  'allwearables',
+])
+
+const canonicalAvatarNamesByDesc = new Map(
+  avatarItemCatalog.map((item) => [String(item.AvatarItemDesc ?? ''), String(item.FriendlyName ?? '')])
+)
+
+const canonicalAvatarNamesByName = new Map(
+  avatarItemCatalog.map((item) => [String(item.FriendlyName ?? '').trim().toLowerCase(), String(item.FriendlyName ?? '')])
+)
+
+const canonicalHairNames = new Set(
+  avatarItemCatalog
+    .filter((item) =>
+      /\bhair\b|\bhairstyle\b|\bwig\b|\bmohawk\b|\bponytail\b|\bmullet\b|\bbraid\b|\bafro\b|\bpigtail\b|\bbun\b|\btwist\b|\bloc\b/i.test(
+        String(item.FriendlyName ?? '')
+      )
+    )
+    .map((item) => String(item.FriendlyName ?? '').trim().toLowerCase())
+)
+
+const canonicalFacialHairNames = new Set(
+  avatarItemCatalog
+    .filter((item) =>
+      /\bbeard\b|\bmustache\b|\bmoustache\b|\bstache\b|\bgoatee\b|\bstubble\b|\bsideburn\b|\bmutton\b|\bwhisker\b/i.test(
+        String(item.FriendlyName ?? '')
+      )
+    )
+    .map((item) => String(item.FriendlyName ?? '').trim().toLowerCase())
+)
+
+function normalizeStoreFeedKey(rawKey: string): string {
+  const normalized = rawKey.trim().toLowerCase()
+  return STORE_FEED_ALIASES[normalized] ?? normalized
+}
+
+function itemNames(item: (typeof sf32025.StoreItems)[number]): string[] {
+  const name = String(item.GiftDrop?.FriendlyName ?? '')
+  const canonicalByDesc = canonicalAvatarNamesByDesc.get(String(item.GiftDrop?.AvatarItemDesc ?? '')) ?? ''
+  const canonicalByName = canonicalAvatarNamesByName.get(name.trim().toLowerCase()) ?? ''
+  return [...new Set([name, canonicalByDesc, canonicalByName].filter(Boolean).map((value) => value.toLocaleLowerCase()))]
+}
+
+function matchesAnyName(names: string[], terms: string[]): boolean {
+  return terms.some((term) => names.some((name) => name.includes(term)))
+}
+
+const storeFeedIdsCache = new Map<string, string[]>()
+
 /**
- * The 2025 Store requests type=4 for its category feeds, while the broad Clothing page uses
- * type=5 Generic ids. Both paths must draw from the same 2025 storefront snapshot. Never fall
- * back to random legacy catalog rows for a known 2025 clothing/backpack feed.
+ * The 2025 storefront is static. Build each feed once per Worker isolate instead of
+ * repeatedly filtering the whole snapshot for every Store carousel request.
  */
-async function clothingStorePurchasableItemIds(c: Context<App>, key: string): Promise<string[] | null> {
-  const categoryTerms: Record<string, string[]> = {
-    headwearitems: [
-      'hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear', 'tiara', 'visor',
-      'beret', 'fedora', 'sombrero', 'hood', 'bandana', 'horn', 'horns', 'antlers',
-      'headphones', 'earphones', 'headset', 'head mirror', 'muffs', 'ear muffs',
-      'diadem', 'halo', 'headpiece',
-    ],
-    topsitems: [
-      'shirt', 'tee', 't-shirt', 'tank', 'polo', 'blouse', 'jacket', 'dress', 'vest', 'sweater',
-      'jersey', 'coat', 'robe', 'tunic', 'top', 'hoodie', 'sweatshirt', 'pullover',
-      'suit', 'blazer', 'turtleneck', 'apron', 'gown', 'cardigan', 'windbreaker',
-      'uniform', 'armor', 'onesie', 'outfit', 'costume', 'wetsuit', 'singlet',
-      'toga', 'techwear',
-    ],
-    bottomsitems: [
-      'pants', 'shorts', 'leggings', 'skirt', 'trousers', 'jeans', 'joggers', 'sweatpants',
-      'slacks', 'greaves', 'tutu', 'kilt',
-    ],
-    footwearitems: [
-      'shoes', 'sneakers', 'sandals', 'boots', 'slippers', 'footwear', 'socks', 'heels',
-      'loafers', 'cleats', 'flats',
-    ],
-    waistitems: ['belt', 'waist', 'sash', 'waistband'],
-    handsitems: [
-      'glove', 'hand', 'wrist', 'mittens', 'mitten', 'gauntlet', 'bracer', 'wristband',
-      'bracelet', 'cuff', 'cuffs', 'floatie',
-    ],
-    shoulderitems: [
-      'quiver', 'backpack', 'cape', 'shoulder', 'back accessory', 'wing', 'wings', 'jetpack',
-      'back ', 'on back', 'harness', 'scythe', 'board', 'bag',
-    ],
-    backpackitems: ['backpack', 'rucksack', 'knapsack', 'satchel', 'bookbag', 'purse'],
-    hairitems: [
-      'hair', 'hairstyle', 'wig', 'ponytail', 'pony tail', 'mohawk', 'afro', 'braid', 'braids',
-      'bob', 'pigtail', 'pigtails', 'dread', 'dreads', 'locs', 'locks', 'curly', 'curls',
-      'buzz', 'undercut', 'fade', 'pompadour', 'bangs', 'hair bow',
-    ],
-    facialhairitems: [
-      'beard', 'mustache', 'moustache', 'facial hair', 'goatee', 'stubble', 'sideburn',
-      'soul patch', 'mutton chops', 'whisker', 'whiskers',
-    ],
-    hairdyeitems: ['hair dye', 'permanent hair dye', 'dye'],
-    accessoriesitems: [
-      'glasses', 'goggles', 'eyewear', 'earring', 'earrings', 'earwear', 'necklace', 'scarf',
-      'mask', 'bow tie', 'hearing aid', 'piercing', 'accessory', 'accessories',
-      'shades', 'sunglasses', 'spectacles', 'ears', 'neck', 'choker', 'binoculars', 'camera',
-    ],
-    skinsitems: ['skin', 'equipment skin'],
-  }
+function buildStoreFeedIds(rawKey: string): string[] | null {
+  const key = normalizeStoreFeedKey(rawKey)
+  if (key === '' || (!STORE_BROAD_FEED_KEYS.has(key) && STORE_CATEGORY_TERMS[key] === undefined)) return null
 
-  const broadKeys = new Set(['clothingitems', 'clothing', 'appearance', 'storeclothing', 'allwearables'])
-  const terms = categoryTerms[key]
-  if (terms === undefined && !broadKeys.has(key)) return null
+  const cached = storeFeedIdsCache.get(key)
+  if (cached !== undefined) return cached
 
+  const terms = STORE_CATEGORY_TERMS[key]
   const now = Date.now()
   const ids = sf32025.StoreItems
     .filter((item) => {
       const drop = item.GiftDrop
-      // Query drops are boxes/rolls, not wearable avatar items. A real AvatarItemDesc plus
-      // a positive storefront price is the 2025 snapshot's signal that this row is a
-      // purchasable wearable. This prevents the Clothing page from turning into a box carousel.
-      // Equipment skins are the exception: they carry EquipmentModificationGuid instead of AvatarItemDesc.
-      if (key === 'skinsitems') {
-        if (!drop.EquipmentModificationGuid?.trim() || drop.IsQuery) return false
-      } else if (!drop.AvatarItemDesc?.trim() || drop.IsQuery) return false
-      if (!item.Prices.some((price) => price.Price > 0)) return false
+      const isStoreAvatarItem = drop.AvatarItemType === 0 || drop.AvatarItemType === 1
+      if (!drop.AvatarItemDesc?.trim() || drop.IsQuery || !isStoreAvatarItem) return false
       if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
       if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
-      if (broadKeys.has(key)) return true
 
-      const name = drop.FriendlyName.toLocaleLowerCase()
-      if (key === 'hairdyeitems') {
-        return drop.AvatarItemType === 1 || terms!.some((term) => name.includes(term))
+      // Top-level Clothing = all real first-party wearable Store entries.
+      if (STORE_BROAD_FEED_KEYS.has(key)) return drop.AvatarItemType === 0
+
+      const names = itemNames(item)
+      if (key === 'hairdyeitems') return drop.AvatarItemType === 1 || matchesAnyName(names, terms!)
+      if (key === 'hairitems') {
+        if (matchesAnyName(names, STORE_CATEGORY_TERMS.hairdyeitems)) return false
+        return names.some((name) => canonicalHairNames.has(name) || matchesAnyName([name], terms!))
       }
-      if (key === 'hairitems' && (drop.AvatarItemType === 1 || /\bdye\b/.test(name))) return false
-      return terms!.some((term) => name.includes(term))
+      if (key === 'facialhairitems') {
+        return names.some((name) => canonicalFacialHairNames.has(name) || matchesAnyName([name], terms!))
+      }
+      return matchesAnyName(names, terms!)
     })
     .map((item) => String(item.PurchasableItemId))
 
-  return [...new Set(ids)]
+  const unique = [...new Set(ids)]
+  storeFeedIdsCache.set(key, unique)
+  return unique
+}
+
+async function clothingStoreRowEntities(c: Context<App>, key: string): Promise<ListEntity[] | null> {
+  void c
+  const ids = buildStoreFeedIds(key)
+  if (ids === null) return null
+  return entities(ids.map((id) => `${GENERIC_ID_PREFIX.PurchasableItem}.${id}`))
+}
+
+async function clothingStorePurchasableItemIds(c: Context<App>, key: string): Promise<string[] | null> {
+  void c
+  return buildStoreFeedIds(key)
 }
 
 async function purchasableItemRowEntities(c: Context<App>, key: string): Promise<ListEntity[]> {
-	const storeIds = await clothingStorePurchasableItemIds(c, key)
+	const storeIds = await clothingStorePurchasableItemIds(c, normalizeStoreFeedKey(key))
 	if (storeIds !== null) return entities(storeIds)
 
 	const ids = await randomCatalogIds(c, STORE_ROW_RULES[key] ?? DEFAULT_STORE_ROW_RULE)
