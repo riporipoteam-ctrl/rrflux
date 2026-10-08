@@ -2402,7 +2402,7 @@
 	},
 	{
 		"Key": "Econ.StorefrontCarouselsToUseListsService",
-		"Value": "(StoreClothing)/HatsItems,(StoreClothing)/TorsoItems,(StoreClothing)/AccessoriesItems,(StoreClothing)/GlovesItems,(StoreClothing)/HairItems",
+		"Value": "(StoreClothing)/HatsItems,(StoreClothing)/TorsoItems,(StoreClothing)/BottomsItems,(StoreClothing)/ShoesItems,(StoreClothing)/WaistItems,(StoreClothing)/GlovesItems,(StoreClothing)/ShoulderItems,(StoreClothing)/HeadHairItems,(StoreClothing)/FacialHairItems,(StoreClothing)/AccessoriesItems,(StoreClothing)/BackpackItems,(StoreClothing)/EyewearItems,(StoreClothing)/EarwearItems,(StoreClothing)/NeckwearItems",
 		"ActiveExperiments": null,
 		"StartTime": null,
 		"EndTime": null
@@ -3067,7 +3067,7 @@
 	},
 	{
 		"Key": "Econ.StorefrontCarouselEndpointFriendlyNames",
-		"Value": "itemsforyou:Recommended For You||newitems:New Items||headwearitems:Headwear||topsitems:Tops||bottomsitems:Bottoms||footwearitems:Footwear||waistitems:Waist||handsitems:Hands||shoulderitems:Shoulders||skinsitems:Skins||accessoriesitems:Accessories||hairitems:Hairstyles||facialhairitems:Facial Hair||",
+		"Value": "itemsforyou:Recommended For You||newitems:New Items||headwearitems:Headwear||topsitems:Tops||bottomsitems:Bottoms||footwearitems:Footwear||waistitems:Waist||handsitems:Hands||shoulderitems:Shoulders & Back||skinsitems:Skins||accessoriesitems:Accessories||hairitems:Hairstyles||facialhairitems:Facial Hair||hairdyeitems:Hair Dye||backpackitems:Backpack Items||eyewearitems:Eyewear||earwearitems:Earwear||neckwearitems:Neckwear||",
 		"ActiveExperiments": null,
 		"StartTime": null,
 		"EndTime": null
