@@ -1040,10 +1040,6 @@ interface GiftRequest {
 const STOREFRONT_ALIASES: Record<string, string> = {
 	// Watch UI Store page requests "Storefront_Watch" — map it to the general store (sf3).
 	'Storefront_Watch': '3',
-	// Rec Center (storefront 2, room 2) has no authentic catalog capture of its own —
-	// serve the full authentic main-store catalog (sf3/sf3-2025) instead of an invented
-	// subset. Remove this line if a real Rec Center capture ever lands in static/storefronts.
-	'2': '3',
 }
 
 /**
@@ -1188,6 +1184,30 @@ const PURCHASE_METHOD_TYPE_GUID = 1
  * buys a custom avatar item yet, gift or otherwise, so the button it draws leads nowhere until
  * that exists. It is the flag to flip if a dead gift button is worse than a missing one.
  */
+function toStorefrontItemPurchaseInfo(item: StoreItem): ItemPurchaseInfo {
+	return {
+		ItemId: { itemType: 0, itemId: String(item.PurchasableItemId) },
+		PurchaseMethodId: {
+			Type: 0,
+			NumberId: item.PurchasableItemId,
+			Guid: null,
+		},
+		Prices: item.Prices.map((price) => ({
+			CurrencyType: price.CurrencyType,
+			Price: price.Price,
+			StorefrontSaleData: price.StorefrontSaleData ?? null,
+		})),
+		NewUntil: item.NewUntil ?? null,
+		AvailableAt: item.AvailableAt ?? null,
+		AvailableUntil: item.AvailableUntil ?? null,
+		CanBeGifted: item.GiftDrop.IsQuery !== true,
+		CanApplySubscriberDiscount:
+			Array.isArray(item.SubscriberPrices) && item.SubscriberPrices.length > 0,
+		SubscribersOnly: item.GiftDrop.SubscribersOnly === true,
+		IsFeatured: item.IsFeatured === true,
+	}
+}
+
 function toItemPurchaseInfo(item: CustomAvatarItem): ItemPurchaseInfo {
 	return {
 		ItemId: { itemType: UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM, itemId: item.CustomAvatarItemId },
@@ -4849,15 +4869,40 @@ const app = new Hono<App>({ strict: false })
 
 			const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
 			if (!body || !Array.isArray(body.Ids)) return c.json({ error: 'Ids is required' }, 400)
-			const ids = (body.Ids as unknown[]).flatMap((ref) => {
+
+			const refs = (body.Ids as unknown[]).flatMap((ref) => {
 				if (!ref || typeof ref !== 'object') return []
 				const { itemType, itemId } = ref as Record<string, unknown>
-				return itemType === UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM && typeof itemId === 'string'
-					? [itemId]
-					: []
+				if (!Number.isInteger(itemType) || typeof itemId !== 'string') return []
+				return [{ itemType, itemId }]
 			})
-			const items = await getCustomAvatarItems(c.env.DB, ids)
-			return c.json(items.map(toItemPurchaseInfo))
+
+			const storefrontRefs = refs.filter(
+				(ref): ref is { itemType: number; itemId: string } =>
+					ref.itemType === 0 && /^\d+$/.test(ref.itemId)
+			)
+			const storefront = storefrontRefs.length > 0 ? await loadStorefront(c, 3) : null
+			const storeById = new Map(
+				(storefront?.StoreItems ?? []).map((item) => [String(item.PurchasableItemId), item])
+			)
+
+			const ugcIds = refs
+				.filter((ref) => ref.itemType === UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM)
+				.map((ref) => ref.itemId)
+			const ugcItems = ugcIds.length > 0 ? await getCustomAvatarItems(c.env.DB, ugcIds) : []
+			const ugcById = new Map(ugcItems.map((item) => [item.CustomAvatarItemId, item]))
+
+			const result: ItemPurchaseInfo[] = []
+			for (const ref of refs) {
+				if (ref.itemType === 0) {
+					const item = storeById.get(ref.itemId)
+					if (item !== undefined) result.push(toStorefrontItemPurchaseInfo(item))
+				} else if (ref.itemType === UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM) {
+					const item = ugcById.get(ref.itemId)
+					if (item !== undefined) result.push(toItemPurchaseInfo(item))
+				}
+			}
+			return c.json(result)
 		}
 	)
 
@@ -5072,14 +5117,14 @@ const app = new Hono<App>({ strict: false })
 
 	// v4 room storefront. The 2023 client calls GET /api/storefronts/v4/room/{id} when
 	// opening the store in a room (Rec Center = room 2, bowling alley = 500, etc.).
-	// This was missing → 404 → empty store. Room 2 returns the dynamic rotation;
+	// This was missing → 404 → empty store. Room 2 returns the captured Rec Center storefront;
 	// other original rooms return their captured sf{id}.json catalogs.
 	app.get(
 		'/api/storefronts/v4/room/:id',
 		describeRoute({
 			tags: ['Storefront'],
 			summary: 'Room storefront catalog (v4)',
-			description: 'Serves the room-specific storefront catalog. Room 2 (Rec Center) has no authentic catalog of its own, so it serves the full authentic main-store catalog (aliased to storefront 3); other original rooms serve their captured catalogs: paintball (rooms 10-11 → sf400), quest stores (room 12 GoldenTrophy → sf102, room 14 TheRiseofJumbotron → sf101, room 15 CrimsonCauldron → sf103, room 16 IsleOfLostSkulls → sf100), bowling (rooms 39-40 → sf500), stunt runner (rooms 41-42 → sf600).',
+			description: 'Serves the room-specific storefront catalog. Room 2 (Rec Center) serves its captured `sf2.json` storefront; other original rooms serve their captured catalogs: paintball (rooms 10-11 → sf400), quest stores (room 12 GoldenTrophy → sf102, room 14 TheRiseofJumbotron → sf101, room 15 CrimsonCauldron → sf103, room 16 IsleOfLostSkulls → sf100), bowling (rooms 39-40 → sf500), stunt runner (rooms 41-42 → sf600).',
 			parameters: [
 				{
 					name: 'id',
@@ -5096,10 +5141,8 @@ const app = new Hono<App>({ strict: false })
 		}),
 		async (c) => {
 			const id = c.req.param('id')
-			// Rec Center (room 2) has no authentic catalog of its own: serve the full
-			// authentic main-store catalog via loadStorefront (id 2 is aliased to 3 in
-			// STOREFRONT_ALIASES), so the in-world store shows the same real items —
-			// shirts and all — as the Watch-menu store, and purchases resolve.
+			// Rec Center (room 2) keeps its own captured sf2.json storefront so the two
+			// in-world shop surfaces are not overwritten by the main Watch-menu catalog.
 			if (id === '2') {
 				const storefront = await loadStorefront(c, 2)
 				if (!storefront) return c.notFound()
