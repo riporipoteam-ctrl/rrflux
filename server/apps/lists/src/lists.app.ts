@@ -640,6 +640,9 @@ export function buildStoreFeedIds(rawKey: string): string[] | null {
       const drop = item.GiftDrop
       const isStoreAvatarItem = drop.AvatarItemType === 0 || drop.AvatarItemType === 1
       if (!drop.AvatarItemDesc?.trim() || drop.IsQuery || !isStoreAvatarItem) return false
+      // Rarity -1 is the developer/unreleased tier. It is present in the historical capture
+      // but is not a public storefront item, so never advertise it in Store feeds.
+      if (UNSELLABLE_RARITIES.includes(drop.Rarity)) return false
       // This is a historical 2025 catalog snapshot. Browse feeds should expose the
       // snapshot faithfully rather than silently removing items because their listing window
       // has since expired in the real service.
