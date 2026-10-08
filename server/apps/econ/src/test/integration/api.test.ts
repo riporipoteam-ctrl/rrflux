@@ -2541,15 +2541,29 @@ describe('econ endpoints', () => {
 		expect((await get('40')).StorefrontType).toBe(500)
 	})
 
-	test('GET /api/storefronts/v4/room/2 serves the Rec Center dynamic rotation', async () => {
-		const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v4/room/2`)
-		expect(res.status).toBe(200)
-		const catalog = (await res.json()) as {
-			StorefrontType: number
-			StoreItems: unknown[]
+	test('GET /api/storefronts/v4/room/2 serves clothing and food under the Rec Center storefront id', async () => {
+		const read = async (headers: Record<string, string> = {}) => {
+			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v4/room/2`, { headers })
+			expect(res.status).toBe(200)
+			return (await res.json()) as {
+				StorefrontType: number
+				StoreItems: Array<{
+					GiftDrop: { FriendlyName: string; AvatarItemDesc: string; ConsumableItemDesc: string }
+				}>
+			}
 		}
-		expect(catalog.StorefrontType).toBe(2)
-		expect(catalog.StoreItems.length).toBeGreaterThan(0)
+
+		// A client without a readable build gets the legacy catalog, still labeled as its room store.
+		const legacy = await read()
+		expect(legacy.StorefrontType).toBe(2)
+		expect(legacy.StoreItems.some((item) => Boolean(item.GiftDrop.AvatarItemDesc))).toBe(true)
+		expect(legacy.StoreItems.some((item) => Boolean(item.GiftDrop.ConsumableItemDesc))).toBe(true)
+
+		// Newer clients get the full captured catalog, including the Rec Center food assortment.
+		const current = await read(await bearer('42', undefined, '20250718.01'))
+		expect(current.StorefrontType).toBe(2)
+		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')).toBe(true)
+		expect(current.StoreItems.some((item) => Boolean(item.GiftDrop.AvatarItemDesc))).toBe(true)
 	})
 
 	test('GET /api/storefronts/v4/room 404s for rooms with no storefront', async () => {

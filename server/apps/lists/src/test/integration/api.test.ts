@@ -13,6 +13,7 @@ import { SCHEMA_DDL as CUSTOM_AVATAR_ITEM_SCHEMA_DDL } from '../../../../api/src
 import { CATALOG_SCHEMA_DDL } from '../../../../econ/src/catalog-db'
 import { CATALOG_ID_BASE } from '../../../../econ/src/catalog-load'
 import curatedLists from '../../../static/curated-lists.json'
+import sf32025 from '../../../../econ/static/storefronts/sf3-2025.json'
 
 import type { Env } from '../../context'
 
@@ -21,6 +22,34 @@ declare module 'cloudflare:test' {
 }
 
 const ORIGIN = 'https://example.com'
+
+type SnapshotStoreItem = (typeof sf32025.StoreItems)[number]
+
+const storefrontItemById = new Map(
+	sf32025.StoreItems.map((item) => [item.PurchasableItemId, item] as const)
+)
+
+function eligibleSnapshotItems(matches: (item: SnapshotStoreItem) => boolean): SnapshotStoreItem[] {
+	const now = Date.now()
+	return sf32025.StoreItems.filter((item) => {
+		if (
+			!matches(item) ||
+			item.GiftDrop.IsQuery ||
+			!item.Prices.some((price) => price.Price > 0)
+		)
+			return false
+		if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
+		if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
+		return true
+	})
+}
+
+function snapshotItemForId(id: string): SnapshotStoreItem {
+	const itemId = Number(id.startsWith('0.') ? id.slice(2) : id)
+	const item = storefrontItemById.get(itemId)
+	expect(item, `missing storefront snapshot item for ${id}`).toBeDefined()
+	return item!
+}
 
 /**
  * Sellable avatar items seeded into the catalog — more than a GENERIC row holds, so the row's
@@ -896,6 +925,23 @@ async function readGenericRow(slug: string): Promise<string[]> {
 	return body.Entities.map((e) => e.Id)
 }
 
+/** A PURCHASABLE ITEMS (type=4) row's bare ids, checking the same response envelope. */
+async function readPurchasableRow(slug: string): Promise<string[]> {
+	const res = await SELF.fetch(`${ORIGIN}/algorithmiclists/${slug}?type=4`)
+	expect(res.status, slug).toBe(200)
+	const body = (await res.json()) as {
+		Type: number
+		Entities: Array<{ Id: string; Context: null }>
+	}
+	expect(body.Type, slug).toBe(4)
+	expect(Object.keys(body).sort(), slug).toEqual(['Entities', 'Type'])
+	expect(
+		body.Entities.every((entity) => entity.Context === null && /^\d+$/.test(entity.Id)),
+		slug
+	).toBe(true)
+	return body.Entities.map((entity) => entity.Id)
+}
+
 /** A GENERIC row's ids with the `1.` prefix checked and stripped: the GUIDs it names. */
 async function readGenericGuids(slug: string): Promise<string[]> {
 	return (await readGenericRow(slug)).map((id) => {
@@ -945,245 +991,184 @@ it('fills a GENERIC (type=5) row with random first-party custom avatar items', a
 		'newitems',
 		'Rooms_Battle_AlgoEndpoint_PlayHighlight_TabsTest_Explore',
 		'HotList',
+		'NoSuchRowAnywhere',
 	]) {
 		expect(await readGenericGuids(slug), slug).toHaveLength(GENERIC_ROW_SIZE)
 	}
 })
 
-it('filters the GENERIC store category rows by OutfitType', async () => {
-	// The `StoreCategories` sections. A custom avatar item records its slot, so each row is a
-	// real category rather than a guess from the name — and no item lands in two rows.
-	const names = async (slug: string): Promise<string[]> => {
-		const guids = await readGenericGuids(slug)
-		const rows = await env.DB.prepare(
-			`SELECT json_extract(data, '$.Name') AS name FROM custom_avatar_item
-			 WHERE custom_avatar_item_id IN (${guids.map(() => '?').join(', ')})`
-		)
-			.bind(...guids)
-			.all<{ name: string }>()
-		return rows.results.map((r) => r.name).sort()
-	}
-
-	expect(await names('headwearitems')).toEqual(['Top Hat'])
-	expect(await names('hairitems')).toEqual(['Angled Bob Hair'])
-	expect(await names('facialhairitems')).toEqual(['Wizard Beard'])
-	expect(await names('accessoriesitems')).toEqual(['3D Glasses', 'Bow Tie', 'Round Earrings'])
-	expect(await names('shoulderitems')).toEqual(['Archer Quiver'])
-	expect(await names('waistitems')).toEqual(['Treasure Hunter Belt'])
-	expect(await names('handsitems')).toEqual(['Karate Wrist Wrap'])
-	expect(await names('bottomsitems')).toEqual(['Barista Pants'])
-	expect(await names('footwearitems')).toEqual(['Flower Sandals'])
-	expect(await names('HeadwearItems')).toEqual(['Top Hat'])
-
-	// Tops are shirts AND team jerseys, still under the row size and still without the draft,
-	// free and player-made shirts.
-	const tops = await names('topsitems')
-	expect(tops).toContain('Team Jersey')
-	expect(tops).toHaveLength(GENERIC_ROW_SIZE)
-	expect(tops.every((n) => n === 'Team Jersey' || n.startsWith('Seeded Shirt'))).toBe(true)
-})
-
-it('fills a PURCHASABLE ITEMS (type=4) row with the same draw, but BARE ids', async () => {
-	// The store's clothing row (`/algorithmiclists/clothingitems?type=4`). Same random draw from
-	// the catalogue as the Generic row — nothing ranks store items here either — but the ids are
-	// PLAIN. That difference is the whole distinction between the two types: a typed row's
-	// `Type` is what tells the client which service to resolve its ids against, so its ids need
-	// say nothing about themselves, where a Generic row can name things of more than one sort
-	// and carries the sort inside each id.
-	const read = async (slug: string): Promise<string[]> => {
-		const res = await SELF.fetch(`${ORIGIN}/algorithmiclists/${slug}?type=4`)
-		expect(res.status, slug).toBe(200)
-		const body = (await res.json()) as {
-			Type: number
-			Entities: Array<{ Id: string; Context: null }>
+	it('uses the 2025 snapshot for Generic store category and consumable rows', async () => {
+		const slugs = [
+			'clothingitems',
+			'headwearitems',
+			'topsitems',
+			'bottomsitems',
+			'footwearitems',
+			'waistitems',
+			'handsitems',
+			'shoulderitems',
+			'backpackitems',
+			'hairitems',
+			'facialhairitems',
+			'hairdyeitems',
+			'accessoriesitems',
+			'skinsitems',
+			'consumableitems',
+		]
+		for (const slug of slugs) {
+			const purchasableIds = await readPurchasableRow(slug)
+			const genericIds = await readGenericRow(slug)
+			expect(genericIds, slug).toEqual(purchasableIds.map((id) => `0.${id}`))
+			expect(purchasableIds.every((id) => storefrontItemById.has(Number(id))), slug).toBe(true)
 		}
-		expect(body.Type, slug).toBe(4)
-		expect(Object.keys(body).sort(), slug).toEqual(['Entities', 'Type'])
-		expect(
-			body.Entities.every((e) => e.Context === null),
-			slug
-		).toBe(true)
-		return body.Entities.map((e) => e.Id)
-	}
+	})
 
-	const ids = await read('clothingitems')
-	expect(ids).toHaveLength(GENERIC_ROW_SIZE)
+	it('returns the full eligible 2025 clothing snapshot as bare purchasable ids', async () => {
+		const expected = eligibleSnapshotItems((item) =>
+			Boolean(item.GiftDrop.AvatarItemDesc?.trim())
+		).map((item) => String(item.PurchasableItemId))
+		const ids = await readPurchasableRow('clothingitems')
+		expect(ids).toEqual(expected)
+		expect(ids.length).toBeGreaterThan(2400)
+		expect(await readPurchasableRow('ClothingItems')).toEqual(expected)
 
-	// Bare integers — NO `0.` prefix. Serving `0.10000` here would have the client look up a
-	// purchasable item literally called "0.10000".
-	for (const id of ids) {
-		expect(id, id).toMatch(/^\d+$/)
-		expect(id, id).not.toContain('.')
-	}
+		// Type 5 uses `0.<id>` composites for the same full feed; it must not collapse back to
+		// custom-avatar `1.<guid>` rows or silently trim the Clothing page to 50 items.
+		expect(await readGenericRow('clothingitems')).toEqual(expected.map((id) => `0.${id}`))
 
-	// The same pool the Generic row draws from: catalog ids, so sellable avatar items only.
-	const numbers = ids.map(Number)
-	expect(new Set(numbers).size).toBe(numbers.length)
-	expect(numbers).not.toContain(CATALOG_UNSELLABLE_ID)
-	expect(numbers.some((n) => n >= CATALOG_SKIN_ID)).toBe(false)
-	expect(numbers.every(isSeededAvatarItem)).toBe(true)
-
-	// Random, and answered by the TYPE rather than the slug — like Generic.
-	expect(await read('clothingitems')).not.toEqual(ids)
-	for (const slug of ['ClothingItems', 'newitems', 'HotList', 'NoSuchRowAnywhere']) {
-		const other = await read(slug)
-		expect(other, slug).toHaveLength(GENERIC_ROW_SIZE)
-		expect(
-			other.every((id) => /^\d+$/.test(id)),
-			slug
-		).toBe(true)
-	}
-
-	// The two types stay distinct: asking the SAME slug as 5 gets `1.<guid>` custom avatar items.
-	const genericIds = await readGenericRow('clothingitems')
-	expect(genericIds.length).toBeGreaterThan(0)
-	expect(genericIds.every((id) => id.startsWith('1.'))).toBe(true)
-})
-
-it('fills the skinsitems (type=4) row with equipment skins, not avatar items', async () => {
-	// `/algorithmiclists/skinsitems?type=4` — the equipment row. Same type and same bare-id
-	// shape as every other store row, so the SLUG is the only thing in the request saying it
-	// wants something held rather than something worn.
-	const read = async (slug: string): Promise<number[]> => {
-		const res = await SELF.fetch(`${ORIGIN}/algorithmiclists/${slug}?type=4`)
-		expect(res.status, slug).toBe(200)
-		const body = (await res.json()) as {
-			Type: number
-			Entities: Array<{ Id: string; Context: null }>
+		// Unknown type-4 rows retain the bounded legacy fallback; only known snapshot feeds expand.
+		const fallbackSlugs = ['newitems', 'HotList', 'NoSuchRowAnywhere']
+		for (const slug of fallbackSlugs) {
+			const fallback = await readPurchasableRow(slug)
+			expect(fallback, slug).toHaveLength(GENERIC_ROW_SIZE)
+			expect(fallback.every((id) => isSeededAvatarItem(Number(id))), slug).toBe(true)
 		}
-		expect(body.Type, slug).toBe(4)
-		expect(
-			body.Entities.every((e) => e.Context === null && /^\d+$/.test(e.Id)),
-			slug
-		).toBe(true)
-		return body.Entities.map((e) => Number(e.Id))
-	}
+		const unknownFallback = await readPurchasableRow('NoSuchRowAnywhere')
+		expect(await readPurchasableRow('NoSuchRowAnywhere')).not.toEqual(unknownFallback)
+	})
 
-	const skins = await read('skinsitems')
-	expect(skins).toHaveLength(GENERIC_ROW_SIZE)
-	expect(new Set(skins).size).toBe(skins.length)
+		it('includes official legacy and Full Body clothes in the Clothing page and categories', async () => {
+			const names = async (slug: string): Promise<string[]> =>
+				(await readPurchasableRow(slug)).map((id) => snapshotItemForId(id).GiftDrop.FriendlyName)
+			const clothingNames = await names('clothingitems')
+			const legacyNames = eligibleSnapshotItems(
+				(item) =>
+					Boolean(item.GiftDrop.AvatarItemDesc?.trim()) &&
+					!item.GiftDrop.FriendlyName.toLocaleLowerCase().includes('[full body]')
+			).map((item) => item.GiftDrop.FriendlyName)
+			const fullBodyNames = eligibleSnapshotItems(
+				(item) =>
+					Boolean(item.GiftDrop.AvatarItemDesc?.trim()) &&
+					item.GiftDrop.FriendlyName.toLocaleLowerCase().includes('[full body]')
+			).map((item) => item.GiftDrop.FriendlyName)
+			expect(fullBodyNames.length).toBeGreaterThan(50)
+			expect(clothingNames).toEqual(expect.arrayContaining(legacyNames))
+			expect(clothingNames).toEqual(expect.arrayContaining(fullBodyNames))
+			const fullBodyIds = eligibleSnapshotItems((item) =>
+				item.GiftDrop.FriendlyName.toLocaleLowerCase().includes('[full body]')
+			).map((item) => String(item.PurchasableItemId))
+			const categoryIds = new Set(
+				(
+					await Promise.all(
+						[
+							'headwearitems',
+							'topsitems',
+							'bottomsitems',
+							'footwearitems',
+							'waistitems',
+							'handsitems',
+							'shoulderitems',
+							'backpackitems',
+							'hairitems',
+							'facialhairitems',
+							'hairdyeitems',
+							'accessoriesitems',
+						].map(readPurchasableRow)
+					)
+				).flat()
+			)
+			expect(fullBodyIds.filter((id) => !categoryIds.has(id))).toEqual([])
 
-	// Skins ONLY. Every id is in the seeded skin range, and none is an avatar item — a row that
-	// quietly mixed the two would still look plausible.
-	expect(
-		skins.every((n) => n >= CATALOG_SKIN_ID && n < CATALOG_SKIN_ID + CATALOG_SKINS_SEEDED)
-	).toBe(true)
-	expect(skins.some((n) => n < CATALOG_SKIN_ID)).toBe(false)
+			// Both body variants must remain in their wear categories; the keyword rules had dropped
+			// these Full Body clip/tie items and falsely treated "swing" as a shoulder wing.
+			expect(await names('footwearitems')).toContain('Yellow Sneakers [Full Body]')
+			expect(await names('bottomsitems')).toContain('Gray Bike Shorts [Full Body]')
+			expect(await names('topsitems')).toContain('Swing Dress (Candy Cane) [Full Body]')
+			expect(await names('shoulderitems')).not.toContain('Swing Dress (Candy Cane) [Full Body]')
+			const accessories = await names('accessoriesitems')
+			expect(accessories).toContain('Gaia Clip (Sprout)* [Full Body]')
+			expect(accessories).toContain('Business Tie (Candy Cane) [Full Body]')
+		})
 
-	// Still random, like the other store rows.
-	expect(await read('skinsitems')).not.toEqual(skins)
-
-	// Case-folded like every row key.
-	const cased = await read('SkinsItems')
-	expect(cased.every((n) => n >= CATALOG_SKIN_ID)).toBe(true)
-
-	// And the slug is what decides: every OTHER type=4 row still draws avatar items, so this is
-	// a row-specific answer rather than the type changing meaning.
-	for (const slug of ['clothingitems', 'newitems', 'HotList', 'NoSuchRowAnywhere']) {
-		const others = await read(slug)
-		expect(others, slug).toHaveLength(GENERIC_ROW_SIZE)
-		expect(others.every(isSeededAvatarItem), slug).toBe(true)
-	}
-
-	// `skinsitems` asked for as GENERIC draws custom avatar items instead: a skin is not one,
-	// so the Generic rows have no skins row, and the slug draws every player slot.
-	const genericIds = await readGenericRow('skinsitems')
-	expect(genericIds).toHaveLength(GENERIC_ROW_SIZE)
-	expect(genericIds.every((id) => id.startsWith('1.'))).toBe(true)
-})
-
-it('filters the category rows by name', async () => {
-	// `headwearitems`, `topsitems`, `hairitems` and `waistitems` all draw avatar items, narrowed
-	// by a substring of the NAME — the catalog records no slot or category, so the name is the
-	// only thing there is to filter on.
-	const names = async (slug: string): Promise<string[]> => {
-		const res = await SELF.fetch(`${ORIGIN}/algorithmiclists/${slug}?type=4`)
-		expect(res.status, slug).toBe(200)
-		const ids = ((await res.json()) as { Entities: Array<{ Id: string }> }).Entities.map((e) =>
-			Number(e.Id)
+	it('returns every currently sellable StoreConsumables item', async () => {
+		const expectedItems = eligibleSnapshotItems((item) =>
+			Boolean(item.GiftDrop.ConsumableItemDesc?.trim())
 		)
-		// Resolve each id back to the row it names, so the assertions read as item names.
-		const rows = await env.DB.prepare(
-			`SELECT friendly_name FROM catalog WHERE catalog_id IN (${ids.map(() => '?').join(', ')})`
-		)
-			.bind(...ids)
-			.all<{ friendly_name: string }>()
-		return rows.results.map((r) => r.friendly_name).sort()
-	}
+		const expectedIds = expectedItems.map((item) => String(item.PurchasableItemId))
+		const ids = await readPurchasableRow('consumableitems')
+		expect(ids).toEqual(expectedIds)
+		expect(ids.length).toBeGreaterThan(200)
 
-	expect(await names('headwearitems')).toEqual(['Top Hat', 'Wizard Hat (Blue)'])
-	expect(await names('hairitems')).toEqual(['Angled Bob Hair'])
-
-	// Facial hair is its OWN row, and the two do not overlap: no real beard or mustache has
-	// "hair" in its name, so `hairitems` does not sweep them up.
-	expect(await names('facialhairitems')).toEqual(['Curly Mustache', 'Wizard Beard'])
-	expect(await names('hairitems')).not.toContain('Wizard Beard')
-	expect(await names('waistitems')).toEqual([
-		'Samurai Belt Sword (Jade)',
-		'Treasure Hunter Belt (Brown)',
-	])
-
-	// A needle may be a PHRASE, not just a word — "hearing aids" has a space in it, and the
-	// match is a plain substring, so nothing splits it.
-	expect(await names('accessoriesitems')).toEqual([
-		'Hearing Aids (BTE Earmold - Red)',
-		'Round Earrings',
-	])
-	expect(await names('footwearitems')).toEqual([
-		'Carnival Clown Shoes',
-		'Destiny Hunter Boots',
-		'Flower Sandals',
-		'Pink Pop Idol Sneakers',
-	])
-	expect(await names('bottomsitems')).toEqual(['Barista Pants', 'Silly Shorts (Donut Dreams)'])
-	expect(await names('shoulderitems')).toEqual([
-		'Archer Quiver (Green)',
-		'Backsword (Wolf Steel)',
-		'Plush Bunny Backpack',
-		'Samurai Belt Sword (Jade)',
-	])
-
-	// The rows OVERLAP, deliberately: a "Samurai Belt Sword" is a belt and a sword, so it is in
-	// both rows rather than being claimed by whichever rule ran first. Nothing here assigns an
-	// item to one category — the name is all there is to go on.
-	expect(await names('waistitems')).toContain('Samurai Belt Sword (Jade)')
-
-	// Several needles are ORed: a "top" is a shirt, a jacket OR a dress, and hands take gloves,
-	// hands or wrists. The group is still ANDed with the kind and rarity filters rather than
-	// escaping them.
-	expect(await names('topsitems')).toEqual([
-		'Artist Shirt (Gray)',
-		'Captain Jacket (Blue)',
-		'Royal Dress (Blue)',
-	])
-	expect(await names('handsitems')).toEqual([
-		'Karate Wrist Wrap',
-		'Vampire Hunter Gloves (Red)',
-		'Zombie Hands',
-	])
-
-	// Case-insensitive on both sides, and matched mid-word: "Wizard Hat" is found by `hat`
-	// though the name capitalises it, and the row key folds like every other.
-	expect(await names('HeadwearItems')).toEqual(['Top Hat', 'Wizard Hat (Blue)'])
-
-	// The control: nothing in the seeds matches every rule, so a filter that quietly did nothing
-	// would show up here as the unrelated items coming back too.
-	for (const slug of ['headwearitems', 'topsitems', 'handsitems', 'hairitems', 'waistitems']) {
-		const got = await names(slug)
-		expect(got, slug).not.toContain('Plain Trousers')
-		expect(got, slug).not.toContain('Ordinary Socks')
-		// And none of the bulk `Seeded Item N` rows, which no category names.
+		const names = expectedItems.map((item) => item.GiftDrop.FriendlyName)
+		expect(names).toEqual(expect.arrayContaining(['Apple', '87 Flavor Cake', 'Alien Blaster']))
 		expect(
-			got.every((n) => !n.startsWith('Seeded Item')),
-			slug
+			ids.every((id) => {
+				const drop = snapshotItemForId(id).GiftDrop
+				return Boolean(drop.ConsumableItemDesc?.trim()) && !drop.IsQuery
+			})
 		).toBe(true)
+	})
+
+	it('returns every eligible 2025 equipment skin as a bare purchasable id', async () => {
+		const expected = eligibleSnapshotItems((item) => {
+			const name = item.GiftDrop.FriendlyName.toLocaleLowerCase()
+			return (
+				Boolean(item.GiftDrop.EquipmentModificationGuid?.trim()) &&
+				['skin', 'equipment skin'].some((term) => name.includes(term))
+			)
+		}).map((item) => String(item.PurchasableItemId))
+		const skins = await readPurchasableRow('skinsitems')
+		expect(skins).toEqual(expected)
+		expect(skins.length).toBeGreaterThan(80)
+		expect(await readPurchasableRow('SkinsItems')).toEqual(expected)
+		expect(await readGenericRow('skinsitems')).toEqual(expected.map((id) => `0.${id}`))
+	})
+
+it('keeps storefront category keyword matching, case-folding, overlaps, and exclusions', async () => {
+	const names = async (slug: string): Promise<string[]> =>
+		(await readPurchasableRow(slug)).map((id) => snapshotItemForId(id).GiftDrop.FriendlyName)
+
+	const examples: Array<[slug: string, name: string]> = [
+		['headwearitems', 'Yeti Hat (Pink)'],
+		['topsitems', 'Cozy Winter Coat (Pastel Blue)'],
+		['bottomsitems', "80's Arcade Cargo Pants"],
+		['footwearitems', 'Beige Pop Idol Sneakers'],
+		['waistitems', "80's Arcade Retro Belt"],
+		['handsitems', 'Alloy Power Gloves (Black)'],
+		['shoulderitems', 'Atlantian Cape'],
+		['backpackitems', 'Strawberry Side Purse (Pink)'],
+		['hairitems', 'Anime Hair Hat (Black)'],
+		['facialhairitems', 'Chupacabra Mutton Chops'],
+		['hairdyeitems', 'Permanent Hair Dye (Cauldron Crimson)'],
+		['accessoriesitems', '3D Glasses'],
+		['skinsitems', 'Bee-utiful Paintball Launcher Skin'],
+	]
+	for (const [slug, expectedName] of examples) {
+		expect(await names(slug), slug).toContain(expectedName)
 	}
 
-	// A row with no rule of its own is unfiltered — it still draws the whole avatar-item catalog.
-	const unfiltered = await SELF.fetch(`${ORIGIN}/algorithmiclists/clothingitems?type=4`)
-	expect(((await unfiltered.json()) as { Entities: unknown[] }).Entities.length).toBe(
-		GENERIC_ROW_SIZE
-	)
+	// A category is a name-based filter, not an exclusive assignment: "cape" also contains
+	// "cap", and bookbags match both the shoulder/back and backpack terms.
+	expect(await names('headwearitems')).toContain('Atlantian Cape')
+	expect(await names('shoulderitems')).toContain('Atlantian Cape')
+	const bookbag = 'Chupacabra Cryptid Trainer Bookbag'
+	expect(await names('backpackitems')).toContain(bookbag)
+	expect(await names('shoulderitems')).toContain(bookbag)
+
+	// Category slugs are case-insensitive; hair dye is its own category, not a hairstyle.
+	const headwear = await names('headwearitems')
+	expect(await names('HeAdWeArItEmS')).toEqual(headwear)
+	expect(await names('hairitems')).not.toContain('Permanent Hair Dye (Cauldron Crimson)')
 })
 
 it('serves the live hot-room ranking for /algorithmiclists/HotList', async () => {

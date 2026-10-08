@@ -410,9 +410,9 @@ const ROOMIE_OUTFIT_TYPE_BASE = 500
  * categories rather than a guess from the name, and no item sits in two rows.
  */
 const CUSTOM_ITEM_ROW_OUTFIT_TYPES: Record<string, number[]> = {
-	headwearitems: [OutfitType.Hat],
-	topsitems: [OutfitType.Shirt, OutfitType.TeamJersey],
-	handsitems: [OutfitType.Wrist, OutfitType.TeamWrist],
+headwearitems: [OutfitType.Hat],
+topsitems: [OutfitType.Shirt, OutfitType.TeamJersey],
+handsitems: [OutfitType.Wrist, OutfitType.TeamWrist],
 	hairitems: [OutfitType.Hair],
 	facialhairitems: [OutfitType.Beard],
 	waistitems: [OutfitType.Waist],
@@ -498,7 +498,7 @@ async function clothingStoreRowEntities(c: Context<App>, key: string): Promise<L
 /**
  * The 2025 Store requests type=4 for its category feeds, while the broad Clothing page uses
  * type=5 Generic ids. Both paths must draw from the same 2025 storefront snapshot. Never fall
- * back to random legacy catalog rows for a known 2025 clothing/backpack feed.
+ * back to random legacy catalog rows for a known 2025 clothing/backpack/consumables feed.
  */
 async function clothingStorePurchasableItemIds(c: Context<App>, key: string): Promise<string[] | null> {
   const categoryTerms: Record<string, string[]> = {
@@ -546,14 +546,16 @@ async function clothingStorePurchasableItemIds(c: Context<App>, key: string): Pr
     accessoriesitems: [
       'glasses', 'goggles', 'eyewear', 'earring', 'earrings', 'earwear', 'necklace', 'scarf',
       'mask', 'bow tie', 'hearing aid', 'piercing', 'accessory', 'accessories',
-      'shades', 'sunglasses', 'spectacles', 'ears', 'neck', 'choker', 'binoculars', 'camera',
+      'tie', 'necktie', 'ascot', 'clip', 'shades', 'sunglasses', 'spectacles', 'ears', 'neck',
+      'choker', 'binoculars', 'camera',
     ],
     skinsitems: ['skin', 'equipment skin'],
   }
 
   const broadKeys = new Set(['clothingitems', 'clothing', 'appearance', 'storeclothing', 'allwearables'])
   const terms = categoryTerms[key]
-  if (terms === undefined && !broadKeys.has(key)) return null
+  const consumablesKey = key === 'consumableitems'
+  if (terms === undefined && !broadKeys.has(key) && !consumablesKey) return null
 
   const now = Date.now()
   const ids = sf32025.StoreItems
@@ -565,18 +567,24 @@ async function clothingStorePurchasableItemIds(c: Context<App>, key: string): Pr
       // Equipment skins are the exception: they carry EquipmentModificationGuid instead of AvatarItemDesc.
       if (key === 'skinsitems') {
         if (!drop.EquipmentModificationGuid?.trim() || drop.IsQuery) return false
+      } else if (consumablesKey) {
+        // StoreConsumables names this feed `consumableitems`; its products resolve by
+        // ConsumableItemDesc, not by AvatarItemDesc or the legacy wearable catalog.
+        if (!drop.ConsumableItemDesc?.trim() || drop.IsQuery) return false
       } else if (!drop.AvatarItemDesc?.trim() || drop.IsQuery) return false
       if (!item.Prices.some((price) => price.Price > 0)) return false
       if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
       if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
-      if (broadKeys.has(key)) return true
+      if (broadKeys.has(key) || consumablesKey) return true
 
       const name = drop.FriendlyName.toLocaleLowerCase()
       if (key === 'hairdyeitems') {
         return drop.AvatarItemType === 1 || terms!.some((term) => name.includes(term))
       }
       if (key === 'hairitems' && (drop.AvatarItemType === 1 || /\bdye\b/.test(name))) return false
-      return terms!.some((term) => name.includes(term))
+      return terms!.some((term) =>
+        term === 'wing' ? /\bwing\b/.test(name) : name.includes(term)
+      )
     })
     .map((item) => String(item.PurchasableItemId))
 
@@ -1114,5 +1122,3 @@ app.get(
 )
 
 export default app
-
-

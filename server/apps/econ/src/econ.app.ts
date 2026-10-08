@@ -5084,11 +5084,13 @@ const app = new Hono<App>({ strict: false })
 			// authentic main-store catalog via loadStorefront (id 2 is aliased to 3 in
 			// STOREFRONT_ALIASES), so the in-world store shows the same real items —
 			// shirts and all — as the Watch-menu store, and purchases resolve.
-			if (id === '2') {
-				const storefront = await loadStorefront(c, 2)
-				if (!storefront) return c.notFound()
-				return c.json(storefront)
-			}
+				if (id === '2') {
+					const storefront = await loadStorefront(c, 2)
+					if (!storefront) return c.notFound()
+					// Keep the room's public storefront id on the response even though its
+					// catalog (and purchase lookup) is aliased to the general store.
+					return c.json({ ...storefront, StorefrontType: 2 })
+				}
 			// Map original room IDs to their storefront catalog IDs. Room IDs and
 			// storefront IDs are different namespaces (e.g., Bowling is room 39
 			// but its storefront is sf500).
