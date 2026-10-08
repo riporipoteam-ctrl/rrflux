@@ -3062,7 +3062,7 @@ const app = new Hono<App>({ strict: false })
 	.get(
 		'/api/avatar/v1/defaultunlocked',
 		listRoute('Default-unlocked avatar items', 'The bundled default avatar-item catalog'),
-		(c) => c.json(defaultAvatarItems)
+		(c) => c.json(customizeDefaultAvatarItems)
 	)
 
 	// The base items UGC clothing is built on top of — served from bundled static JSON,
@@ -3097,7 +3097,7 @@ const app = new Hono<App>({ strict: false })
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
 			const owned = await getInventory(c.env.DB, id)
-			return c.json([...owned, ...defaultAvatarItems].map(toAvatarItemV4))
+			return c.json([...owned, ...customizeDefaultAvatarItems].map(toAvatarItemV4))
 		}
 	)
 
