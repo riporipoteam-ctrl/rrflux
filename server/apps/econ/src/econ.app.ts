@@ -855,6 +855,22 @@ const DESC_BY_NAME: Map<string, string> = (() => {
 	return map
 })()
 
+/** Exact storefront AvatarItemDesc -> catalog thumbnail fallback. Some 2025 rows have
+ * an opaque desc that is already canonical even when FriendlyName differs; use the exact key
+ * before falling back to a neutral missing image. */
+const THUMBNAIL_BY_DESC: Map<string, string> = (() => {
+	const map = new Map<string, string>()
+	for (const item of avatarItemCatalog as Array<{
+		AvatarItemDesc?: string
+		ThumbnailImage?: string | null
+	}>) {
+		if (item.AvatarItemDesc && item.ThumbnailImage && !map.has(item.AvatarItemDesc)) {
+			map.set(item.AvatarItemDesc, item.ThumbnailImage)
+		}
+	}
+	return map
+})()
+
 /**
  * Enrich storefront items with thumbnail image names and real catalog descs.
  *
@@ -904,7 +920,10 @@ function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
 			// code keyed PurchasableItemId against the catalog's AvatarItemId,
 			// which never matches — captured GiftDrops don't carry AvatarItemId —
 			// so ~500 items got no image at all.)
-			const thumb = THUMBNAIL_BY_NAME.get(name)
+			const thumbByName = THUMBNAIL_BY_NAME.get(name)
+			const thumbByDesc =
+				typeof drop.AvatarItemDesc === 'string' ? THUMBNAIL_BY_DESC.get(drop.AvatarItemDesc) : undefined
+			const thumb = thumbByName ?? thumbByDesc
 			if (thumb) {
 				next.ThumbnailImage = IMG_BASE + thumb
 				changed = true
