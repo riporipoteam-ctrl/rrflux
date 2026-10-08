@@ -1049,10 +1049,8 @@ interface GiftRequest {
 const STOREFRONT_ALIASES: Record<string, string> = {
 	// Watch UI Store page requests "Storefront_Watch" — map it to the general store (sf3).
 	'Storefront_Watch': '3',
-	// Rec Center (storefront 2, room 2) has no authentic catalog capture of its own —
-	// serve the full authentic main-store catalog (sf3/sf3-2025) instead of an invented
-	// subset. Remove this line if a real Rec Center capture ever lands in static/storefronts.
-	'2': '3',
+	// No alias for storefront 2: Rec Center's in-world clothing popup has its own captured
+	// catalog (sf2.json). Do not replace that real room-specific store with the main Store feed.
 }
 
 /**
