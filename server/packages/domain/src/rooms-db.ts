@@ -3033,7 +3033,7 @@ export async function getHotRooms(
 	// A REAL tag narrows in SQL — this is the query `room_tag` exists for, and the one a
 	// discovery category row runs: only the rooms carrying the tag have their blobs read.
 	// The two pseudo-tags below name no tag at all, so they still scan.
-	const isPseudo = t === '' || t === NEW_TAG || t === COMMUNITY_TAG
+	const isPseudo = t === '' || t === NEW_TAG || t === COMMUNITY_TAG || t === 'rro'
 	const { sql, binds } = roomsByTagsQuery(
 		isPseudo ? [] : [[t, ...(TAG_ALIASES[t] ?? [])]],
 		LISTABLE_WHERE
@@ -3053,6 +3053,18 @@ export async function getHotRooms(
 		return {
 			Results: await hydrateRooms(db, fresh.slice(skip, skip + take)),
 			TotalResults: fresh.length,
+		}
+	}
+
+	if (t === 'rro') {
+		// RRO is a semantic flag as well as an auto-derived tag. Filter by the authoritative
+		// room flag/tag after hydration so an Original that lacks a synchronized room_tag row
+		// still appears in the Originals carousel. The listable predicate already removes the
+		// known broken RTB/MITM/Showdown/My Little Monsters entries.
+		const originals = rooms.filter(isRRO)
+		return {
+			Results: await hydrateRooms(db, originals.slice(skip, skip + take)),
+			TotalResults: originals.length,
 		}
 	}
 
