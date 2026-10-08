@@ -1,9 +1,10 @@
-{
-  "sectionType": 4,
-  "source": "UnifiedAlgorithmicList",
-  "id": "StoreItemCarousel_UnifiedAlgorithmicList_AllWearables",
-  "displayMetadata": "{\"DisplayTitle\":\"All Wearable Items\",\"categoryDepth\":0,\"categoryCarouselType\":0,\"itemCount\":5000,\"horizontalScrollEnabled\":true}",
-  "sourceMetadata": "clothingitems",
-  "sectionSubType": "Items_AllWearables"
-}
-
+[
+  {
+    "id": "StoreItemCarousel_UnifiedAlgorithmicList_AllWearables",
+    "sectionType": 4,
+    "source": "UnifiedAlgorithmicList",
+    "displayMetadata": "{\"DisplayTitle\":\"All Wearable Items\",\"categoryDepth\":0,\"categoryCarouselType\":0,\"itemCount\":5000,\"horizontalScrollEnabled\":true}",
+    "sourceMetadata": "clothingitems",
+    "sectionSubType": "Items_AllWearables"
+  }
+]
