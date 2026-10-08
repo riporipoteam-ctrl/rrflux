@@ -38,5 +38,29 @@
     "Source": "UnifiedAlgorithmicList",
     "SourceMetadata": "handsitems",
     "DisplayMetadata": "{\"DisplayTitle\":\"Hands\",\"categoryDepth\":2,\"categoryCarouselType\":10,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+  },
+  {
+    "Id": "StoreItemCarousel_UnifiedAlgorithmicList_Eyewear_Accessories",
+    "SectionType": 4,
+    "SectionSubType": "Items_Eyewear",
+    "Source": "UnifiedAlgorithmicList",
+    "SourceMetadata": "eyewearitems",
+    "DisplayMetadata": "{\"DisplayTitle\":\"Eyewear\",\"categoryDepth\":2,\"categoryCarouselType\":19,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+  },
+  {
+    "Id": "StoreItemCarousel_UnifiedAlgorithmicList_Earwear_Accessories",
+    "SectionType": 4,
+    "SectionSubType": "Items_Earwear",
+    "Source": "UnifiedAlgorithmicList",
+    "SourceMetadata": "earwearitems",
+    "DisplayMetadata": "{\"DisplayTitle\":\"Earwear\",\"categoryDepth\":2,\"categoryCarouselType\":20,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+  },
+  {
+    "Id": "StoreItemCarousel_UnifiedAlgorithmicList_Neckwear_Accessories",
+    "SectionType": 4,
+    "SectionSubType": "Items_Neckwear",
+    "Source": "UnifiedAlgorithmicList",
+    "SourceMetadata": "neckwearitems",
+    "DisplayMetadata": "{\"DisplayTitle\":\"Neckwear\",\"categoryDepth\":2,\"categoryCarouselType\":21,\"itemCount\":5000,\"minItemsToShowSection\":1}"
   }
 ]
