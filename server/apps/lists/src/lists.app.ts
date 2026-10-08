@@ -540,10 +540,9 @@ const STORE_CATEGORY_TERMS: Record<string, string[]> = {
   ],
   backpackitems: ['backpack', 'rucksack', 'knapsack', 'satchel', 'bookbag', 'backpack item'],
   hairitems: [
-    'hair', 'hairstyle', 'wig', 'ponytail', 'pony tail', 'mohawk', 'afro', 'braid', 'braids',
-    'bob', 'pigtail', 'pigtails', 'dread', 'dreads', 'locs', 'locks', 'curly', 'curls',
-    'buzz', 'undercut', 'fade', 'pompadour', 'bangs', 'hair bow', 'hawk', 'mullet',
-    'cheerful ponytail', 'bun', 'cornrows', 'twists',
+    'hairstyle', 'wig', 'ponytail', 'pony tail', 'mohawk', 'afro', 'braid', 'braids',
+    'bob hair', 'pigtail', 'pigtails', 'dread', 'dreads', 'locs', 'locks', 'curly', 'curls',
+    'buzz cut', 'undercut', 'fade', 'pompadour', 'bangs', 'hair bow', 'mullet', 'cornrows', 'twists hair',
   ],
   facialhairitems: [
     'beard', 'mustache', 'moustache', 'stache', 'facial hair', 'goatee', 'stubble', 'sideburn',
@@ -574,7 +573,7 @@ const canonicalAvatarNamesByDesc = new Map(
 
 const canonicalHairNames = new Set(
   avatarItemCatalog
-    .filter((item) => /hair|mohawk|ponytail|mullet|braid|afro|pigtail|bun|twist|loc/i.test(String(item.FriendlyName ?? '')))
+    .filter((item) => /\bhair\b|\bhairstyle\b|\bwig\b|\bmohawk\b|\bponytail\b|\bmullet\b|\bbraid\b|\bafro\b|\bpigtail\b|\bbun\b|\btwist\b|\bloc\b/i.test(String(item.FriendlyName ?? '')))
     .map((item) => String(item.FriendlyName ?? '').trim().toLowerCase())
 )
 
