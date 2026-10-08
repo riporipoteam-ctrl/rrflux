@@ -2961,7 +2961,12 @@ function isRRO(room: Room): boolean {
 /** Known RRO records whose room/map payload is absent from the available revival data.
  * Keep them out of Play/Discovery instead of advertising a room the client cannot load.
  * These ids/names are the concrete broken entries already identified during inspection. */
-const BROKEN_RRO_ROOM_IDS = new Set([9001, 9002])
+const BROKEN_RRO_ROOM_IDS = new Set([
+	9001,
+	9002,
+	52815862, // Showdown: room exists but has no current subroom save
+	558011494282369860, // MyLittleMonsters: room exists but has no current subroom save
+])
 const BROKEN_RRO_NAME_KEYS = new Set([
 	'run the block',
 	'make it to midnight',
