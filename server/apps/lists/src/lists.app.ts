@@ -539,6 +539,18 @@ const STORE_CATEGORY_TERMS: Record<string, string[]> = {
     'back ', 'on back', 'harness', 'board', 'bag',
   ],
   backpackitems: ['backpack', 'rucksack', 'knapsack', 'satchel', 'bookbag', 'purse', 'schoolbag'],
+  eyewearitems: [
+    'glasses', 'goggles', 'eyewear', 'sunglasses', 'spectacles', 'shades', 'binoculars', 'monocle',
+    'eye mask',
+  ],
+  earwearitems: [
+    'earring', 'earrings', 'earwear', 'ear muffs', 'earmuffs', 'earpiece', 'earphones', 'headphones',
+    'headphone', 'earbuds', 'ear bud', 'cat ear',
+  ],
+  neckwearitems: [
+    'necklace', 'neckwear', 'scarf', 'bow tie', 'bowtie', 'tie', 'choker', 'pendant', 'collar',
+    'cravat', 'neck piece',
+  ],
   hairitems: [
     'hairstyle', 'wig', 'ponytail', 'pony tail', 'mohawk', 'afro', 'braid', 'braids',
     'bob hair', 'pigtail', 'pigtails', 'dread', 'dreads', 'locs', 'locks', 'curly',
@@ -639,13 +651,14 @@ export function buildStoreFeedIds(rawKey: string): string[] | null {
     .filter((item) => {
       const drop = item.GiftDrop
       const isStoreAvatarItem = drop.AvatarItemType === 0 || drop.AvatarItemType === 1
-      if (!drop.AvatarItemDesc?.trim() || drop.IsQuery || !isStoreAvatarItem) return false
+      if (drop.IsQuery || !isStoreAvatarItem) return false
       // Rarity -1 is the developer/unreleased tier. It is present in the historical capture
       // but is not a public storefront item, so never advertise it in Store feeds.
       if (UNSELLABLE_RARITIES.includes(drop.Rarity)) return false
-      // This is a historical 2025 catalog snapshot. Browse feeds should expose the
-      // snapshot faithfully rather than silently removing items because their listing window
-      // has since expired in the real service.
+
+      // This is a historical 2025 catalog snapshot. Browse feeds should expose the snapshot
+      // faithfully, including Version=3 downloadable-avatar rows whose legacy AvatarItemDesc
+      // is intentionally null/empty.
       if (STORE_BROAD_FEED_KEYS.has(key)) return drop.AvatarItemType === 0
 
       const names = itemNames(item)
