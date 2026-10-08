@@ -2958,15 +2958,38 @@ function isRRO(room: Room): boolean {
 	return room.IsRRO === true || roomHasAnyTag(room, new Set(['rro']))
 }
 
-/**
+/** Known RRO room records whose map/save payload is missing from this revival. Keep them
+ * out of every Play/Discovery list rather than advertising a room that cannot load. The ids are
+ * the known RTB/MITM placeholders; the names cover Showdown/My Little Monsters if stale data
+ * ever introduces those records later. */
+const BROKEN_RRO_ROOM_IDS = new Set([9001, 9002])
+
+const BROKEN_RRO_NAME_KEYS = new Set([
+	'run the block',
+	'make it to midnight',
+	'showdown',
+	'my little monsters',
+])
+
+function isBrokenRRO(room: Room): boolean {
+	if (BROKEN_RRO_ROOM_IDS.has(roomIdOf(room))) return true
+	const name = typeof room.Name === 'string' ? room.Name.trim().toLowerCase() : ''
+	return isRRO(room) && [...BROKEN_RRO_NAME_KEYS].some((key) => name.includes(key))
+}
+
+\n/**
  * True when the room may appear in a browse or discovery feed at all: public, not a dorm,
  * and not opted out of lists. Every feed below starts from this, so a room that opts out
  * cannot come back through a row that forgot to check.
  */
 function isListable(room: Room): boolean {
-	return room.IsDorm !== true && room.Accessibility === 1 && room.ExcludeFromLists !== true
-}
-
+	return (
+		room.IsDorm !== true &&
+		room.Accessibility === 1 &&
+		room.ExcludeFromLists !== true &&
+		!isBrokenRRO(room)
+	)
+}\n
 /**
  * True when the room is a PLAYER's rather than one of this server's stock ones — the same
  * test {@link COMMUNITY_TAG} applies, since the Coach account owns every seeded room.
