@@ -616,7 +616,7 @@ const storeFeedIdsCache = new Map<string, string[]>()
  * The 2025 storefront is static. Build each feed once per Worker isolate instead of
  * repeatedly filtering the whole snapshot for every Store carousel request.
  */
-function buildStoreFeedIds(rawKey: string): string[] | null {
+export function buildStoreFeedIds(rawKey: string): string[] | null {
   const key = normalizeStoreFeedKey(rawKey)
   if (key === '' || (!STORE_BROAD_FEED_KEYS.has(key) && STORE_CATEGORY_TERMS[key] === undefined)) return null
 
