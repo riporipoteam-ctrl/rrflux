@@ -665,7 +665,14 @@ export function buildStoreFeedIds(rawKey: string): string[] | null {
       if (key === 'hairdyeitems') return drop.AvatarItemType === 1 || matchesAnyName(names, terms!)
       if (key === 'hairitems') {
         if (matchesAnyName(names, STORE_CATEGORY_TERMS.hairdyeitems)) return false
-        return names.some((name) => canonicalHairNames.has(name) || matchesAnyName([name], terms!))
+        // Simple hairstyle names frequently end in "Hair" (e.g. Midback Hair, Swoopy Hair).
+        // Hair clips/bows/hats are accessories/headwear, not a hairstyle itself.
+        return names.some(
+          (name) =>
+            canonicalHairNames.has(name) ||
+            matchesAnyName([name], terms!) ||
+            (/\bhair\b/i.test(name) && !/\b(clip|bow|hat|headband|barrette|barrettes|dye)\b/i.test(name))
+        )
       }
       if (key === 'facialhairitems') {
         return names.some((name) => canonicalFacialHairNames.has(name) || matchesAnyName([name], terms!))
