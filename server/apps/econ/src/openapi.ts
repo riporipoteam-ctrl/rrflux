@@ -523,7 +523,7 @@ export const UgcPurchasableItemList = z.array(UgcPurchasableItemDto)
 export const ItemPurchaseInfosRequest = z.object({
 	Ids: z.array(
 		z.object({
-			itemType: z.number().int().describe('3 = custom avatar item (the only type served)'),
+			itemType: z.number().int().describe('0 = numbered storefront PurchasableItem; 3 = custom avatar item'),
 			itemId: z.string().describe('The `CustomAvatarItemId`'),
 		})
 	),
