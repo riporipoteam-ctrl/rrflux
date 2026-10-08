@@ -4865,7 +4865,7 @@ const app = new Hono<App>({ strict: false })
 			description: [
 				'Resolves `Ids[]` (`{ itemType, itemId }`) against the `custom_avatar_item` table and',
 				'answers how each may be bought: its price in RecCenterTokens, its availability window',
-				'and the flags the store row draws. Only `itemType` 3 (custom avatar item) is served;',
+				'and the flags the store row draws. `itemType` 0 resolves numbered storefront items; `itemType` 3 resolves custom avatar items;',
 				'other types and unknown ids are dropped, so the response is one entry per RESOLVED',
 				'id in request order — never a positional match for `Ids[]`.',
 			].join(' '),
@@ -4893,7 +4893,7 @@ const app = new Hono<App>({ strict: false })
 
 			const storefrontRefs = refs.filter(
 				(ref): ref is { itemType: number; itemId: string } =>
-					ref.itemType === 0 && /^\\d+$/.test(ref.itemId)
+					ref.itemType === 0 && /^\d+$/.test(ref.itemId)
 			)
 			const storefront = storefrontRefs.length > 0 ? await loadStorefront(c, 3) : null
 			const storeById = new Map(
@@ -4917,8 +4917,8 @@ const app = new Hono<App>({ strict: false })
 				}
 			}
 			return c.json(result)
-		},
-
+		}
+	)
 	// Unlocked consumables. [Authorize]. The consumables the player has bought (from
 	// `buyItem`, stored in the `consumable` table), grouped by item into the client's
 	// unlocked-consumable DTO. A player who has bought none gets an empty list.
