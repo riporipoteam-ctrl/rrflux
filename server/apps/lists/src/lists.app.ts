@@ -624,16 +624,14 @@ function buildStoreFeedIds(rawKey: string): string[] | null {
   if (cached !== undefined) return cached
 
   const terms = STORE_CATEGORY_TERMS[key]
-  const now = Date.now()
   const ids = sf32025.StoreItems
     .filter((item) => {
       const drop = item.GiftDrop
       const isStoreAvatarItem = drop.AvatarItemType === 0 || drop.AvatarItemType === 1
       if (!drop.AvatarItemDesc?.trim() || drop.IsQuery || !isStoreAvatarItem) return false
-      if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
-      if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
-
-      // Top-level Clothing = all real first-party wearable Store entries.
+      // This is a historical 2025 catalog snapshot. Browse feeds should expose the
+      // snapshot faithfully rather than silently removing items because their listing window
+      // has since expired in the real service.
       if (STORE_BROAD_FEED_KEYS.has(key)) return drop.AvatarItemType === 0
 
       const names = itemNames(item)
