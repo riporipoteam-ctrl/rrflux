@@ -536,7 +536,7 @@ const STORE_CATEGORY_TERMS: Record<string, string[]> = {
   ],
   shoulderitems: [
     'quiver', 'backpack', 'cape', 'shoulder', 'back accessory', 'wing', 'wings', 'jetpack',
-    'back ', 'on back', 'harness', 'scythe', 'board', 'bag',
+    'back ', 'on back', 'harness', 'board', 'bag',
   ],
   backpackitems: ['backpack', 'rucksack', 'knapsack', 'satchel', 'bookbag', 'purse', 'schoolbag'],
   hairitems: [
