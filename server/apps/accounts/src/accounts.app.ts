@@ -1046,6 +1046,95 @@ const app = new Hono<App>()
 		}
 	)
 
+	.get(
+		'/fluxsocial/rooms',
+		describeRoute({
+			tags: ['FluxSocial'],
+			summary: "Linked account's game rooms",
+			description:
+				'The rooms created by the linked game account, including private ones. ' +
+				'Respects the show_rooms privacy toggle. For the Flux Social website to show ' +
+				'"your rooms" on the Flux Rec page.',
+			security: WEBSITE_AUTHED,
+			responses: {
+				200: json(JsonObject, 'Rooms owned by the linked account'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const id = await websiteSessionId(c)
+			if (id === null) return unauthorized(c)
+			const privacy = await getPrivacy(c.env.DB, id)
+			if (!privacy.showRooms) return c.json({ rooms: [] })
+			const rows = await c.env.DB.prepare(
+				'SELECT data FROM room WHERE creator_account_id = ? ORDER BY visits DESC LIMIT 100'
+			)
+				.bind(id)
+				.all<{ data: string }>()
+			const rooms = (rows.results ?? []).map((r) => {
+				try {
+					const d = JSON.parse(r.data)
+					return {
+						roomId: d.RoomId,
+						name: d.Name,
+						description: d.Description,
+						imageName: d.ImageName,
+						visits: d.Visits ?? 0,
+						isPrivate: d.Accessibility === 2,
+						isRRO: d.IsRRO ?? false,
+					}
+				} catch {
+					return null
+				}
+			})
+				.filter((r) => r !== null)
+			return c.json({ rooms })
+		}
+	)
+
+	.get(
+		'/fluxsocial/photos',
+		describeRoute({
+			tags: ['FluxSocial'],
+			summary: "Linked account's in-game photos",
+			description:
+				'Photos taken in-game (ShareCamera) by the linked game account. ' +
+				'Respects the show_photos privacy toggle. Image bytes served via the img worker.',
+			security: WEBSITE_AUTHED,
+			responses: {
+				200: json(JsonObject, 'Photos taken by the linked account'),
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			const id = await websiteSessionId(c)
+			if (id === null) return unauthorized(c)
+			const privacy = await getPrivacy(c.env.DB, id)
+			if (!privacy.showPhotos) return c.json({ photos: [] })
+			const rows = await c.env.DB.prepare(
+				'SELECT data FROM image WHERE player_id = ? ORDER BY rowid DESC LIMIT 100'
+			)
+				.bind(id)
+				.all<{ data: string }>()
+			const photos = (rows.results ?? []).map((r) => {
+				try {
+					const d = JSON.parse(r.data)
+					return {
+						imageId: d.Id,
+						imageName: d.ImageName,
+						imageUrl: d.ImageName ? `https://img.ripo-ripoteam.workers.dev/${d.ImageName}` : null,
+						roomId: d.RoomId,
+						takenAt: d.CreatedAt ?? null,
+					}
+				} catch {
+					return null
+				}
+			})
+				.filter((p) => p !== null)
+			return c.json({ photos })
+		}
+	)
+
 	.post(
 		'/fluxsocial/unlink',
 		describeRoute({
