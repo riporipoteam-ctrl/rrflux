@@ -491,7 +491,7 @@ export const UgcPurchasableBulkRequest = z.object({
 	RoomId: z.number().int().describe('Echoed back on each item; not otherwise used'),
 	Ids: z.array(
 		z.object({
-			itemType: z.number().int().describe('3 = custom avatar item (the only type served)'),
+			itemType: z.number().int().describe('0 = numbered storefront PurchasableItem; 3 = custom avatar item'),
 			itemId: z.string().describe('The `CustomAvatarItemId`'),
 		})
 	),
