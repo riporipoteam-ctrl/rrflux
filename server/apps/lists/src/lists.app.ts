@@ -490,6 +490,7 @@ async function genericRowEntities(c: Context<App>, key: string): Promise<ListEnt
  * broad `newitems` row rather than disappearing from the clothing store.
  */
 const STORE_FEED_ALIASES: Record<string, string> = {
+  // Names emitted by Econ.StorefrontCarouselsToUseListsService.
   hatsitems: 'headwearitems',
   torsoitems: 'topsitems',
   bottomsitems: 'bottomsitems',
@@ -504,6 +505,8 @@ const STORE_FEED_ALIASES: Record<string, string> = {
   eyewearitems: 'eyewearitems',
   earwearitems: 'earwearitems',
   neckwearitems: 'neckwearitems',
+  hairdyeitems: 'hairdyeitems',
+  equipmentskinsitems: 'skinsitems',
 }
 
 const STORE_CATEGORY_TERMS: Record<string, string[]> = {
