@@ -830,6 +830,26 @@ const THUMBNAIL_BY_NAME: Map<string, string> = (() => {
 })()
 
 /**
+ * Some 2025 storefront GiftDrops carry AvatarItemInfo.LegacyAvatarItemRowId even when their
+ * friendly name differs from the canonical catalog spelling. That row id is the catalog's
+ * AvatarItemId, so it is a safer image/descriptor key than a fuzzy name guess.
+ */
+const AVATAR_ITEM_BY_ID: Map<number, {
+	AvatarItemDesc?: string
+	ThumbnailImage?: string | null
+}> = (() => {
+	const map = new Map<number, { AvatarItemDesc?: string; ThumbnailImage?: string | null }>()
+	for (const item of avatarItemCatalog as Array<{
+		AvatarItemId?: number
+		AvatarItemDesc?: string
+		ThumbnailImage?: string | null
+	}>) {
+		if (Number.isInteger(item.AvatarItemId)) map.set(item.AvatarItemId as number, item)
+	}
+	return map
+})()
+
+/**
  * The catalog's real opaque `AvatarItemDesc` by normalized FriendlyName, built from the
  * captured avatar-item catalog. Used to repair storefront GiftDrops whose `AvatarItemDesc`
  * is a human-readable description ("A SciFi skin for your bucket...") instead of the
@@ -882,6 +902,8 @@ function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
 		const drop = item.GiftDrop as any
 		const name =
 			typeof drop.FriendlyName === 'string' ? drop.FriendlyName.trim().toLowerCase() : ''
+		const legacyRowId = Number(drop.AvatarItemInfo?.LegacyAvatarItemRowId)
+		const rowCatalog = Number.isInteger(legacyRowId) ? AVATAR_ITEM_BY_ID.get(legacyRowId) : undefined
 		let changed = false
 		const next: any = { ...drop }
 		// The client's Tooltip field is a plain string — a null leaks through from
@@ -899,20 +921,18 @@ function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
 				next.ThumbnailImage = IMG_BASE + existingThumb
 				changed = true
 			}
-		} else if (name) {
-			// Priority 2: look the catalog thumbnail up by FriendlyName. (The old
-			// code keyed PurchasableItemId against the catalog's AvatarItemId,
-			// which never matches — captured GiftDrops don't carry AvatarItemId —
-			// so ~500 items got no image at all.)
-			const thumb = THUMBNAIL_BY_NAME.get(name)
+		} else {
+			// Priority 2: the storefront's explicit LegacyAvatarItemRowId.
+			// Priority 3: exact FriendlyName. Both are data-derived; no guessed CDN
+			// keys are manufactured for items the catalog cannot resolve.
+			const thumb = rowCatalog?.ThumbnailImage ?? THUMBNAIL_BY_NAME.get(name)
 			if (thumb) {
 				next.ThumbnailImage = IMG_BASE + thumb
 				changed = true
 			}
-			// Repair AvatarItemDesc: the captures carry a human-readable
-			// description here which the client cannot resolve to an item; the
-			// catalog holds the real opaque desc the detail view needs.
-			const realDesc = DESC_BY_NAME.get(name)
+			// Repair AvatarItemDesc from the same explicit catalog row first, then the
+			// exact FriendlyName map.
+			const realDesc = rowCatalog?.AvatarItemDesc ?? DESC_BY_NAME.get(name)
 			if (realDesc && next.AvatarItemDesc !== realDesc) {
 				next.AvatarItemDesc = realDesc
 				changed = true
