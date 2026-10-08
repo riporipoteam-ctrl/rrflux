@@ -204,6 +204,22 @@ import type { AvatarItem } from './inventory-db'
 import type { RoomConsumable } from './room-consumable-db'
 import type { RoomCurrency, RoomCurrencyPurchaseOffer } from './room-currency-db'
 
+/**
+ * Customize's default-unlocked source must include the free Full Body compatibility items.
+ * They are canonical avatar items (Rarity 0) but were absent from the older default snapshot.
+ * Without them the client can show an equipped Full Body shoe/bottom as a paid item on exit.
+ */
+const customizeDefaultAvatarItems = (() => {
+	const seen = new Set(defaultAvatarItems.map((item) => item.AvatarItemDesc))
+	const fullBodyFreeItems = avatarItemCatalog.filter(
+		(item) =>
+			item.Rarity === 0 &&
+			/\[Full Body\]/i.test(item.FriendlyName) &&
+			!seen.has(item.AvatarItemDesc)
+	)
+	return [...defaultAvatarItems, ...fullBodyFreeItems]
+})()
+
 // Invention storage (owned by the `api` worker, on this same `recflare` database).
 // Imported directly rather than copied: these are plain D1 helpers with no bindings of
 // their own, and buyInvention has to read the very rows `api` writes.
@@ -3019,7 +3035,7 @@ const app = new Hono<App>({ strict: false })
 	.get(
 		'/api/avatar/v1/defaultunlocked',
 		listRoute('Default-unlocked avatar items', 'The bundled default avatar-item catalog'),
-		(c) => c.json(defaultAvatarItems)
+		(c) => c.json(customizeDefaultAvatarItems)
 	)
 
 	// The base items UGC clothing is built on top of — served from bundled static JSON,
@@ -3054,7 +3070,7 @@ const app = new Hono<App>({ strict: false })
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
 			const owned = await getInventory(c.env.DB, id)
-			return c.json([...owned, ...defaultAvatarItems].map(toAvatarItemV4))
+			return c.json([...owned, ...customizeDefaultAvatarItems].map(toAvatarItemV4))
 		}
 	)
 
