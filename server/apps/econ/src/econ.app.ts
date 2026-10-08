@@ -957,6 +957,11 @@ interface StoreItem {
 	 */
 	SubscriberPrices?: StorePrice[] | null
 	PurchasableItemId: number
+	NewUntil?: string | null
+	AvailableAt?: string | null
+	AvailableUntil?: string | null
+	IsFeatured?: boolean
+
 }
 
 /**
@@ -1193,6 +1198,30 @@ const PURCHASE_METHOD_TYPE_GUID = 1
  * buys a custom avatar item yet, gift or otherwise, so the button it draws leads nowhere until
  * that exists. It is the flag to flip if a dead gift button is worse than a missing one.
  */
+function toStorefrontItemPurchaseInfo(item: StoreItem): ItemPurchaseInfo {
+	const prices = item.Prices.map((price) => ({
+		CurrencyType: price.CurrencyType,
+		Price: price.Price,
+		StorefrontSaleData: null,
+	}))
+	return {
+		ItemId: { itemType: 0, itemId: String(item.PurchasableItemId) },
+		PurchaseMethodId: {
+			Type: 0,
+			NumberId: item.PurchasableItemId,
+			Guid: null,
+		},
+		Prices: prices,
+		NewUntil: item.NewUntil ?? null,
+		AvailableAt: item.AvailableAt ?? null,
+		AvailableUntil: item.AvailableUntil ?? null,
+		CanBeGifted: item.GiftDrop.IsQuery !== true,
+		CanApplySubscriberDiscount: Array.isArray(item.SubscriberPrices) && item.SubscriberPrices.length > 0,
+		SubscribersOnly: item.GiftDrop.SubscribersOnly === true,
+		IsFeatured: item.IsFeatured === true,
+	}
+}
+
 function toItemPurchaseInfo(item: CustomAvatarItem): ItemPurchaseInfo {
 	return {
 		ItemId: { itemType: UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM, itemId: item.CustomAvatarItemId },
@@ -4854,17 +4883,41 @@ const app = new Hono<App>({ strict: false })
 
 			const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
 			if (!body || !Array.isArray(body.Ids)) return c.json({ error: 'Ids is required' }, 400)
-			const ids = (body.Ids as unknown[]).flatMap((ref) => {
+
+			const refs = (body.Ids as unknown[]).flatMap((ref) => {
 				if (!ref || typeof ref !== 'object') return []
 				const { itemType, itemId } = ref as Record<string, unknown>
-				return itemType === UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM && typeof itemId === 'string'
-					? [itemId]
-					: []
+				if (!Number.isInteger(itemType) || typeof itemId !== 'string') return []
+				return [{ itemType, itemId }]
 			})
-			const items = await getCustomAvatarItems(c.env.DB, ids)
-			return c.json(items.map(toItemPurchaseInfo))
-		}
-	)
+
+			const storefrontRefs = refs.filter(
+				(ref): ref is { itemType: number; itemId: string } =>
+					ref.itemType === 0 && /^\\d+$/.test(ref.itemId)
+			)
+			const storefront = storefrontRefs.length > 0 ? await loadStorefront(c, 3) : null
+			const storeById = new Map(
+				(storefront?.StoreItems ?? []).map((item) => [String(item.PurchasableItemId), item])
+			)
+
+			const ugcIds = refs
+				.filter((ref) => ref.itemType === UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM)
+				.map((ref) => ref.itemId)
+			const ugcItems = ugcIds.length > 0 ? await getCustomAvatarItems(c.env.DB, ugcIds) : []
+			const ugcById = new Map(ugcItems.map((item) => [item.CustomAvatarItemId, item]))
+
+			const result: ItemPurchaseInfo[] = []
+			for (const ref of refs) {
+				if (ref.itemType === 0) {
+					const item = storeById.get(ref.itemId)
+					if (item !== undefined) result.push(toStorefrontItemPurchaseInfo(item))
+				} else if (ref.itemType === UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM) {
+					const item = ugcById.get(ref.itemId)
+					if (item !== undefined) result.push(toItemPurchaseInfo(item))
+				}
+			}
+			return c.json(result)
+		},
 
 	// Unlocked consumables. [Authorize]. The consumables the player has bought (from
 	// `buyItem`, stored in the `consumable` table), grouped by item into the client's
