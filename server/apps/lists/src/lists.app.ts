@@ -511,19 +511,23 @@ const STORE_CATEGORY_TERMS: Record<string, string[]> = {
   headwearitems: [
     'hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear', 'tiara', 'visor',
     'beret', 'fedora', 'sombrero', 'hood', 'headdress', 'halo', 'headpiece', 'top hat',
+    'diadem', 'cowl', 'veil', 'head wrap', 'head mirror', 'horn', 'horns', 'antenna', 'antennae', 'head bopper',
   ],
   topsitems: [
     'shirt', 'tee', 't-shirt', 'tank', 'polo', 'blouse', 'jacket', 'dress', 'vest', 'sweater',
     'jersey', 'coat', 'robe', 'tunic', 'top', 'hoodie', 'sweatshirt', 'pullover', 'cardigan',
-    'suit', 'tuxedo', 'uniform', 'overall', 'overalls',
+    'suit', 'tuxedo', 'uniform', 'overall', 'overalls', 'onesie', 'bodysuit', 'gown', 'garb',
+    'apron', 'blazer', 'poncho', 'leotard', 'techwear', 'corset', 'tabard', 'turtleneck',
+    'windbreaker', 'flannel', 'singlet', 'armor', 'costume',
   ],
   bottomsitems: [
     'pants', 'shorts', 'leggings', 'skirt', 'trousers', 'jeans', 'joggers', 'sweatpants',
-    'slacks', 'greaves', 'culottes', 'bike shorts', 'bottom',
+    'slacks', 'greaves', 'legguards', 'pantaloons', 'culottes', 'bike shorts', 'bottom',
   ],
   footwearitems: [
     'shoe', 'shoes', 'sneaker', 'sneakers', 'sandals', 'boots', 'boot', 'slippers', 'footwear',
-    'socks', 'heels', 'flats', 'loafers', 'cleats', 'moccasin', 'high tops',
+    'socks', 'heels', 'flats', 'loafers', 'cleats', 'moccasin', 'high tops', 'stomper', 'stompers',
+    'skate',
   ],
   waistitems: ['belt', 'waist', 'sash', 'waistband', 'waist pack', 'fanny pack'],
   handsitems: [
@@ -568,15 +572,33 @@ const canonicalAvatarNamesByDesc = new Map(
   avatarItemCatalog.map((item) => [item.AvatarItemDesc, String(item.FriendlyName ?? '')])
 )
 
+const canonicalHairNames = new Set(
+  avatarItemCatalog
+    .filter((item) => /hair|mohawk|ponytail|mullet|braid|afro|pigtail|bun|twist|loc/i.test(String(item.FriendlyName ?? '')))
+    .map((item) => String(item.FriendlyName ?? '').trim().toLowerCase())
+)
+
+const canonicalFacialHairNames = new Set(
+  avatarItemCatalog
+    .filter((item) => /beard|mustache|moustache|stache|goatee|stubble|sideburn|mutton|whisker/i.test(String(item.FriendlyName ?? '')))
+    .map((item) => String(item.FriendlyName ?? '').trim().toLowerCase())
+)
+
+
 function normalizeStoreFeedKey(key: string): string {
   const normalized = key.trim().toLowerCase()
   return STORE_FEED_ALIASES[normalized] ?? normalized
 }
 
+const canonicalAvatarNamesByName = new Map(
+  avatarItemCatalog.map((item) => [String(item.FriendlyName ?? '').trim().toLowerCase(), String(item.FriendlyName ?? '')])
+)
+
 function itemNames(item: (typeof sf32025.StoreItems)[number]): string[] {
   const name = String(item.GiftDrop?.FriendlyName ?? '')
-  const canonical = canonicalAvatarNamesByDesc.get(String(item.GiftDrop?.AvatarItemDesc ?? '')) ?? ''
-  return [name, canonical].filter(Boolean).map((value) => value.toLocaleLowerCase())
+  const canonicalByDesc = canonicalAvatarNamesByDesc.get(String(item.GiftDrop?.AvatarItemDesc ?? '')) ?? ''
+  const canonicalByName = canonicalAvatarNamesByName.get(name.trim().toLowerCase()) ?? ''
+  return [...new Set([name, canonicalByDesc, canonicalByName].filter(Boolean).map((value) => value.toLocaleLowerCase()))]
 }
 
 function matchesAnyName(names: string[], terms: string[]): boolean {
@@ -613,6 +635,8 @@ function buildStoreFeedIds(key: string): string[] | null {
         return drop.AvatarItemType === 1 || matchesAnyName(names, terms!)
       }
       if (key === 'hairitems' && matchesAnyName(names, STORE_CATEGORY_TERMS.hairdyeitems)) return false
+      if (key === 'hairitems' && names.some((name) => canonicalHairNames.has(name))) return true
+      if (key === 'facialhairitems' && names.some((name) => canonicalFacialHairNames.has(name))) return true
       return matchesAnyName(names, terms!)
     })
     .map((item) => String(item.PurchasableItemId))
