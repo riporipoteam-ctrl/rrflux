@@ -2977,7 +2977,7 @@ function isBrokenRRO(room: Room): boolean {
 	return isRRO(room) && [...BROKEN_RRO_NAME_KEYS].some((key) => name.includes(key))
 }
 
-\nfunction isListable(room: Room): boolean {
+function isListable(room: Room): boolean {
 	return (
 		room.IsDorm !== true &&
 		room.Accessibility === 1 &&
