@@ -562,7 +562,10 @@ async function clothingStorePurchasableItemIds(c: Context<App>, key: string): Pr
       // Query drops are boxes/rolls, not wearable avatar items. A real AvatarItemDesc plus
       // a positive storefront price is the 2025 snapshot's signal that this row is a
       // purchasable wearable. This prevents the Clothing page from turning into a box carousel.
-      if (!drop.AvatarItemDesc?.trim() || drop.IsQuery) return false
+      // Equipment skins are the exception: they carry EquipmentModificationGuid instead of AvatarItemDesc.
+      if (key === 'skinsitems') {
+        if (!drop.EquipmentModificationGuid?.trim() || drop.IsQuery) return false
+      } else if (!drop.AvatarItemDesc?.trim() || drop.IsQuery) return false
       if (!item.Prices.some((price) => price.Price > 0)) return false
       if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
       if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
