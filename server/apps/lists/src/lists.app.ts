@@ -550,6 +550,17 @@ const STORE_CATEGORY_TERMS: Record<string, string[]> = {
     'soul patch', 'mutton chops', 'whisker', 'whiskers',
   ],
   hairdyeitems: ['hair dye', 'permanent hair dye', 'dye'],
+  eyewearitems: [
+    'glasses', 'goggles', 'eyewear', 'shades', 'sunglasses', 'spectacles', 'monocle', 'visor',
+    'binoculars', 'head mirror',
+  ],
+  earwearitems: [
+    'earring', 'earrings', 'earwear', 'earbud', 'earpiece', 'hearing aid', 'headphones',
+    'headset', 'earmuffs', 'ear muffs',
+  ],
+  neckwearitems: [
+    'necklace', 'scarf', 'bow tie', 'tie', 'choker', 'neckwear', 'collar', 'pendant', 'bandana',
+  ],
   accessoriesitems: [
     'glasses', 'goggles', 'eyewear', 'earring', 'earrings', 'earwear', 'necklace', 'scarf',
     'mask', 'bow tie', 'hearing aid', 'piercing', 'accessory', 'accessories', 'shades',
