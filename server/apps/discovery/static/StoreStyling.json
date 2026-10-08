@@ -22,5 +22,13 @@
     "Source": "UnifiedAlgorithmicList",
     "SourceMetadata": "hairdyeitems",
     "DisplayMetadata": "{\"DisplayTitle\":\"Hair Dye\",\"categoryDepth\":2,\"categoryCarouselType\":6,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+  },
+  {
+    "Id": "StoreItemCarousel_UnifiedAlgorithmicList_Skins_Styling",
+    "SectionType": 4,
+    "SectionSubType": "Items_Skins",
+    "Source": "UnifiedAlgorithmicList",
+    "SourceMetadata": "skinsitems",
+    "DisplayMetadata": "{\"DisplayTitle\":\"Equipment Skins\",\"categoryDepth\":2,\"categoryCarouselType\":5,\"itemCount\":5000,\"minItemsToShowSection\":1}"
   }
 ]
