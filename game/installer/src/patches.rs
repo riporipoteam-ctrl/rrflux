@@ -30,6 +30,16 @@ const WELCOME_PATCH: BytePatch = BytePatch {
     desc: "welcome screen text",
 };
 
+/// Welcome screen for the 2025 client: same text, different data dir.
+/// The 2025 client stores its data files under Recroom_Release_Data
+/// (not RecRoom_Data). Same 18-char same-length replacement.
+const WELCOME_PATCH_2025: BytePatch = BytePatch {
+    file: "Recroom_Release_Data/level32",
+    from: b"Welcome to Rec Room",
+    to: b"Welcome to Flux Rec",
+    desc: "welcome screen text (2025 client)",
+};
+
 /// Rec Room+ membership price text. The client shows "($10 USD value, ...)" — replace
 /// with Flux Rec Tokens. Found in the RR+ UI AssetBundle.
 const RRPLUS_USD_PATCH: BytePatch = BytePatch {
@@ -88,6 +98,9 @@ pub fn apply_client_patches(dir: &Path) {
 
     // Welcome screen patch
     apply_patch(dir, &WELCOME_PATCH);
+
+    // Welcome screen patch (2025 client layout)
+    apply_patch(dir, &WELCOME_PATCH_2025);
 
     // RR+ USD to tokens patch
     apply_patch(dir, &RRPLUS_USD_PATCH);
@@ -176,6 +189,14 @@ mod tests {
         assert_eq!(WELCOME_PATCH.from.len(), WELCOME_PATCH.to.len());
         assert_eq!(WELCOME_PATCH.from, b"Welcome to Rec Room");
         assert_eq!(WELCOME_PATCH.to, b"Welcome to Flux Rec");
+    }
+
+    #[test]
+    fn welcome_patch_2025_is_same_length() {
+        assert_eq!(WELCOME_PATCH_2025.from.len(), WELCOME_PATCH_2025.to.len());
+        assert_eq!(WELCOME_PATCH_2025.from, b"Welcome to Rec Room");
+        assert_eq!(WELCOME_PATCH_2025.to, b"Welcome to Flux Rec");
+        assert_eq!(WELCOME_PATCH_2025.file, "Recroom_Release_Data/level32");
     }
 
     #[test]
