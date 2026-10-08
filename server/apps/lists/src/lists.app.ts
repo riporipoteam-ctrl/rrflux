@@ -544,6 +544,7 @@ const STORE_CATEGORY_TERMS: Record<string, string[]> = {
     'farmer beard', 'captain beard', 'braided beard', 'curly mustache', 'cowboy stache', 'ranger stache',
   ],
   hairdyeitems: ['hair dye', 'permanent hair dye', 'dye'],
+  skinsitems: [],
   accessoriesitems: [
     'glasses', 'goggles', 'eyewear', 'earring', 'earrings', 'earwear', 'necklace', 'scarf',
     'mask', 'bow tie', 'hearing aid', 'piercing', 'accessory', 'accessories', 'clip', 'tie',
@@ -622,6 +623,9 @@ function buildStoreFeedIds(key: string): string[] | null {
       if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
 
       if (STORE_BROAD_FEED_KEYS.has(key)) return drop.AvatarItemType === 0
+      // Equipment skins do not live in sf3-2025 as AvatarItemType=0/1 rows; leave their
+      // legacy storefront path available rather than silently returning an empty feed.
+      if (key === 'skinsitems') return false
 
       const names = itemNames(item)
       if (key === 'hairdyeitems') {
