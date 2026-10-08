@@ -237,6 +237,22 @@ pub fn run_launcher(
         }
     }
 
+    // 1e. Logo bundle (v0.6.13): apply Flux Rec branding (loading screens,
+    // etc.) on every launch so existing installs pick it up once the
+    // bundles are uploaded. FAIL-SOFT: 404s are warnings, not errors —
+    // the game launches regardless.
+    if let Ok(r) = &rt {
+        let client = reqwest::Client::builder()
+            .user_agent("FluxRec-Setup/0.6.13")
+            .connect_timeout(Duration::from_secs(30))
+            .build();
+        if let Ok(c) = client {
+            if let Err(e) = r.block_on(crate::apply_logo_bundle(&c, dir, &progress)) {
+                eprintln!("[launcher] logo bundle failed ({e}); continuing.");
+            }
+        }
+    }
+
     // 2. Update check (fast + fail-soft by design).
     let decision = match &rt {
         Ok(r) => r.block_on(crate::updater::check_for_updates(dir, &progress)),
@@ -281,6 +297,11 @@ pub fn run_launcher(
         // game anyway.
     }
 
+    // 2b. Flux account linking prompt (v0.6.13). Offer once: the choice is
+    // persisted in %LOCALAPPDATA%\FluxRec\flux_link.txt and never asked
+    // again. Fail-soft: any error skips the prompt and launches the game.
+    prompt_flux_account_link();
+
     // 3. Launch the game.
     launch_game(dir, &progress);
     progress.done();
@@ -322,6 +343,62 @@ fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> bool {
         }
     }
 }
+
+/// v0.6.13: Offer to link the Flux Rec account with the Flux social media
+/// account (flux.sitey.my). Asked at most once — the answer is persisted in
+/// %LOCALAPPDATA%\FluxRec\flux_link.txt (`linked`, `pending`, or
+/// `dismissed`). Fail-soft: any error returns silently and the game launches.
+fn prompt_flux_account_link() {
+    let flag_path = match std::env::var("LOCALAPPDATA") {
+        Ok(local) => std::path::PathBuf::from(local)
+            .join("FluxRec")
+            .join("flux_link.txt"),
+        Err(_) => return,
+    };
+    // Already answered? Never nag again.
+    if let Ok(content) = std::fs::read_to_string(&flag_path) {
+        match content.trim().to_lowercase().as_str() {
+            "linked" | "pending" | "dismissed" => return,
+            _ => {}
+        }
+    }
+    let yes = crate::message_box_yes_no(
+        "Flux Rec",
+        "Do you wish to connect your Flux Rec account with your Flux social media account?\n\nYou can see your rooms and photos on flux.sitey.my after connecting.",
+    );
+    if let Some(parent) = flag_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if yes {
+        open_url_in_browser("https://flux.sitey.my/settings?link=fluxrec");
+        // Don't nag again; the user completes the link on the site.
+        let _ = std::fs::write(&flag_path, "pending");
+    } else {
+        let _ = std::fs::write(&flag_path, "dismissed");
+    }
+}
+
+/// Open a URL in the default browser. Fire-and-forget: failures are ignored.
+#[cfg(windows)]
+fn open_url_in_browser(url: &str) {
+    use windows::core::{w, HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let uri = HSTRING::from(url);
+    unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(uri.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn open_url_in_browser(_url: &str) {}
 
 /// Spawn the game with no console window. v0.3.0: 2025 client flow —
 /// start `Injector.exe` FIRST (it waits for the game process, then injects
