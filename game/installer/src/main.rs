@@ -801,7 +801,7 @@ fn install_logo_bundle(
     Ok(())
 }
 
-async fn apply_logo_bundle(
+pub(crate) async fn apply_logo_bundle(
     client: &reqwest::Client,
     dir: &Path,
     progress: &progress::Progress,
@@ -1628,6 +1628,29 @@ pub(crate) fn message_box(_title: &str, _text: &str, _error: bool) {}
 
 #[cfg(not(windows))]
 pub(crate) fn message_box_ok_cancel(_title: &str, _text: &str) -> bool {
+    true
+}
+
+/// YES/NO variant. Returns true when the user pressed YES.
+/// Non-Windows: no-op returning true.
+#[cfg(windows)]
+pub(crate) fn message_box_yes_no(title: &str, text: &str) -> bool {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONQUESTION, MB_YESNO};
+    let title_h = HSTRING::from(title);
+    let text_h = HSTRING::from(text);
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(text_h.as_ptr()),
+            PCWSTR(title_h.as_ptr()),
+            MB_YESNO | MB_ICONQUESTION,
+        ) == IDYES
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn message_box_yes_no(_title: &str, _text: &str) -> bool {
     true
 }
 
