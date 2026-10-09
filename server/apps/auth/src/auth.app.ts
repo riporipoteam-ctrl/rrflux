@@ -1464,17 +1464,9 @@ app.all('/api/storefronts/*', proxyTo((env) => env.ECON))
 app.all('/rooms/*', proxyTo((env) => env.ROOMS))
 app.all('/sections/*', proxyTo((env) => env.DISCOVERY))
 
-// Service-discovery document: `{ label: host }` for every backend service, with
-// the real `fluxrec-*` hosts (the stock ns map advertises `api.`/`auth.`/
-// `econ.` subdomains that don't exist). Served here because THIS worker is the
-// ns host the game client actually talks to.
-app.get('/', (c) =>
-	c.json(
-		buildEndpoints(
-			'ripo-ripoteam.workers.dev',
-			JSON.stringify({ api: 'fluxrec-api', auth: 'fluxrec-auth', econ: 'fluxrec-econ' })
-		)
-	)
-)
+// Service-discovery document: advertise the deployed worker names from @repo/ns.
+// The old fluxrec-* clones are not updated by this repository's deploy workflow, so
+// pointing clients at them leaves the game using stale API/Econ code after a deploy.
+app.get('/', (c) => c.json(buildEndpoints('ripo-ripoteam.workers.dev')))
 
 export default app
