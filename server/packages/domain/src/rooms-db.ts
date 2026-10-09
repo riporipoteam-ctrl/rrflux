@@ -2968,9 +2968,12 @@ const BROKEN_RRO_ROOM_IDS = new Set([
 
 const BROKEN_RRO_NAME_KEYS = [
 	'run the block',
+	'runtheblock',
 	'make it to midnight',
+	'makeittomidnight',
 	'showdown',
 	'my little monsters',
+	'mylittlemonsters',
 ]
 
 function isBrokenRRO(room: Room): boolean {
