@@ -692,11 +692,6 @@ async function clothingStorePurchasableItemIds(c: Context<App>, key: string): Pr
   return buildStoreFeedIds(key)
 }
 
-tem) => String(item.PurchasableItemId))
-
-  return [...new Set(ids)]
-}
-
 async function purchasableItemRowEntities(c: Context<App>, key: string): Promise<ListEntity[]> {
 	const storeIds = await clothingStorePurchasableItemIds(c, key)
 	if (storeIds !== null) return entities(storeIds)
