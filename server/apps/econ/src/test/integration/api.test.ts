@@ -2564,6 +2564,25 @@ describe('econ endpoints', () => {
 		expect(current.StorefrontType).toBe(2)
 		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')).toBe(true)
 		expect(current.StoreItems.some((item) => Boolean(item.GiftDrop.AvatarItemDesc))).toBe(true)
+
+		// The game may send its dotted build in rn.ver without a bearer token; it must select
+		// the same snapshot as a newer token. A dotted 2023 build stays on the legacy snapshot.
+		const currentHeader = await read({ 'rn.ver': '2025.07.18.0' })
+		expect(currentHeader.StoreItems).toHaveLength(sf32025.StoreItems.length)
+		expect(currentHeader.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')).toBe(true)
+		const legacyHeader = await read({ 'rn.ver': '2023.04.14.0' })
+		expect(legacyHeader.StoreItems).toHaveLength(sf3.StoreItems.length)
+
+		const currentDottedToken = await read(await bearer('42', undefined, '2025.07.18.0'))
+		expect(currentDottedToken.StoreItems).toHaveLength(sf32025.StoreItems.length)
+		// A verified token claim wins over a conflicting public header; invalid dates stay legacy.
+		const signedLegacy = await read({
+			...(await bearer('42', undefined, '2023.04.14.0')),
+			'rn.ver': '2025.07.18.0',
+		})
+		expect(signedLegacy.StoreItems).toHaveLength(sf3.StoreItems.length)
+		const invalidHeader = await read({ 'rn.ver': '2025.13.40.0' })
+		expect(invalidHeader.StoreItems).toHaveLength(sf3.StoreItems.length)
 	})
 
 	test('GET /api/storefronts/v4/room 404s for rooms with no storefront', async () => {
@@ -2575,9 +2594,6 @@ describe('econ endpoints', () => {
 		}
 	})
 
-	// TEMPORARY, alongside the probe in `econ.app.ts`: the storefront ids are swapped so it can
-	// be seen from the client which one the 2025 store actually reads. Delete this with the
-	// probe.
 	test('storefront 3 serves sf3 to old builds and the merged sf3-2025 to newer ones', async () => {
 		const store = async (headers: Record<string, string>) => {
 			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v3/giftdropstore/3`, {

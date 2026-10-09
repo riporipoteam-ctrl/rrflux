@@ -230,19 +230,45 @@ async function authedId(c: Context<App>): Promise<number | null> {
 }
 
 /**
- * The client build this request's token was minted for (`rn.ver`), as a comparable NUMBER —
- * the leading `YYYYMMDD` of e.g. `20250718.01`, whose `.01` is a same-day rebuild and not a
- * version to order by. `null` when there is no valid token, when it carries no `rn.ver` (an
- * older token, issued before the claim did), or when the claim isn't a build at all.
- *
- * Unverified — a client can claim any build — which is fine for what it gates here: a build
- * lying about itself only changes which storefront its own player is shown.
+ * Convert the compact (`YYYYMMDD.rebuild`) or dotted (`YYYY.MM.DD.rebuild`) client version to
+ * the comparable YYYYMMDD number used by the legacy storefront cutoff.
  */
-async function authedBuild(c: Context<App>): Promise<number | null> {
-	const version = await validateAndGetVersion(c.req.raw, await c.env.JWT_SECRET.get())
+function storefrontBuildNumber(version: string | null): number | null {
 	if (version === null) return null
-	const build = Number.parseInt(version.split('.')[0] ?? '', 10)
-	return Number.isInteger(build) ? build : null
+
+	const compact = /^(\d{4})(\d{2})(\d{2})(?:\.\d+)?$/.exec(version)
+	const dotted =
+		compact === null ? /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:\.\d+)?$/.exec(version) : null
+	const parts = compact ?? dotted
+	if (parts === null) return null
+
+	const year = Number(parts[1])
+	const month = Number(parts[2])
+	const day = Number(parts[3])
+	const date = new Date(Date.UTC(year, month - 1, day))
+	if (
+		month < 1 ||
+		month > 12 ||
+		day < 1 ||
+		date.getUTCFullYear() !== year ||
+		date.getUTCMonth() !== month - 1 ||
+		date.getUTCDate() !== day
+	)
+		return null
+	return year * 10_000 + month * 100 + day
+}
+
+/**
+ * Resolve the caller's storefront build from a verified token claim first, then the public
+ * client `rn.ver` header. The header is untrusted, but it only chooses which public catalog is
+ * returned; it does not grant access to any protected data or action.
+ */
+async function storefrontBuild(c: Context<App>): Promise<number | null> {
+	const version = await validateAndGetVersion(c.req.raw, await c.env.JWT_SECRET.get())
+	return (
+		storefrontBuildNumber(version) ??
+		storefrontBuildNumber(c.req.header('rn.ver') ?? null)
+	)
 }
 
 /** Results.Unauthorized() equivalent — 401 with empty body. */
@@ -1054,9 +1080,9 @@ const STOREFRONT_BY_BUILD: Record<string, string> = {
  * and any {@link STOREFRONT_BY_BUILD} variant. The id arrives as a path param, so it is a
  * string here rather than a number: both tables are matched on what the client asked for.
  *
- * `build` is the caller's `rn.ver` (see {@link authedBuild}), or null when there is no readable
- * one. Null gets the captured file: an unversioned token is the OLD client, so treating "can't
- * prove its version" as "newer" would swap the store out from under the build that needs it.
+ * `build` is the caller's `rn.ver` (see {@link storefrontBuild}), or null when neither the
+ * verified token claim nor the request header supplies a usable date. Null gets the captured
+ * file: without build evidence, do not opt the client into the newer catalog.
  */
 function storefrontAssetPath(id: string, build: number | null): string {
 	const aliased = STOREFRONT_ALIASES[id] ?? id
@@ -1078,7 +1104,7 @@ function storefrontAssetPath(id: string, build: number | null): string {
 async function loadStorefront(c: Context<App>, storefrontType: number): Promise<Storefront | null> {
 	// Note: storefront 2 (Rec Center) is aliased to 3 in STOREFRONT_ALIASES, so it flows
 	// through the normal asset path below and serves the full authentic catalog.
-	const build = await authedBuild(c)
+	const build = await storefrontBuild(c)
 	const res = await c.env.ASSETS.fetch(
 		new URL(storefrontAssetPath(String(storefrontType), build), c.req.url)
 	)
@@ -4998,7 +5024,7 @@ const app = new Hono<App>({ strict: false })
 			// The same resolution `loadStorefront` uses, so what is browsed is what a purchase is
 			// checked against — see `storefrontAssetPath`. (Id 2, the Rec Center, is aliased
 			// to the full authentic main-store catalog in STOREFRONT_ALIASES.)
-			const path = storefrontAssetPath(id, await authedBuild(c))
+			const path = storefrontAssetPath(id, await storefrontBuild(c))
 			const res = await c.env.ASSETS.fetch(new URL(path, c.req.url))
 			if (!res.ok) return c.notFound()
 			const catalog = (await res.json()) as { StoreItems?: StoreItem[] }
@@ -5118,7 +5144,7 @@ const app = new Hono<App>({ strict: false })
 			// Other original rooms serve their captured sf{id}.json catalogs.
 			// Same resolution as the v3 giftdropstore route and loadStorefront,
 			// so what is browsed is what a purchase is checked against.
-			const path = storefrontAssetPath(storefrontId, await authedBuild(c))
+			const path = storefrontAssetPath(storefrontId, await storefrontBuild(c))
 			const res = await c.env.ASSETS.fetch(new URL(path, c.req.url))
 			if (!res.ok) return c.notFound()
 			const catalog = (await res.json()) as { StoreItems?: StoreItem[] }
@@ -5392,7 +5418,7 @@ const app = new Hono<App>({ strict: false })
 			// shadowed by the capture — the table fallback only meaningfully serves ids the
 			// capture does not list. An older build is not offered catalog ids anywhere, so it
 			// is left resolving exactly what it always did.
-			const build = await authedBuild(c)
+			const build = await storefrontBuild(c)
 			const catalogItems =
 				build !== null && build > LEGACY_CLIENT_BUILD
 					? await catalogStoreItems(
