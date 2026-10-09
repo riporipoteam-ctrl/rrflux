@@ -39,6 +39,7 @@ import skinsJson from '../../../static/db/skins.json'
 import questRewards from '../../../static/quest-rewards.json'
 import sf32025 from '../../../static/storefronts/sf3-2025.json'
 import sf3 from '../../../static/storefronts/sf3.json'
+import sf2 from '../../../static/storefronts/sf2.json'
 import { SCHEMA_DDL } from '../../avatar-db'
 import {
 	BALANCE_SCHEMA_DDL,
@@ -2608,52 +2609,53 @@ describe('econ endpoints', () => {
 		expect((await get('40')).StorefrontType).toBe(500)
 	})
 
-	test('GET /api/storefronts/v4/room/2 serves clothing and food under the Rec Center storefront id', async () => {
+	test('Rec Center room storefront keeps its captured sf2 catalog for old and new clients', async () => {
 		const read = async (headers: Record<string, string> = {}) => {
 			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v4/room/2`, { headers })
 			expect(res.status).toBe(200)
 			return (await res.json()) as {
 				StorefrontType: number
 				StoreItems: Array<{
-					GiftDrop: { FriendlyName: string; AvatarItemDesc: string; ConsumableItemDesc: string }
+					PurchasableItemId: number
+					GiftDrop: { FriendlyName: string; AvatarItemDesc: string; ConsumableItemDesc: string; IsQuery: boolean }
 				}>
 			}
 		}
+		const expectedIds = sf2.StoreItems.map((item) => item.PurchasableItemId)
+		const expectCapturedRecCenter = (catalog: Awaited<ReturnType<typeof read>>) => {
+			expect(catalog.StorefrontType).toBe(2)
+			expect(catalog.StoreItems.map((item) => item.PurchasableItemId)).toEqual(expectedIds)
+		}
 
-		// An explicit legacy build retains the captured catalog, still labeled as its room store.
+		// Neither a legacy nor a current build should be silently replaced with storefront 3.
 		const legacy = await read(await bearer('42', undefined, '20230414'))
-		expect(legacy.StorefrontType).toBe(2)
-		expect(legacy.StoreItems.some((item) => Boolean(item.GiftDrop.AvatarItemDesc))).toBe(true)
-		expect(legacy.StoreItems.some((item) => Boolean(item.GiftDrop.ConsumableItemDesc))).toBe(true)
-
-		// Newer clients get the full captured catalog, including the Rec Center food assortment.
+		expectCapturedRecCenter(legacy)
 		const current = await read()
-		expect(current.StorefrontType).toBe(2)
-		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')).toBe(
-			true
-		)
-		expect(current.StoreItems.some((item) => Boolean(item.GiftDrop.AvatarItemDesc))).toBe(true)
+		expectCapturedRecCenter(current)
+		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Gladiator Helmet')).toBe(true)
+		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === '4-Star Unique Box')).toBe(true)
+		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')).toBe(false)
+		expect(current.StoreItems.some((item) => item.GiftDrop.IsQuery)).toBe(true)
 
-		// The game may send its dotted build in rn.ver without a bearer token; it must select
-		// the same snapshot as a newer token. A dotted 2023 build stays on the legacy snapshot.
-		const currentHeader = await read({ 'rn.ver': '2025.07.18.0' })
-		expect(currentHeader.StoreItems).toHaveLength(sf32025.StoreItems.length)
-		expect(
-			currentHeader.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')
-		).toBe(true)
-		const legacyHeader = await read({ 'rn.ver': '2023.04.14.0' })
-		expect(legacyHeader.StoreItems).toHaveLength(sf3.StoreItems.length)
+		// The v3 catalog route for id 2 must use the same captured storefront.
+		const v3 = await exports.default.fetch(`${ORIGIN}/api/storefronts/v3/giftdropstore/2`)
+		expect(v3.status).toBe(200)
+		const v3Catalog = (await v3.json()) as { StoreItems: Array<{ PurchasableItemId: number }> }
+		expect(v3Catalog.StoreItems.map((item) => item.PurchasableItemId)).toEqual(expectedIds)
 
-		const currentDottedToken = await read(await bearer('42', undefined, '2025.07.18.0'))
-		expect(currentDottedToken.StoreItems).toHaveLength(sf32025.StoreItems.length)
-		// A verified token claim wins over a conflicting public header; invalid dates stay legacy.
-		const signedLegacy = await read({
-			...(await bearer('42', undefined, '2023.04.14.0')),
-			'rn.ver': '2025.07.18.0',
-		})
-		expect(signedLegacy.StoreItems).toHaveLength(sf3.StoreItems.length)
-		const invalidHeader = await read({ 'rn.ver': '2025.13.40.0' })
-		expect(invalidHeader.StoreItems).toHaveLength(sf3.StoreItems.length)
+		// rn.ver and signed token versions affect storefront 3 only, not the room's sf2 capture.
+		for (const headers of [
+			{ 'rn.ver': '2025.07.18.0' },
+			{ 'rn.ver': '2023.04.14.0' },
+			await bearer('42', undefined, '2025.07.18.0'),
+			{
+				...(await bearer('42', undefined, '2023.04.14.0')),
+				'rn.ver': '2025.07.18.0',
+			},
+			{ 'rn.ver': '2025.13.40.0' },
+		]) {
+			expectCapturedRecCenter(await read(headers))
+		}
 	})
 	test('GET /api/storefronts/v4/room 404s for rooms with no storefront', async () => {
 		for (const roomId of ['18', '99999']) {
