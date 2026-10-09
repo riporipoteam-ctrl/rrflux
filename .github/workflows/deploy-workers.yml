@@ -6,7 +6,7 @@ on:
       workers:
         description: 'Comma-separated worker dirs to deploy (default: auth,accounts,rooms,econ,api,clubs,img)'
         required: false
-        default: 'auth,accounts,rooms,econ,api,clubs,img'
+        default: 'auth,accounts,rooms,econ,api,lists,discovery,clubs,img'
       target:
         description: "Deploy target: 'workers-dev' deploys to <name>.workers.dev; 'custom-domain' deploys onto <subdomain>.recflare.net (the client-facing hosts)"
         required: false
