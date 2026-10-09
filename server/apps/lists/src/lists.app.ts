@@ -637,7 +637,11 @@ export function buildStoreFeedIds(rawKey: string): string[] | null {
       const drop = item.GiftDrop
       if (drop.IsQuery) return false
       if (key === 'skinsitems') {
-        if (!drop.EquipmentModificationGuid?.trim() || drop.ConsumableItemDesc?.trim()) return false
+        if (
+          !drop.EquipmentModificationGuid?.trim() ||
+          drop.ConsumableItemDesc?.trim() ||
+          UNSELLABLE_RARITIES.includes(drop.Rarity)
+        ) return false
       } else if (consumablesKey) {
         if (!drop.ConsumableItemDesc?.trim()) return false
       } else {
@@ -650,7 +654,7 @@ export function buildStoreFeedIds(rawKey: string): string[] | null {
       // No price or date gate: free hairstyles/facial hair and historical catalog rows must
       // remain available. Those fields are useful for checkout, not catalog membership.
       if (STORE_BROAD_FEED_KEYS.has(key)) return drop.AvatarItemType === 0
-      if (consumablesKey) return true
+      if (consumablesKey || key === 'skinsitems') return true
       const names = itemNames(item)
       if (key === 'hairdyeitems') return drop.AvatarItemType === 1 || matchesAnyName(names, terms!)
       if (key === 'hairitems') {
