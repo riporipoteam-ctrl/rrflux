@@ -60,6 +60,19 @@ describe('2025 Store feeds', () => {
     }
   })
 
+  it('includes all sellable equipment skins, not only names containing the word skin', () => {
+    const ids = buildStoreFeedIds('EquipmentSkinsItems')!
+    const expected = sf32025.StoreItems
+      .filter((item) =>
+        !item.GiftDrop.IsQuery &&
+        Boolean(item.GiftDrop.EquipmentModificationGuid?.trim()) &&
+        !item.GiftDrop.ConsumableItemDesc?.trim() &&
+        !UNSELLABLE_RARITIES.includes(item.GiftDrop.Rarity)
+      )
+      .map((item) => String(item.PurchasableItemId))
+    expect(ids).toEqual([...new Set(expected)])
+  })
+
   it('keeps hairstyle and facial-hair feeds populated and distinct', () => {
     const clothing = new Set(buildStoreFeedIds('clothingitems')!)
     const hair = buildStoreFeedIds('HeadHairItems')!
