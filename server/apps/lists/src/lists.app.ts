@@ -488,7 +488,9 @@ async function genericRowEntities(c: Context<App>, key: string): Promise<ListEnt
  *
  * The capture has no canonical outfit-slot field, so these display-name groups follow the
  * store's own clothing categories. Items not classified by a narrower category remain in the
- * broaconst STORE_FEED_ALIASES: Record<string, string> = {
+ * broad `newitems` row rather than disappearing from the clothing store.
+ */
+const STORE_FEED_ALIASES: Record<string, string> = {
   hatsitems: 'headwearitems',
   torsoitems: 'topsitems',
   shoesitems: 'footwearitems',
