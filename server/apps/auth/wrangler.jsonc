@@ -29,7 +29,7 @@
 	// other workers are served here via direct worker-to-worker calls — no HTTP
 	// edge routing involved.
 	"services": [
-		{ "binding": "ECON", "service": "fluxrec-econ" },
+		{ "binding": "ECON", "service": "econ" },
 		{ "binding": "ROOMS", "service": "rooms" },
 		{ "binding": "DISCOVERY", "service": "discovery" }
 	],

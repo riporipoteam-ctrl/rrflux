@@ -83,16 +83,10 @@ app.all('/api/storefronts/*', proxyTo((env) => env.ECON))
 app.all('/rooms/*', proxyTo((env) => env.ROOMS))
 app.all('/sections/*', proxyTo((env) => env.DISCOVERY))
 
-// Service-discovery document with the real `fluxrec-*` hosts (see the auth
-// worker for the full rationale).
-app.get('/', (c) =>
-	c.json(
-		buildEndpoints(
-			'ripo-ripoteam.workers.dev',
-			JSON.stringify({ api: 'fluxrec-api', auth: 'fluxrec-auth', econ: 'fluxrec-econ' })
-		)
-	)
-)
+// Advertise the deployed worker names from @repo/ns. The old fluxrec-* clones still
+// exist in Cloudflare but are not the workers updated by this repository's deploy workflow;
+// advertising them caused clients to keep using stale API/Econ code after a deploy.
+app.get('/', (c) => c.json(buildEndpoints('ripo-ripoteam.workers.dev')))
 
 // The generated spec. Documentation only — no request is validated against it (see
 // openapi.ts). `hide: true` keeps this route out of its own output.

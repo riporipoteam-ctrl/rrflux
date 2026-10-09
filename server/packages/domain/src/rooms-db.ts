@@ -2958,13 +2958,43 @@ function isRRO(room: Room): boolean {
 	return room.IsRRO === true || roomHasAnyTag(room, new Set(['rro']))
 }
 
+/** RRO records known to have no loadable published scene/map payload in this revival. */
+const BROKEN_RRO_ROOM_IDS = new Set([
+	9001,
+	9002,
+	52815862, // Showdown: subroom exists but has no current save.
+	558011494282369860, // MyLittleMonsters: no subroom/save data.
+])
+
+const BROKEN_RRO_NAME_KEYS = [
+	'run the block',
+	'runtheblock',
+	'make it to midnight',
+	'makeittomidnight',
+	'showdown',
+	'my little monsters',
+	'mylittlemonsters',
+]
+
+function isBrokenRRO(room: Room): boolean {
+	if (BROKEN_RRO_ROOM_IDS.has(roomIdOf(room))) return true
+	if (!isRRO(room)) return false
+	const name = typeof room.Name === 'string' ? room.Name.trim().toLowerCase() : ''
+	return BROKEN_RRO_NAME_KEYS.some((key) => name === key || name.includes(key))
+}
+
 /**
  * True when the room may appear in a browse or discovery feed at all: public, not a dorm,
  * and not opted out of lists. Every feed below starts from this, so a room that opts out
  * cannot come back through a row that forgot to check.
  */
 function isListable(room: Room): boolean {
-	return room.IsDorm !== true && room.Accessibility === 1 && room.ExcludeFromLists !== true
+	return (
+		room.IsDorm !== true &&
+		room.Accessibility === 1 &&
+		room.ExcludeFromLists !== true &&
+		!isBrokenRRO(room)
+	)
 }
 
 /**
