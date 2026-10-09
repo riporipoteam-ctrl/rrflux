@@ -49,7 +49,7 @@
 	// `2025patch.ini` files point the ns host at this worker, so the same
 	// service paths are served here via direct worker-to-worker calls.
 	"services": [
-		{ "binding": "ECON", "service": "fluxrec-econ" },
+		{ "binding": "ECON", "service": "econ" },
 		{ "binding": "ROOMS", "service": "rooms" },
 		{ "binding": "DISCOVERY", "service": "discovery" }
 	],
