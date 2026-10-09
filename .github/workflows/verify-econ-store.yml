@@ -1,0 +1,38 @@
+name: Verify Econ Store regression tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/verify-econ-store.yml'
+      - 'server/apps/econ/src/econ.app.ts'
+      - 'server/apps/econ/src/test/integration/api.test.ts'
+      - 'server/apps/econ/static/storefronts/sf2.json'
+
+jobs:
+  test:
+    name: Econ storefront integration test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        working-directory: server
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Run Econ API integration tests
+        working-directory: server/apps/econ
+        run: pnpm run test -- src/test/integration/api.test.ts
