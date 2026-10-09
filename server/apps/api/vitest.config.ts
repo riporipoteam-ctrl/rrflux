@@ -79,9 +79,43 @@ export default defineConfig({
 								}
 							}
 							export default { fetch() { return new Response('ok') } }
-						`,
-					},
-				],
+							`,
+						},
+						{
+							// The API worker binds to the deployed Econ service in production. Tests use a
+							// local worker so the binding resolves without making network calls.
+							name: 'fluxrec-econ',
+							modules: true,
+							compatibilityDate: '2026-06-16',
+								script: `
+									export default {
+									async fetch(request) {
+										await request.arrayBuffer()
+										const path = new URL(request.url).pathname
+										if (path.startsWith('/api/consumables/') || path.startsWith('/api/equipment/')) {
+											const authorization = request.headers.get('authorization')
+											if (!authorization || authorization === 'Bearer not-a-real-token') {
+												return Response.json({ error: 'Unauthorized' }, { status: 401 })
+											}
+										}
+										return Response.json([])
+									}
+								}
+							`,
+						},
+						{
+							name: 'rooms',
+							modules: true,
+							compatibilityDate: '2026-06-16',
+							script: `export default { fetch() { return Response.json([]) } }`,
+						},
+						{
+							name: 'discovery',
+							modules: true,
+							compatibilityDate: '2026-06-16',
+							script: `export default { fetch() { return Response.json({}) } }`,
+						},
+					],
 			},
 		}),
 	],

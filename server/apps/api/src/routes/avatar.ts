@@ -691,14 +691,19 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 		let body: Record<string, unknown> = {}
 		try {
 			body = await c.req.json()
-		} catch {
-			body = await c.req.parseBody().catch(() => ({}))
-		}
+			} catch {
+				body = await c.req.parseBody().catch(() => ({}))
+			}
 
-		const toPlayerIds = Array.isArray(body.ToPlayerIds)
-			? (body.ToPlayerIds as unknown[]).filter((v) => Number.isInteger(v)).map((v) => v as number)
-			: []
-		const message = typeof body.Message === 'string' ? body.Message : ''
+			// JSON carries numeric ids; form-urlencoded clients carry the same ids as strings.
+			const recipientValues = Array.isArray(body.ToPlayerIds) ? body.ToPlayerIds : [body.ToPlayerIds]
+			const toPlayerIds = recipientValues.flatMap((value) => {
+				if (typeof value === 'number') return Number.isSafeInteger(value) ? [value] : []
+				if (typeof value !== 'string' || !/^\d+$/.test(value.trim())) return []
+				const parsed = Number(value.trim())
+				return Number.isSafeInteger(parsed) ? [parsed] : []
+			})
+			const message = typeof body.Message === 'string' ? body.Message : ''
 
 		if (toPlayerIds.length === 0) {
 			return c.json({ error: 'No recipients', success: false, value: null }, 400)

@@ -21,6 +21,7 @@ import {
 	PRESENCE_SCHEMA_DDL,
 	PRESENCE_TTL_SECONDS,
 	PROGRESSION_SCHEMA_DDL,
+	RECEIVED_GIFT_SCHEMA_DDL,
 	RELATIONSHIP_SCHEMA_DDL,
 	ROOM_INSTANCE_SCHEMA_DDL,
 	ROOM_SCHEMA_DDL,
@@ -28,8 +29,6 @@ import {
 	SUBROOM_SCHEMA_DDL,
 	SUPPORTED_GAME_VERSIONS,
 } from '@repo/domain'
-
-import app from '../../api.app'
 
 import { PLATFORM_SCHEMA_DDL } from '../../../../auth/src/platform-db'
 import { SCHEMA_DDL as MESSAGE_SCHEMA_DDL } from '../../../../chat/src/message-db'
@@ -39,6 +38,7 @@ import {
 	SYSTEM_SENDER_ID,
 	THREAD_SCHEMA_DDL,
 } from '../../../../chat/src/thread-db'
+import app from '../../api.app'
 import { banEvasionMatch, resolveBan } from '../../bans-db'
 import {
 	createCustomAvatarItem,
@@ -201,6 +201,8 @@ beforeAll(async () => {
 	// The message store (owned by the api worker) — the inbox reads it and every send
 	// writes to it.
 	for (const stmt of NOTIFICATION_SCHEMA_DDL) await env.DB.prepare(stmt).run()
+	// Friendotron and Econ share the received-gift table in D1.
+	for (const stmt of RECEIVED_GIFT_SCHEMA_DDL) await env.DB.prepare(stmt).run()
 
 	// Chat messages and thread membership (owned by the chat worker) — a chat report reads
 	// the reported player off the message, and gates on the reporter being in its thread.
@@ -1852,7 +1854,8 @@ describe('public endpoints', () => {
 		expect(body.Value.Name).toBe('client-named parts')
 	})
 
-	test('POST /api/customAvatarItems/GetCustomAvatarItemCurrentSavesForLegacyAvatarItems returns an empty map', async () => {		const res = await exports.default.fetch(
+	test('POST /api/customAvatarItems/GetCustomAvatarItemCurrentSavesForLegacyAvatarItems returns an empty map', async () => {
+		const res = await exports.default.fetch(
 			`${ORIGIN}/api/customAvatarItems/GetCustomAvatarItemCurrentSavesForLegacyAvatarItems`,
 			{
 				method: 'POST',
@@ -4479,6 +4482,136 @@ describe('auth-gated endpoints', () => {
 	})
 })
 
+describe('Econ service proxies', () => {
+	test('forwards product detail and owned-inventory requests without dropping auth or bodies', async () => {
+		const calls: Array<{
+			url: string
+			method: string
+			authorization: string | null
+			body: string
+		}> = []
+		const fakeEnv = {
+			NAME: 'api',
+			ENVIRONMENT: 'VITEST',
+			SENTRY_RELEASE: 'test',
+			ECON: {
+				fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+					const request = new Request(input, init)
+					calls.push({
+						url: request.url,
+						method: request.method,
+						authorization: request.headers.get('authorization'),
+						body: await request.text(),
+					})
+					return Response.json({ forwarded: new URL(request.url).pathname })
+				},
+			},
+		} as unknown as Env
+
+		const payload = JSON.stringify({ Ids: [{ itemType: 0, itemId: '1801' }] })
+		const detail = await app.fetch(
+			new Request(`${ORIGIN}/api/items/purchaseInfos?source=store`, {
+				method: 'POST',
+				headers: {
+					Authorization: 'Bearer test-token',
+					'Content-Type': 'application/json',
+					Accept: 'application/json',
+				},
+				body: payload,
+			}),
+			fakeEnv
+		)
+		expect(detail.status).toBe(200)
+		expect(await detail.json()).toEqual({ forwarded: '/api/items/purchaseInfos' })
+
+		const inventory = await app.fetch(
+			new Request(`${ORIGIN}/api/consumables/v2/getUnlocked`, {
+				headers: { Authorization: 'Bearer test-token' },
+			}),
+			fakeEnv
+		)
+		expect(inventory.status).toBe(200)
+		expect(await inventory.json()).toEqual({ forwarded: '/api/consumables/v2/getUnlocked' })
+		expect(calls).toEqual([
+			{
+				url: 'https://proxy.internal/api/items/purchaseInfos?source=store',
+				method: 'POST',
+				authorization: 'Bearer test-token',
+				body: payload,
+			},
+			{
+				url: 'https://proxy.internal/api/consumables/v2/getUnlocked',
+				method: 'GET',
+				authorization: 'Bearer test-token',
+				body: '',
+			},
+		])
+	})
+})
+
+describe('Friendotron free gifts', () => {
+	test('accepts form-encoded recipient ids while keeping auth, persistence, and the daily cap', async () => {
+		const senderId = 910001
+		const recipientId = 910002
+		await env.DB.prepare(
+			"DELETE FROM received_gift WHERE account_id = ?1 OR (json_extract(data, '$.FromPlayerId') = ?2 AND json_extract(data, '$.GiftContext') = 9999)"
+		)
+			.bind(recipientId, senderId)
+			.run()
+
+		const endpoint = `${ORIGIN}/api/freegifts/v1/sendmultiple`
+		const formBody = new URLSearchParams({
+			ToPlayerIds: String(recipientId),
+			Message: 'Friendotron contract test',
+		}).toString()
+		const unauthenticated = await exports.default.fetch(endpoint, {
+			method: 'POST',
+			headers: { 'content-type': 'application/x-www-form-urlencoded' },
+			body: formBody,
+		})
+		expect(unauthenticated.status).toBe(401)
+
+		const sent = await exports.default.fetch(endpoint, {
+			method: 'POST',
+			headers: {
+				...(await bearer(String(senderId))),
+				'content-type': 'application/x-www-form-urlencoded',
+			},
+			body: formBody,
+		})
+		expect(sent.status).toBe(200)
+		const result = (await sent.json()) as {
+			error: string
+			success: boolean
+			value: { sentGiftIds: number[] }
+		}
+		expect(result.error).toBe('')
+		expect(result.success).toBe(true)
+		expect(result.value.sentGiftIds).toHaveLength(1)
+
+		const giftId = result.value.sentGiftIds[0]
+		const stored = await env.DB.prepare('SELECT account_id, data FROM received_gift WHERE id = ?1')
+			.bind(giftId)
+			.first<{ account_id: number; data: string }>()
+		expect(stored?.account_id).toBe(recipientId)
+		expect(JSON.parse(stored?.data ?? '{}')).toMatchObject({
+			FromPlayerId: senderId,
+			FriendlyName: 'Friendotron Gift',
+			Message: 'Friendotron contract test',
+			Currency: 0,
+			Xp: 0,
+			GiftContext: 9999,
+		})
+
+		const overCap = await exports.default.fetch(endpoint, {
+			method: 'POST',
+			headers: { ...(await bearer(String(senderId))), 'content-type': 'application/json' },
+			body: JSON.stringify({ ToPlayerIds: [910003, 910004, 910005, 910006, 910007] }),
+		})
+		expect(overCap.status).toBe(429)
+	})
+})
+
 describe('custom avatar items', () => {
 	test('minPriceForPublicItem is a bare 100', async () => {
 		const res = await exports.default.fetch(
@@ -6477,7 +6610,9 @@ describe('images', () => {
 		expect(raw!.data).not.toContain('"Accessibility":1.0')
 
 		// Back to private.
-		const backToPrivate = (await (await modify('7101', { SavedImageId: img.Id, Accessibility: 0 })).json()) as {
+		const backToPrivate = (await (
+			await modify('7101', { SavedImageId: img.Id, Accessibility: 0 })
+		).json()) as {
 			Accessibility: number
 		}
 		expect(backToPrivate.Accessibility).toBe(0)

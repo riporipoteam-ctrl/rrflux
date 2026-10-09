@@ -1,46 +1,42 @@
 import { Hono } from 'hono'
 import { describeRoute } from 'hono-openapi'
 
-import { authedId, unauthorized } from '../http'
 import { AUTHED, json, JsonArray, UNAUTHORIZED_RESPONSE } from '../openapi'
+import { proxyTo } from '../service-proxy'
 
 import type { App } from '../context'
 
 // ---- Inventory -------------------------------------------------------------
-// The equipment/consumables the client actually reads are served by the `econ` worker,
-// on the econ host. These are the same paths on this host, kept as stubs because some
-// client builds probe them here first.
+// Some client builds probe the API host first; forward these paths to Econ, which owns the
+// account-scoped inventory rows, instead of acknowledging the request with an empty list.
 export const inventoryRoutes = new Hono<App>({ strict: false })
 	.get(
 		'/api/equipment/v2/getUnlocked',
 		describeRoute({
 			tags: ['Inventory'],
 			summary: 'Unlocked equipment',
-			description:
-				'A stub on this host — the real inventory lives in the `econ` worker, which serves ' +
-				'this same path with the player’s equipment. Always an empty list here, and ' +
-				'unlike the econ route it does not require a token.',
-			responses: { 200: json(JsonArray, 'An empty list') },
-		}),
-		(c) => c.json([])
+				description:
+					'Forwards to the `econ` worker, which owns this account’s unlocked equipment inventory.',
+				security: AUTHED,
+				responses: {
+					200: json(JsonArray, 'The caller’s unlocked equipment'),
+					401: UNAUTHORIZED_RESPONSE,
+				},
+			}),
+			proxyTo((env) => env.ECON)
 	)
 	.get(
 		'/api/consumables/v2/getUnlocked',
 		describeRoute({
 			tags: ['Inventory'],
 			summary: 'Unlocked consumables',
-			description:
-				'A stub on this host — the real consumables live in the `econ` worker. Auth-gated ' +
-				'even so, then always an empty list.',
+				description:
+					'Forwards to the `econ` worker, which owns this account’s unlocked consumables.',
 			security: AUTHED,
 			responses: {
 				200: json(JsonArray, 'An empty list'),
 				401: UNAUTHORIZED_RESPONSE,
 			},
 		}),
-		async (c) => {
-			const id = await authedId(c)
-			if (id === null) return unauthorized(c)
-			return c.json([]) // TODO: query ConsumableItems
-		}
-	)
+			proxyTo((env) => env.ECON)
+		)

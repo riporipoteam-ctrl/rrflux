@@ -69,16 +69,6 @@ import {
 } from '../../catalog-db'
 import { CATALOG_ID_BASE } from '../../catalog-load'
 import { CHALLENGE_GIFT_SCHEMA_DDL, CHALLENGE_STATUS_SCHEMA_DDL } from '../../challenge-db'
-// Checklist completion ledger (mirrors migrations/0025_checklist_status.sql) —
-// the complete endpoint records each completed row here, idempotently.
-const CHECKLIST_STATUS_SCHEMA_DDL = [
-	`CREATE TABLE IF NOT EXISTS checklist_status (
-		account_id INTEGER NOT NULL,
-		item_index INTEGER NOT NULL,
-		completed_at TEXT NOT NULL,
-		PRIMARY KEY (account_id, item_index)
-	)`,
-]
 // The live weekly rotation, generated the same way the worker generates it, so the challenge
 // tests exercise whatever this week actually holds instead of ids from a rotation that has
 // since rolled over.
@@ -93,6 +83,17 @@ import { ROOM_BALANCE_SCHEMA_DDL, ROOM_CURRENCY_SCHEMA_DDL } from '../../room-cu
 
 import type { CatalogLoadRow, CatalogRow, CatalogValue } from '../../catalog-db'
 import type { Env } from '../../context'
+
+// Checklist completion ledger (mirrors migrations/0025_checklist_status.sql) —
+// the complete endpoint records each completed row here, idempotently.
+const CHECKLIST_STATUS_SCHEMA_DDL = [
+	`CREATE TABLE IF NOT EXISTS checklist_status (
+		account_id INTEGER NOT NULL,
+		item_index INTEGER NOT NULL,
+		completed_at TEXT NOT NULL,
+		PRIMARY KEY (account_id, item_index)
+	)`,
+]
 
 /**
  * The items of the CURRENT sf3-2025.json that are not among the carried 2023 consumable
@@ -2299,6 +2300,76 @@ describe('econ endpoints', () => {
 		])
 	})
 
+	test('POST /api/items/purchaseInfos resolves storefront foods and wearables by type 0', async () => {
+		const candy = sf32025.StoreItems.find((item) => item.GiftDrop.FriendlyName === 'Candy Apples')
+		const mirror = sf32025.StoreItems.find(
+			(item) => item.GiftDrop.FriendlyName === "Doctor's Head Mirror"
+		)
+		expect(candy).toBeDefined()
+		expect(mirror).toBeDefined()
+
+		const res = await exports.default.fetch(`${ORIGIN}/api/items/purchaseInfos`, {
+			method: 'POST',
+			headers: {
+				...(await bearer('207', undefined, '20250718.01')),
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({
+				Ids: [
+					{ itemType: 0, itemId: String(candy!.PurchasableItemId) },
+					{ itemType: 0, itemId: String(mirror!.PurchasableItemId) },
+					{ itemType: 0, itemId: '99999999' },
+					{ itemType: 1, itemId: String(candy!.PurchasableItemId) },
+				],
+			}),
+		})
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as Array<{
+			ItemId: { itemType: number; itemId: string }
+			PurchaseMethodId: { Type: number; NumberId: number | null; Guid: string | null }
+			Prices: Array<{ CurrencyType: number; Price: number; StorefrontSaleData: unknown }>
+			CanBeGifted: boolean
+			CanApplySubscriberDiscount: boolean
+			SubscribersOnly: boolean
+		}>
+		expect(body).toHaveLength(2)
+		expect(body.map((item) => item.ItemId)).toEqual([
+			{ itemType: 0, itemId: String(candy!.PurchasableItemId) },
+			{ itemType: 0, itemId: String(mirror!.PurchasableItemId) },
+		])
+		expect(body[0]).toMatchObject({
+			PurchaseMethodId: { Type: 0, NumberId: candy!.PurchasableItemId, Guid: null },
+			Prices: [{ CurrencyType: 2, Price: 95, StorefrontSaleData: null }],
+			CanBeGifted: true,
+			CanApplySubscriberDiscount: true,
+			SubscribersOnly: false,
+		})
+		expect(body[1]).toMatchObject({
+			PurchaseMethodId: { Type: 0, NumberId: mirror!.PurchasableItemId, Guid: null },
+			Prices: [{ CurrencyType: 2, Price: 750, StorefrontSaleData: null }],
+			CanBeGifted: true,
+			CanApplySubscriberDiscount: true,
+			SubscribersOnly: false,
+		})
+	})
+
+	test('POST /api/items/purchaseInfos falls back to captured Rec Center item details', async () => {
+		const res = await exports.default.fetch(`${ORIGIN}/api/items/purchaseInfos`, {
+			method: 'POST',
+			headers: { ...(await bearer('208')), 'content-type': 'application/json' },
+			body: JSON.stringify({ Ids: [{ itemType: 0, itemId: '539' }] }),
+		})
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as Array<Record<string, unknown>>
+		expect(body).toHaveLength(1)
+		expect(body[0]).toMatchObject({
+			ItemId: { itemType: 0, itemId: '539' },
+			PurchaseMethodId: { Type: 0, NumberId: 539, Guid: null },
+			Prices: [{ CurrencyType: 2, Price: 800, StorefrontSaleData: null }],
+			CanApplySubscriberDiscount: true,
+		})
+	})
+
 	test('POST /api/items/purchaseInfos 400s without Ids and 401s without a token', async () => {
 		const bad = await exports.default.fetch(`${ORIGIN}/api/items/purchaseInfos`, {
 			method: 'POST',
@@ -2515,16 +2586,12 @@ describe('econ endpoints', () => {
 		// The bowling snack bar sells food consumables (root beer, pretzels, pizza, donuts).
 		const consumables = catalog.StoreItems.filter((i) => i.GiftDrop?.ConsumableItemDesc)
 		expect(consumables.length).toBeGreaterThan(0)
-		expect(
-			catalog.StoreItems.some((i) => i.GiftDrop?.FriendlyName === 'Root Beer')
-		).toBe(true)
+		expect(catalog.StoreItems.some((i) => i.GiftDrop?.FriendlyName === 'Root Beer')).toBe(true)
 	})
 
 	test('GET /api/storefronts/v4/room maps original rooms to their storefronts', async () => {
 		const get = async (roomId: string) => {
-			const res = await exports.default.fetch(
-				`${ORIGIN}/api/storefronts/v4/room/${roomId}`
-			)
+			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v4/room/${roomId}`)
 			expect(res.status).toBe(200)
 			return (await res.json()) as { StorefrontType: number; StoreItems: unknown[] }
 		}
@@ -2553,23 +2620,27 @@ describe('econ endpoints', () => {
 			}
 		}
 
-		// A client without a readable build gets the legacy catalog, still labeled as its room store.
-		const legacy = await read()
+		// An explicit legacy build retains the captured catalog, still labeled as its room store.
+		const legacy = await read(await bearer('42', undefined, '20230414'))
 		expect(legacy.StorefrontType).toBe(2)
 		expect(legacy.StoreItems.some((item) => Boolean(item.GiftDrop.AvatarItemDesc))).toBe(true)
 		expect(legacy.StoreItems.some((item) => Boolean(item.GiftDrop.ConsumableItemDesc))).toBe(true)
 
 		// Newer clients get the full captured catalog, including the Rec Center food assortment.
-		const current = await read(await bearer('42', undefined, '20250718.01'))
+		const current = await read()
 		expect(current.StorefrontType).toBe(2)
-		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')).toBe(true)
+		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')).toBe(
+			true
+		)
 		expect(current.StoreItems.some((item) => Boolean(item.GiftDrop.AvatarItemDesc))).toBe(true)
 
 		// The game may send its dotted build in rn.ver without a bearer token; it must select
 		// the same snapshot as a newer token. A dotted 2023 build stays on the legacy snapshot.
 		const currentHeader = await read({ 'rn.ver': '2025.07.18.0' })
 		expect(currentHeader.StoreItems).toHaveLength(sf32025.StoreItems.length)
-		expect(currentHeader.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')).toBe(true)
+		expect(
+			currentHeader.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')
+		).toBe(true)
 		const legacyHeader = await read({ 'rn.ver': '2023.04.14.0' })
 		expect(legacyHeader.StoreItems).toHaveLength(sf3.StoreItems.length)
 
@@ -2584,17 +2655,14 @@ describe('econ endpoints', () => {
 		const invalidHeader = await read({ 'rn.ver': '2025.13.40.0' })
 		expect(invalidHeader.StoreItems).toHaveLength(sf3.StoreItems.length)
 	})
-
 	test('GET /api/storefronts/v4/room 404s for rooms with no storefront', async () => {
 		for (const roomId of ['18', '99999']) {
-			const res = await exports.default.fetch(
-				`${ORIGIN}/api/storefronts/v4/room/${roomId}`
-			)
+			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v4/room/${roomId}`)
 			expect(res.status, `room ${roomId}`).toBe(404)
 		}
 	})
 
-	test('storefront 3 serves sf3 to old builds and the merged sf3-2025 to newer ones', async () => {
+	test('storefront 3 defaults anonymous browsing to sf3-2025 and retains build-aware legacy behavior', async () => {
 		const store = async (headers: Record<string, string>) => {
 			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v3/giftdropstore/3`, {
 				headers,
@@ -2612,10 +2680,9 @@ describe('econ endpoints', () => {
 		// A same-day rebuild sorts by its DATE, not the `.NN` suffix.
 		expect((await store(await at('20230414.02'))).StoreItems).toHaveLength(sf3.StoreItems.length)
 
-		// A caller with no readable build gets the captured file too: an unversioned token is the
-		// OLD client, so treating "can't prove its version" as "newer" would swap the store out
-		// from under the build that needs it.
-		expect((await store({})).StoreItems).toHaveLength(sf3.StoreItems.length)
+		// Anonymous public browsing gets the current catalog when it cannot supply a build.
+		expect((await store({})).StoreItems).toHaveLength(sf32025.StoreItems.length)
+		// A signed but unversioned token and malformed build remain on the legacy snapshot.
 		expect((await store(await bearer())).StoreItems).toHaveLength(sf3.StoreItems.length)
 		expect((await store(await at('not-a-build'))).StoreItems).toHaveLength(sf3.StoreItems.length)
 
@@ -2676,7 +2743,6 @@ describe('econ endpoints', () => {
 		})
 		expect(refused.status).toBe(404)
 	})
-
 	test('sf3-2025 is the authentic 2025 Watch-store capture; sf3 is the generated legacy store', async () => {
 		// sf3-2025.json is served VERBATIM from the real Rec Room Watch-store capture
 		// (static/db/Watch_EnumValue_3.json) — see sf3-2025.PROVENANCE.md. sf3.json is the
@@ -3028,10 +3094,9 @@ describe('econ endpoints', () => {
 		expect(open.status).toBe(200)
 
 		// The potion is owned as an unlocked consumable.
-		const unlocked = await exports.default.fetch(
-			`${ORIGIN}/api/consumables/v2/getUnlocked`,
-			{ headers: await bearer('25') }
-		)
+		const unlocked = await exports.default.fetch(`${ORIGIN}/api/consumables/v2/getUnlocked`, {
+			headers: await bearer('25'),
+		})
 		expect(unlocked.status).toBe(200)
 		const list = (await unlocked.json()) as Array<{
 			ConsumableItemDesc: string
@@ -3047,10 +3112,9 @@ describe('econ endpoints', () => {
 		// LostSkullsGold (a dead currency) — the server re-prices it to 30 tokens.
 		const potionDesc = 'YEfbJTnsR0yT_p7e7tb_kQ'
 		// First confirm the listing shows the token price.
-		const listing = await exports.default.fetch(
-			`${ORIGIN}/api/storefronts/v3/giftdropstore/100`,
-			{ headers: await bearer('25') }
-		)
+		const listing = await exports.default.fetch(`${ORIGIN}/api/storefronts/v3/giftdropstore/100`, {
+			headers: await bearer('25'),
+		})
 		expect(listing.status).toBe(200)
 		const catalog = (await listing.json()) as {
 			StoreItems: Array<{
@@ -3095,10 +3159,9 @@ describe('econ endpoints', () => {
 			body: new URLSearchParams({ Id: String(buyDrop.Id) }),
 		})
 		expect(open.status).toBe(200)
-		const unlocked = await exports.default.fetch(
-			`${ORIGIN}/api/consumables/v2/getUnlocked`,
-			{ headers: await bearer('25') }
-		)
+		const unlocked = await exports.default.fetch(`${ORIGIN}/api/consumables/v2/getUnlocked`, {
+			headers: await bearer('25'),
+		})
 		expect(unlocked.status).toBe(200)
 		const list = (await unlocked.json()) as Array<{ ConsumableItemDesc: string }>
 		expect(list.some((c) => c.ConsumableItemDesc === potionDesc)).toBe(true)
@@ -3361,9 +3424,7 @@ describe('econ endpoints', () => {
 		expect((await openGiftBox('205', gift?.Id as number)).status).toBe(200)
 		expect((await ownedBy('205'))[0]?.friendlyName).toBe(SF3_ITEM.name)
 		expect((await openGiftBox('205', gift?.Id as number)).status).toBe(200)
-		expect(
-			(await ownedBy('205')).filter((i) => i.friendlyName === SF3_ITEM.name)
-		).toHaveLength(1)
+		expect((await ownedBy('205')).filter((i) => i.friendlyName === SF3_ITEM.name)).toHaveLength(1)
 
 		// The receiver has no response to read, so the box is pushed to them.
 		const frames = await drainFrames()
@@ -3697,10 +3758,9 @@ describe('econ endpoints', () => {
 		})
 		const beforeList = (await itemsBefore.json()) as Array<{ friendlyName: string }>
 		expect(beforeList[0]?.friendlyName).not.toBe(SF3_ITEM.name)
-		const unlockedBefore = await exports.default.fetch(
-			`${ORIGIN}/api/consumables/v2/getUnlocked`,
-			{ headers: await bearer('90') }
-		)
+		const unlockedBefore = await exports.default.fetch(`${ORIGIN}/api/consumables/v2/getUnlocked`, {
+			headers: await bearer('90'),
+		})
 		expect(await unlockedBefore.json()).toEqual([])
 
 		// Opening both boxes grants everything: the dress is owned and all three donuts
@@ -5027,9 +5087,7 @@ describe('econ endpoints', () => {
 			headers: await bearer('74'),
 		})
 		const ownedBefore = (await unlockedBefore.json()) as Array<{ ModificationGuid: string }>
-		expect(ownedBefore.map((e) => e.ModificationGuid)).not.toContain(
-			gift.EquipmentModificationGuid
-		)
+		expect(ownedBefore.map((e) => e.ModificationGuid)).not.toContain(gift.EquipmentModificationGuid)
 
 		// Finishing the REST of the set, and re-reporting what's already done (which the client
 		// keeps doing), must not mint a second reward.
@@ -5096,9 +5154,14 @@ describe('econ endpoints', () => {
 	test('buying a query drop rolls a real item into the buyer’s inventory', async () => {
 		// sf2's "4-Star Unique Box" (539) — an `IsQuery` drop with no item fields of its own,
 		// which before the roll existed debited the buyer and granted nothing.
+		await creditCurrency(env.DB, 76, CurrencyType.RecCenterTokens, 10000, DEFAULT_STARTING_TOKENS)
+
 		const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v2/buyItem`, {
 			method: 'POST',
-			headers: { ...(await bearer('76')), 'Content-Type': 'application/json' },
+			headers: {
+				...(await bearer('76', undefined, '20230414')),
+				'Content-Type': 'application/json',
+			},
 			body: JSON.stringify({
 				StorefrontType: 2,
 				PurchasableItemId: 539,
@@ -5149,7 +5212,10 @@ describe('econ endpoints', () => {
 		// the pool is filtered by ownership and pending boxes.
 		const second = await exports.default.fetch(`${ORIGIN}/api/storefronts/v2/buyItem`, {
 			method: 'POST',
-			headers: { ...(await bearer('76')), 'Content-Type': 'application/json' },
+			headers: {
+				...(await bearer('76', undefined, '20230414')),
+				'Content-Type': 'application/json',
+			},
 			body: JSON.stringify({
 				StorefrontType: 2,
 				PurchasableItemId: 539,
@@ -5176,7 +5242,6 @@ describe('econ endpoints', () => {
 		}
 		expect(await giftBoxes('76')).toEqual([])
 	})
-
 	test('buying sf3’s Uncommon Random box answers with the rolled item', async () => {
 		// The purchase that came back as an empty box: an sf3 query drop, rolled out of the very
 		// catalog it sells in.

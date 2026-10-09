@@ -69,10 +69,9 @@ export type Env = SharedHonoEnv &
 	// push RelationshipChanged notifications when a player's relationship changes.
 	RECFLARE_NOTIFICATIONS_HUB: DurableObjectNamespace<NotificationsHub>
 	/**
-	 * Service bindings for the ns-host proxies (see api.app.ts). Older
-	 * `2025patch.ini` files point the ns host at this worker instead of
-	 * `fluxrec-auth`, so the same `/api/storefronts/*`, `/rooms/*` and
-	 * `/sections/*` paths are served here by calling the owning workers directly.
+		 * Service bindings for the ns-host proxies (see api.app.ts). Older client
+		 * configs point the ns host at this worker, so Econ-owned store, purchase,
+		 * inventory and room-economy paths are forwarded here to their owning worker.
 	 */
 	ECON: Fetcher
 	ROOMS: Fetcher

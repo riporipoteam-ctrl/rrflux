@@ -16,11 +16,11 @@ import { moderationRoutes } from './routes/moderation'
 import { progressionRoutes } from './routes/progression'
 import { roomRoutes } from './routes/rooms'
 import { socialRoutes } from './routes/social'
+import { proxyTo } from './service-proxy'
 
 import { buildEndpoints } from '../../ns/src/endpoints'
 
-import type { Context } from 'hono'
-import type { App, Env } from './context'
+import type { App } from './context'
 
 /**
  * The Game API surface. Endpoints that would be backed by a database or on-disk
@@ -53,8 +53,14 @@ const app = new Hono<App>({ strict: false })
 	// ambient credential for `*` to expose. Do not add cookie auth without narrowing it.
 	.use('*', withDefaultCors())
 
-	.onError(withOnError())
-	.notFound(withNotFound())
+		.onError(withOnError())
+		.notFound(withNotFound())
+		// Item detail, room-shop and owned-inventory paths are owned by Econ. Older clients
+		// that address this API host still need the same response as the discovered Econ host.
+		.all('/api/avatar/v4/items', proxyTo((env) => env.ECON))
+		.all('/api/items/*', proxyTo((env) => env.ECON))
+		.all('/api/ugcPurchasables/*', proxyTo((env) => env.ECON))
+		.all('/econ/*', proxyTo((env) => env.ECON))
 
 	// ---- Controllers ----------------------------------------------------------
 	.route('/', configRoutes)
@@ -71,37 +77,8 @@ const app = new Hono<App>({ strict: false })
 	.route('/', adminRoutes)
 
 // ---- ns-host service proxies ----------------------------------------------
-// Older 2025patch.ini files point the game's ns host at THIS worker instead of
-// the auth worker. The 2025 client talks to exactly one backend host
-// (`ns.rec.net`, rewritten by 2025Patch) and its binary carries no other host
-// literals, so service paths implemented by other workers MUST be reachable
-// here too — otherwise the client gets 404s and renders empty screens (empty
-// Rec Center storefront, empty "Choose Base Room" picker). These proxies
-// These proxies call the owning workers directly through service bindings
-// (see `services` in wrangler.jsonc): no HTTP edge routing is involved, so
-// there is no Host-header or routing mismatch to go wrong.
-function proxyTo(getService: (env: Env) => Fetcher) {
-	return async (c: Context) => {
-		const url = new URL(c.req.url)
-		const target = `${url.pathname}${url.search}`
-		// Forward only the headers the upstream needs.
-		const headers = new Headers()
-		for (const name of ['authorization', 'content-type', 'accept', 'accept-language']) {
-			const value = c.req.header(name)
-			if (value) headers.set(name, value)
-		}
-		const init: RequestInit = { method: c.req.method, headers }
-		if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
-			init.body = c.req.raw.body
-			// Required by the Fetch spec when the body is a stream.
-			;(init as Record<string, unknown>).duplex = 'half'
-		}
-		// The host is ignored by service bindings; only path+query route.
-		const res = await getService(c.env).fetch(`https://proxy.internal${target}`, init)
-		return new Response(res.body, { status: res.status, headers: res.headers })
-	}
-}
-
+// Older client configs send service calls to this worker; these proxies call the owning
+// workers directly through service bindings rather than relying on public edge routing.
 app.all('/api/storefronts/*', proxyTo((env) => env.ECON))
 app.all('/rooms/*', proxyTo((env) => env.ROOMS))
 app.all('/sections/*', proxyTo((env) => env.DISCOVERY))

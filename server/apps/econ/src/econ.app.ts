@@ -18,8 +18,6 @@ import {
 	levelsReached,
 	ownsInvention,
 	setOutfit,
-	type GrantedGiftAvatarItem,
-	type GrantedGiftEquipment,
 } from '@repo/domain'
 import { intVar, logger, withCleanSpec, withNotFound, withOnError } from '@repo/hono-helpers'
 import { validateAndGetAccountId, validateAndGetPlus, validateAndGetVersion } from '@repo/jwt'
@@ -42,12 +40,6 @@ import { censorSwears } from '../../api/src/sanitize'
 import { BalanceAddType } from '../../notify/src/notification-payloads'
 import { NotificationType } from '../../notify/src/notification-types'
 import avatarItemCatalog from '../static/db/avatar-items.json'
-// Carousel with REAL Rec Room item thumbnails (not AI images) - IDs must exist in toptoday
-const adCarouselItems = [
-  {"AdCarouselItemId":1,"Description":"Fresh gear for your avatar. Paintball Vest in Black — 550 tokens.","ImageName":"94farwa7bctza7e4db865is8x.png","PurchasableItemIds":[2316],"Title":"Paintball Vest"},
-  {"AdCarouselItemId":2,"Description":"Royal style. The Royal Dress in Green — check it out.","ImageName":"4chofv403g5ompt8exr51v7ai.png","PurchasableItemIds":[1139],"Title":"Royal Dress"},
-  {"AdCarouselItemId":3,"Description":"More fresh gear. Paintball Vest in Black — 550 tokens.","ImageName":"94farwa7bctza7e4db865is8x.png","PurchasableItemIds":[2316],"Title":"Featured Gear"}
-];
 import defaultAvatarItems from '../static/default-avatar-items.json'
 import defaultAvatar from '../static/default-avatar.json'
 import defaultBaseAvatarItems from '../static/default-base-avatar-items.json'
@@ -77,6 +69,25 @@ import {
 	subscriberPriceFor,
 } from './catalog-load'
 import { claimChallengeGift, getChallengeStatuses, recordChallengeProgress } from './challenge-db'
+import { buildRotation, rotationMapId, withWeeklyGift } from './challenge-rotation'
+import {
+	consumeConsumable,
+	getConsumables,
+	grantConsumable,
+	grantConsumableStatement,
+} from './consumables-db'
+import {
+	getEquipment,
+	grantEquipment,
+	grantEquipmentStatement,
+	setEquipmentFavorited,
+} from './equipment-db'
+import {
+	getOwnedCustomAvatarItems,
+	grantCustomAvatarItem,
+	ownedCustomAvatarItemIds,
+} from './inventory-custom-db'
+import { getInventory, grantItem, grantItemStatement, toAvatarItemV4 } from './inventory-db'
 import {
 	clearObjectiveGroup,
 	completeObjectiveGroup,
@@ -84,21 +95,6 @@ import {
 	getObjectiveStatuses,
 	recordObjectiveProgress,
 } from './objective-db'
-import { buildRotation, rotationMapId, withWeeklyGift } from './challenge-rotation'
-import { repriceDeadCurrencyItems } from './storefront-rotation'
-import {
-	consumeConsumable,
-	getConsumables,
-	grantConsumable,
-	grantConsumableStatement,
-} from './consumables-db'
-import { getEquipment, grantEquipment, grantEquipmentStatement, setEquipmentFavorited } from './equipment-db'
-import {
-	getOwnedCustomAvatarItems,
-	grantCustomAvatarItem,
-	ownedCustomAvatarItemIds,
-} from './inventory-custom-db'
-import { getInventory, grantItem, grantItemStatement, toAvatarItemV4 } from './inventory-db'
 import {
 	AUTHED,
 	AvatarItemV4Dto,
@@ -180,9 +176,17 @@ import {
 	getRoomCurrency,
 	updateRoomCurrency,
 } from './room-currency-db'
+import { repriceDeadCurrencyItems } from './storefront-rotation'
 
 import type { Context } from 'hono'
-import type { GiftContent, Outfit, Progression, XpGrant } from '@repo/domain'
+import type {
+	GiftContent,
+	GrantedGiftAvatarItem,
+	GrantedGiftEquipment,
+	Outfit,
+	Progression,
+	XpGrant,
+} from '@repo/domain'
 import type { CustomAvatarItem } from '../../api/src/custom-avatar-items-db'
 import type { SavedInvention } from '../../api/src/inventions-db'
 import type {
@@ -203,6 +207,31 @@ import type { Equipment } from './equipment-db'
 import type { AvatarItem } from './inventory-db'
 import type { RoomConsumable } from './room-consumable-db'
 import type { RoomCurrency, RoomCurrencyPurchaseOffer } from './room-currency-db'
+
+// Carousel with REAL Rec Room item thumbnails (not AI images) - IDs must exist in toptoday
+const adCarouselItems = [
+	{
+		AdCarouselItemId: 1,
+		Description: 'Fresh gear for your avatar. Paintball Vest in Black — 550 tokens.',
+		ImageName: '94farwa7bctza7e4db865is8x.png',
+		PurchasableItemIds: [2316],
+		Title: 'Paintball Vest',
+	},
+	{
+		AdCarouselItemId: 2,
+		Description: 'Royal style. The Royal Dress in Green — check it out.',
+		ImageName: '4chofv403g5ompt8exr51v7ai.png',
+		PurchasableItemIds: [1139],
+		Title: 'Royal Dress',
+	},
+	{
+		AdCarouselItemId: 3,
+		Description: 'More fresh gear. Paintball Vest in Black — 550 tokens.',
+		ImageName: '94farwa7bctza7e4db865is8x.png',
+		PurchasableItemIds: [2316],
+		Title: 'Featured Gear',
+	},
+]
 
 // Invention storage (owned by the `api` worker, on this same `recflare` database).
 // Imported directly rather than copied: these are plain D1 helpers with no bindings of
@@ -237,8 +266,7 @@ function storefrontBuildNumber(version: string | null): number | null {
 	if (version === null) return null
 
 	const compact = /^(\d{4})(\d{2})(\d{2})(?:\.\d+)?$/.exec(version)
-	const dotted =
-		compact === null ? /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:\.\d+)?$/.exec(version) : null
+	const dotted = compact === null ? /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:\.\d+)?$/.exec(version) : null
 	const parts = compact ?? dotted
 	if (parts === null) return null
 
@@ -265,10 +293,7 @@ function storefrontBuildNumber(version: string | null): number | null {
  */
 async function storefrontBuild(c: Context<App>): Promise<number | null> {
 	const version = await validateAndGetVersion(c.req.raw, await c.env.JWT_SECRET.get())
-	return (
-		storefrontBuildNumber(version) ??
-		storefrontBuildNumber(c.req.header('rn.ver') ?? null)
-	)
+	return storefrontBuildNumber(version) ?? storefrontBuildNumber(c.req.header('rn.ver') ?? null)
 }
 
 /** Results.Unauthorized() equivalent — 401 with empty body. */
@@ -906,8 +931,7 @@ function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
 	return items.map((item) => {
 		if (!item.GiftDrop) return item
 		const drop = item.GiftDrop as any
-		const name =
-			typeof drop.FriendlyName === 'string' ? drop.FriendlyName.trim().toLowerCase() : ''
+		const name = typeof drop.FriendlyName === 'string' ? drop.FriendlyName.trim().toLowerCase() : ''
 		let changed = false
 		const next: any = { ...drop }
 		// The client's Tooltip field is a plain string — a null leaks through from
@@ -961,6 +985,12 @@ interface StoreItem {
 	 * {@link priceCheck}.
 	 */
 	SubscriberPrices?: StorePrice[] | null
+	/** Optional listing metadata carried by current storefront snapshots. */
+	NewUntil?: string | null
+	AvailableAt?: string | null
+	AvailableUntil?: string | null
+	CanBeGifted?: boolean
+	IsFeatured?: boolean
 	PurchasableItemId: number
 }
 
@@ -1049,7 +1079,7 @@ interface GiftRequest {
  */
 const STOREFRONT_ALIASES: Record<string, string> = {
 	// Watch UI Store page requests "Storefront_Watch" — map it to the general store (sf3).
-	'Storefront_Watch': '3',
+	Storefront_Watch: '3',
 	// Rec Center (storefront 2, room 2) has no authentic catalog capture of its own —
 	// serve the full authentic main-store catalog (sf3/sf3-2025) instead of an invented
 	// subset. Remove this line if a real Rec Center capture ever lands in static/storefronts.
@@ -1081,13 +1111,22 @@ const STOREFRONT_BY_BUILD: Record<string, string> = {
  * string here rather than a number: both tables are matched on what the client asked for.
  *
  * `build` is the caller's `rn.ver` (see {@link storefrontBuild}), or null when neither the
- * verified token claim nor the request header supplies a usable date. Null gets the captured
- * file: without build evidence, do not opt the client into the newer catalog.
+ * verified token claim nor the request header supplies a usable date. Unversioned authenticated
+ * requests retain the captured file; only explicitly opted-in anonymous public browsing gets the
+ * current catalog by default.
  */
-function storefrontAssetPath(id: string, build: number | null): string {
+function storefrontAssetPath(
+	id: string,
+	build: number | null,
+	defaultToCurrentForPublicBrowse = false
+): string {
 	const aliased = STOREFRONT_ALIASES[id] ?? id
 	const variant = STOREFRONT_BY_BUILD[aliased]
-	if (variant !== undefined && build !== null && build > LEGACY_CLIENT_BUILD) {
+	if (
+		variant !== undefined &&
+		((build !== null && build > LEGACY_CLIENT_BUILD) ||
+			(build === null && defaultToCurrentForPublicBrowse))
+	) {
 		return `/${variant}.json`
 	}
 	return `/sf${aliased}.json`
@@ -1101,12 +1140,23 @@ function storefrontAssetPath(id: string, build: number | null): string {
  * storefront reads (and parses) it once: sf3 alone is over a thousand items and the merged
  * sf3-2025 is four, and a bulk purchase carries up to `BULK_PURCHASE_CAP` lines.
  */
-async function loadStorefront(c: Context<App>, storefrontType: number): Promise<Storefront | null> {
-	// Note: storefront 2 (Rec Center) is aliased to 3 in STOREFRONT_ALIASES, so it flows
-	// through the normal asset path below and serves the full authentic catalog.
+async function loadStorefront(
+	c: Context<App>,
+	storefrontType: number,
+	options: { defaultToCurrentForPublicBrowse?: boolean } = {}
+): Promise<Storefront | null> {
+	// Storefront 2 is intentionally aliased for browsing; its historical partial capture is
+	// used only as a fallback when a requested purchase ID is absent from the active catalog.
 	const build = await storefrontBuild(c)
+	const defaultToCurrentForPublicBrowse =
+		options.defaultToCurrentForPublicBrowse === true &&
+		c.req.header('Authorization') === undefined &&
+		c.req.header('rn.ver') === undefined
 	const res = await c.env.ASSETS.fetch(
-		new URL(storefrontAssetPath(String(storefrontType), build), c.req.url)
+		new URL(
+			storefrontAssetPath(String(storefrontType), build, defaultToCurrentForPublicBrowse),
+			c.req.url
+		)
 	)
 	if (!res.ok) return null
 	const catalog = (await res.json()) as Storefront
@@ -1122,6 +1172,21 @@ async function loadStorefront(c: Context<App>, storefrontType: number): Promise<
 	return catalog
 }
 
+async function loadRecCenterFallbackItems(c: Context<App>): Promise<StoreItem[]> {
+	const res = await c.env.ASSETS.fetch(new URL('/sf2.json', c.req.url))
+	if (!res.ok) return []
+	const catalog = (await res.json()) as Storefront
+	if (!Array.isArray(catalog.StoreItems)) return []
+	const withoutSales = (price: StorePrice) => ({ ...price, StorefrontSaleData: null })
+	const items = catalog.StoreItems.map((item) => ({
+		...item,
+		Prices: item.Prices.map(withoutSales),
+		SubscriberPrices:
+			item.SubscriberPrices === null ? null : item.SubscriberPrices?.map(withoutSales),
+	}))
+	return enrichWithThumbnails(repriceDeadCurrencyItems(items))
+}
+
 /**
  * Look up a store item by (storefront type, purchasable item id), reading the catalog
  * from the ASSETS binding (`sf{type}.json`). Returns null when there is no such
@@ -1133,8 +1198,14 @@ async function findStoreItem(
 	purchasableItemId: number
 ): Promise<StoreItem | null> {
 	const storefront = await loadStorefront(c, storefrontType)
-	if (storefront === null) return null
-	return storefront.StoreItems.find((it) => it.PurchasableItemId === purchasableItemId) ?? null
+	const item =
+		storefront?.StoreItems.find((it) => it.PurchasableItemId === purchasableItemId) ?? null
+	if (item !== null || storefrontType !== 2) return item
+	return (
+		(await loadRecCenterFallbackItems(c)).find(
+			(it) => it.PurchasableItemId === purchasableItemId
+		) ?? null
+	)
 }
 
 /**
@@ -1220,6 +1291,39 @@ function toItemPurchaseInfo(item: CustomAvatarItem): ItemPurchaseInfo {
 		CanApplySubscriberDiscount: false,
 		SubscribersOnly: false,
 		IsFeatured: item.IsFeatured,
+	}
+}
+
+function toStorefrontItemPurchaseInfo(
+	item: StoreItem,
+	itemId: { itemType: number; itemId: string }
+): ItemPurchaseInfo {
+	const canApplySubscriberDiscount = (item.SubscriberPrices ?? []).some((subscriber) =>
+		item.Prices.some(
+			(regular) =>
+				regular.CurrencyType === subscriber.CurrencyType && subscriber.Price < regular.Price
+		)
+	)
+	return {
+		ItemId: itemId,
+		PurchaseMethodId: {
+			Type: 0,
+			NumberId: item.PurchasableItemId,
+			Guid: null,
+		},
+		Prices: item.Prices.map((price) => ({
+			CurrencyType: price.CurrencyType,
+			Price: price.Price,
+			// The committed catalog deliberately has no StorefrontSaleData; no sale is active here.
+			StorefrontSaleData: null,
+		})),
+		NewUntil: item.NewUntil ?? null,
+		AvailableAt: item.AvailableAt ?? null,
+		AvailableUntil: item.AvailableUntil ?? null,
+		CanBeGifted: item.CanBeGifted ?? false,
+		CanApplySubscriberDiscount: canApplySubscriberDiscount,
+		SubscribersOnly: item.GiftDrop.SubscribersOnly ?? false,
+		IsFeatured: item.IsFeatured ?? false,
 	}
 }
 
@@ -1628,10 +1732,7 @@ async function rollQueryDrop(
 		if (typeof box.AvatarItemDesc === 'string' && box.AvatarItemDesc !== '') {
 			haveItem.add(box.AvatarItemDesc)
 		}
-		if (
-			typeof box.EquipmentModificationGuid === 'string' &&
-			box.EquipmentModificationGuid !== ''
-		) {
+		if (typeof box.EquipmentModificationGuid === 'string' && box.EquipmentModificationGuid !== '') {
 			haveEquipment.add(box.EquipmentModificationGuid)
 		}
 	}
@@ -1900,7 +2001,9 @@ export async function openGiftBox(
 	// with the other grants. Without these statements a GrantOnOpen box's Currency/Xp
 	// fields were silently dropped on open.
 	const currencyAmount =
-		typeof content.Currency === 'number' && Number.isInteger(content.Currency) && content.Currency > 0
+		typeof content.Currency === 'number' &&
+		Number.isInteger(content.Currency) &&
+		content.Currency > 0
 			? content.Currency
 			: 0
 	const currencyType =
@@ -1946,7 +2049,9 @@ export async function openGiftBox(
 	// Deleted LAST: while this row exists every guard above may fire; once it's gone
 	// nothing can.
 	stmts.push(
-		db.prepare('DELETE FROM received_gift WHERE id = ?1 AND account_id = ?2').bind(giftId, accountId)
+		db
+			.prepare('DELETE FROM received_gift WHERE id = ?1 AND account_id = ?2')
+			.bind(giftId, accountId)
 	)
 	const results = await db.batch(stmts)
 
@@ -3204,7 +3309,8 @@ const app = new Hono<App>({ strict: false })
 						HasClaimedReward: stored.hasClaimedReward,
 					}
 				}),
-				ObjectiveGroups: (myProgress.ObjectiveGroups as Array<Record<string, unknown>>).map((grp) => {
+				ObjectiveGroups: (myProgress.ObjectiveGroups as Array<Record<string, unknown>>).map(
+					(grp) => {
 					const stored = groupStatuses.get(Number(grp.Group))
 					if (!stored) return grp
 					return {
@@ -3212,7 +3318,8 @@ const app = new Hono<App>({ strict: false })
 						IsCompleted: stored.isCompleted,
 						ClearedAt: stored.clearedAt,
 					}
-				}),
+					}
+				),
 			})
 		}
 	)
@@ -3345,7 +3452,15 @@ const app = new Hono<App>({ strict: false })
 			const isCompleted = body.IsCompleted === true
 			const hasClaimedReward = body.HasClaimedReward === true
 			// Persist the objective progress
-			await recordObjectiveProgress(c.env.DB, accountId, group, index, progress, isCompleted, hasClaimedReward)
+			await recordObjectiveProgress(
+				c.env.DB,
+				accountId,
+				group,
+				index,
+				progress,
+				isCompleted,
+				hasClaimedReward
+			)
 			// Check if all objectives in this group are now complete
 			// For now, we trust the client's isCompleted flag for this objective.
 			// A full check would require knowing all objectives in the group from config.
@@ -3484,8 +3599,12 @@ const app = new Hono<App>({ strict: false })
 			if (id === null) return unauthorized(c)
 			// The body names the row (`{ ItemIndex: 1 }`, or `Id` as a fallback).
 			const body = await c.req.json().catch(() => ({}))
-			const itemIndex = typeof body.ItemIndex === 'number' ? body.ItemIndex : 
-				typeof body.Id === 'number' ? body.Id : -1
+			const itemIndex =
+				typeof body.ItemIndex === 'number'
+					? body.ItemIndex
+					: typeof body.Id === 'number'
+						? body.Id
+						: -1
 			if (itemIndex < 0) {
 				return c.json({
 					BalanceUpdates: [{ UpdateResponse: CHECKLIST_REWARD_CONTEXT, Data: [] }],
@@ -3496,9 +3615,10 @@ const app = new Hono<App>({ strict: false })
 			}
 			// Idempotency: check if already completed
 			const db = c.env.DB
-			const existing = await db.prepare(
-				'SELECT 1 FROM checklist_status WHERE account_id = ? AND item_index = ?'
-			).bind(id, itemIndex).first()
+			const existing = await db
+				.prepare('SELECT 1 FROM checklist_status WHERE account_id = ? AND item_index = ?')
+				.bind(id, itemIndex)
+				.first()
 			if (existing) {
 				// Already completed: return zero-grant envelope (idempotent)
 				return c.json({
@@ -3511,9 +3631,12 @@ const app = new Hono<App>({ strict: false })
 			// Record completion. No reward is granted here: no authentic contract
 			// exists for checklist-completion rewards, so inventing tokens/XP (or a
 			// gift box wrapping them) would fabricate game data.
-			await db.prepare(
+			await db
+				.prepare(
 				'INSERT INTO checklist_status (account_id, item_index, completed_at) VALUES (?, ?, ?)'
-			).bind(id, itemIndex, new Date().toISOString()).run()
+				)
+				.bind(id, itemIndex, new Date().toISOString())
+				.run()
 			return c.json({
 				BalanceUpdates: [{ UpdateResponse: CHECKLIST_REWARD_CONTEXT, Data: [] }],
 				Balance: 0,
@@ -4839,11 +4962,11 @@ const app = new Hono<App>({ strict: false })
 			tags: ['Storefront'],
 			summary: 'Purchase info for a bag of items',
 			description: [
-				'Resolves `Ids[]` (`{ itemType, itemId }`) against the `custom_avatar_item` table and',
-				'answers how each may be bought: its price in RecCenterTokens, its availability window',
-				'and the flags the store row draws. Only `itemType` 3 (custom avatar item) is served;',
-				'other types and unknown ids are dropped, so the response is one entry per RESOLVED',
-				'id in request order — never a positional match for `Ids[]`.',
+				'Resolves `Ids[]` (`{ itemType, itemId }`) against the build-aware storefront catalog for',
+				'numbered items (type 0) and `custom_avatar_item` for custom avatar items (type 3). It',
+				'answers price, availability, giftability and discount flags. Unknown ids and unsupported',
+				'types are dropped; the response is one entry per RESOLVED id in request order, never a',
+				'positional match for `Ids[]`.',
 			].join(' '),
 			security: AUTHED,
 			requestBody: jsonBody(ItemPurchaseInfosRequest, 'The ids to price'),
@@ -4859,15 +4982,57 @@ const app = new Hono<App>({ strict: false })
 
 			const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
 			if (!body || !Array.isArray(body.Ids)) return c.json({ error: 'Ids is required' }, 400)
-			const ids = (body.Ids as unknown[]).flatMap((ref) => {
+			const refs = (body.Ids as unknown[]).flatMap((ref) => {
 				if (!ref || typeof ref !== 'object') return []
 				const { itemType, itemId } = ref as Record<string, unknown>
-				return itemType === UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM && typeof itemId === 'string'
+				return typeof itemType === 'number' && typeof itemId === 'string'
+					? [{ itemType, itemId }]
+					: []
+			})
+			const customIds = refs
+				.filter((ref) => ref.itemType === UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM)
+				.map((ref) => ref.itemId)
+			const customItems = customIds.length ? await getCustomAvatarItems(c.env.DB, customIds) : []
+			const customById = new Map(customItems.map((item) => [item.CustomAvatarItemId, item]))
+
+			const hasStorefrontItems = refs.some((ref) => ref.itemType === 0)
+			const storefront = hasStorefrontItems ? await loadStorefront(c, 3) : null
+			const storeById = new Map(
+				(storefront?.StoreItems ?? []).map((item) => [item.PurchasableItemId, item])
+			)
+			const missingRecCenterIds = new Set(
+				refs.flatMap((ref) => {
+					if (ref.itemType !== 0) return []
+					const itemId = Number(ref.itemId)
+					return Number.isSafeInteger(itemId) &&
+						String(itemId) === ref.itemId &&
+						!storeById.has(itemId)
 					? [itemId]
 					: []
 			})
-			const items = await getCustomAvatarItems(c.env.DB, ids)
-			return c.json(items.map(toItemPurchaseInfo))
+			)
+			if (missingRecCenterIds.size > 0) {
+				for (const item of await loadRecCenterFallbackItems(c)) {
+					if (missingRecCenterIds.has(item.PurchasableItemId)) {
+						storeById.set(item.PurchasableItemId, item)
+					}
+				}
+			}
+
+			const purchaseInfos = refs.flatMap((ref) => {
+				if (ref.itemType === UGC_ITEM_TYPE_CUSTOM_AVATAR_ITEM) {
+					const item = customById.get(ref.itemId)
+					return item ? [toItemPurchaseInfo(item)] : []
+				}
+				if (ref.itemType === 0) {
+					const id = Number(ref.itemId)
+					if (!Number.isSafeInteger(id) || String(id) !== ref.itemId) return []
+					const item = storeById.get(id)
+					return item ? [toStorefrontItemPurchaseInfo(item, ref)] : []
+				}
+				return []
+			})
+			return c.json(purchaseInfos)
 		}
 	)
 
@@ -5024,16 +5189,17 @@ const app = new Hono<App>({ strict: false })
 			// The same resolution `loadStorefront` uses, so what is browsed is what a purchase is
 			// checked against — see `storefrontAssetPath`. (Id 2, the Rec Center, is aliased
 			// to the full authentic main-store catalog in STOREFRONT_ALIASES.)
-			const path = storefrontAssetPath(id, await storefrontBuild(c))
+			const build = await storefrontBuild(c)
+			const defaultToCurrentForPublicBrowse =
+				c.req.header('Authorization') === undefined && c.req.header('rn.ver') === undefined
+			const path = storefrontAssetPath(id, build, defaultToCurrentForPublicBrowse)
 			const res = await c.env.ASSETS.fetch(new URL(path, c.req.url))
 			if (!res.ok) return c.notFound()
 			const catalog = (await res.json()) as { StoreItems?: StoreItem[] }
 			if (Array.isArray(catalog.StoreItems)) {
 				return c.json({
 					...catalog,
-					StoreItems: enrichWithThumbnails(
-						repriceDeadCurrencyItems(catalog.StoreItems)
-					),
+					StoreItems: enrichWithThumbnails(repriceDeadCurrencyItems(catalog.StoreItems)),
 				})
 			}
 			return c.json(catalog)
@@ -5048,7 +5214,8 @@ const app = new Hono<App>({ strict: false })
 		describeRoute({
 			tags: ['Storefront'],
 			summary: 'Storefront catalog by id (v3)',
-			description: 'Serves the storefront catalog for the given storefront id. Id 3 is the main Watch-menu store (sf3-2025.json on newer builds).',
+		description:
+			'Serves the storefront catalog for the given storefront id. Id 3 is the main Watch-menu store (sf3-2025.json on newer builds).',
 			parameters: [
 				{
 					name: 'id',
@@ -5072,7 +5239,9 @@ const app = new Hono<App>({ strict: false })
 			if (!Number.isFinite(storefrontType)) {
 				return c.json({ success: false, error: { message: 'not found' } }, 404)
 			}
-			const catalog = await loadStorefront(c, storefrontType)
+		const catalog = await loadStorefront(c, storefrontType, {
+			defaultToCurrentForPublicBrowse: true,
+		})
 			if (!catalog) {
 				return c.json({ success: false, error: { message: 'not found' } }, 404)
 			}
@@ -5084,12 +5253,14 @@ const app = new Hono<App>({ strict: false })
 	// opening the store in a room (Rec Center = room 2, bowling alley = 500, etc.).
 	// This was missing → 404 → empty store. Room 2 returns the dynamic rotation;
 	// other original rooms return their captured sf{id}.json catalogs.
-	app.get(
+app
+	.get(
 		'/api/storefronts/v4/room/:id',
 		describeRoute({
 			tags: ['Storefront'],
 			summary: 'Room storefront catalog (v4)',
-			description: 'Serves the room-specific storefront catalog. Room 2 (Rec Center) has no authentic catalog of its own, so it serves the full authentic main-store catalog (aliased to storefront 3); other original rooms serve their captured catalogs: paintball (rooms 10-11 → sf400), quest stores (room 12 GoldenTrophy → sf102, room 14 TheRiseofJumbotron → sf101, room 15 CrimsonCauldron → sf103, room 16 IsleOfLostSkulls → sf100), bowling (rooms 39-40 → sf500), stunt runner (rooms 41-42 → sf600).',
+			description:
+				'Serves the room-specific storefront catalog. Room 2 (Rec Center) has no authentic catalog of its own, so it serves the full authentic main-store catalog (aliased to storefront 3); other original rooms serve their captured catalogs: paintball (rooms 10-11 → sf400), quest stores (room 12 GoldenTrophy → sf102, room 14 TheRiseofJumbotron → sf101, room 15 CrimsonCauldron → sf103, room 16 IsleOfLostSkulls → sf100), bowling (rooms 39-40 → sf500), stunt runner (rooms 41-42 → sf600).',
 			parameters: [
 				{
 					name: 'id',
@@ -5111,7 +5282,9 @@ const app = new Hono<App>({ strict: false })
 			// STOREFRONT_ALIASES), so the in-world store shows the same real items —
 			// shirts and all — as the Watch-menu store, and purchases resolve.
 				if (id === '2') {
-					const storefront = await loadStorefront(c, 2)
+				const storefront = await loadStorefront(c, 2, {
+					defaultToCurrentForPublicBrowse: true,
+				})
 					if (!storefront) return c.notFound()
 					// Keep the room's public storefront id on the response even though its
 					// catalog (and purchase lookup) is aliased to the general store.
@@ -5144,16 +5317,17 @@ const app = new Hono<App>({ strict: false })
 			// Other original rooms serve their captured sf{id}.json catalogs.
 			// Same resolution as the v3 giftdropstore route and loadStorefront,
 			// so what is browsed is what a purchase is checked against.
-			const path = storefrontAssetPath(storefrontId, await storefrontBuild(c))
+			const build = await storefrontBuild(c)
+			const defaultToCurrentForPublicBrowse =
+				c.req.header('Authorization') === undefined && c.req.header('rn.ver') === undefined
+			const path = storefrontAssetPath(storefrontId, build, defaultToCurrentForPublicBrowse)
 			const res = await c.env.ASSETS.fetch(new URL(path, c.req.url))
 			if (!res.ok) return c.notFound()
 			const catalog = (await res.json()) as { StoreItems?: StoreItem[] }
 			if (Array.isArray(catalog.StoreItems)) {
 				return c.json({
 					...catalog,
-					StoreItems: enrichWithThumbnails(
-						repriceDeadCurrencyItems(catalog.StoreItems)
-					),
+					StoreItems: enrichWithThumbnails(repriceDeadCurrencyItems(catalog.StoreItems)),
 				})
 			}
 			return c.json(catalog)
@@ -6156,7 +6330,10 @@ const app = new Hono<App>({ strict: false })
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
 			if (await isSubscriber(c)) {
-				return c.json({ error: 'already_owned', error_description: 'account already has Flux Rec+' }, 400)
+				return c.json(
+					{ error: 'already_owned', error_description: 'account already has Flux Rec+' },
+					400
+				)
 			}
 			const startingTokens = intVar(c.env.STARTING_TOKENS, DEFAULT_STARTING_TOKENS)
 			const price = plusPriceTokens(c.env)
@@ -6288,7 +6465,11 @@ const app = new Hono<App>({ strict: false })
 					.run()
 			}
 			return c.json({
-				Subscription: plusSubscription(id, sinceIso ?? now.toISOString(), untilIso ?? now.toISOString()),
+				Subscription: plusSubscription(
+					id,
+					sinceIso ?? now.toISOString(),
+					untilIso ?? now.toISOString()
+				),
 				PlatformAccountSubscribedPlayerId: null,
 			})
 		}
@@ -6330,7 +6511,8 @@ const app = new Hono<App>({ strict: false })
 		describeRoute({
 			tags: ['Econ'],
 			summary: 'Flux Rec+ membership prices',
-			description: 'Returns the token prices for Flux Rec+ membership. Prices are in tokens, not real money.',
+			description:
+				'Returns the token prices for Flux Rec+ membership. Prices are in tokens, not real money.',
 			security: AUTHED,
 			responses: {
 				200: json(JsonObject, 'The membership prices'),
