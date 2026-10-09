@@ -1080,10 +1080,6 @@ interface GiftRequest {
 const STOREFRONT_ALIASES: Record<string, string> = {
 	// Watch UI Store page requests "Storefront_Watch" — map it to the general store (sf3).
 	Storefront_Watch: '3',
-	// Rec Center (storefront 2, room 2) has no authentic catalog capture of its own —
-	// serve the full authentic main-store catalog (sf3/sf3-2025) instead of an invented
-	// subset. Remove this line if a real Rec Center capture ever lands in static/storefronts.
-	'2': '3',
 }
 
 /**
@@ -1145,8 +1141,8 @@ async function loadStorefront(
 	storefrontType: number,
 	options: { defaultToCurrentForPublicBrowse?: boolean } = {}
 ): Promise<Storefront | null> {
-	// Storefront 2 is intentionally aliased for browsing; its historical partial capture is
-	// used only as a fallback when a requested purchase ID is absent from the active catalog.
+	// Storefront 2 has its own historical capture (sf2.json), so browsing and buying from
+	// the Rec Center use that file rather than silently substituting the main Watch-menu store.
 	const build = await storefrontBuild(c)
 	const defaultToCurrentForPublicBrowse =
 		options.defaultToCurrentForPublicBrowse === true &&
@@ -5251,7 +5247,7 @@ const app = new Hono<App>({ strict: false })
 
 	// v4 room storefront. The 2023 client calls GET /api/storefronts/v4/room/{id} when
 	// opening the store in a room (Rec Center = room 2, bowling alley = 500, etc.).
-	// This was missing → 404 → empty store. Room 2 returns the dynamic rotation;
+	// This was missing → 404 → empty store. Room 2 serves its captured sf2.json catalog;
 	// other original rooms return their captured sf{id}.json catalogs.
 app
 	.get(
@@ -5260,7 +5256,7 @@ app
 			tags: ['Storefront'],
 			summary: 'Room storefront catalog (v4)',
 			description:
-				'Serves the room-specific storefront catalog. Room 2 (Rec Center) has no authentic catalog of its own, so it serves the full authentic main-store catalog (aliased to storefront 3); other original rooms serve their captured catalogs: paintball (rooms 10-11 → sf400), quest stores (room 12 GoldenTrophy → sf102, room 14 TheRiseofJumbotron → sf101, room 15 CrimsonCauldron → sf103, room 16 IsleOfLostSkulls → sf100), bowling (rooms 39-40 → sf500), stunt runner (rooms 41-42 → sf600).',
+				'Serves the captured sf2.json Rec Center storefront for room 2, and room-specific catalogs for other original rooms: paintball (rooms 10-11 → sf400), quest stores (room 12 GoldenTrophy → sf102, room 14 TheRiseofJumbotron → sf101, room 15 CrimsonCauldron → sf103, room 16 IsleOfLostSkulls → sf100), bowling (rooms 39-40 → sf500), stunt runner (rooms 41-42 → sf600). The separate room-popup shop endpoints are not the same catalog.',
 			parameters: [
 				{
 					name: 'id',
@@ -5277,10 +5273,8 @@ app
 		}),
 		async (c) => {
 			const id = c.req.param('id')
-			// Rec Center (room 2) has no authentic catalog of its own: serve the full
-			// authentic main-store catalog via loadStorefront (id 2 is aliased to 3 in
-			// STOREFRONT_ALIASES), so the in-world store shows the same real items —
-			// shirts and all — as the Watch-menu store, and purchases resolve.
+			// Keep the Rec Center's own captured storefront (sf2.json). Do not swap in
+			// the Watch-menu store: it is a different catalog with different item ids.
 				if (id === '2') {
 				const storefront = await loadStorefront(c, 2, {
 					defaultToCurrentForPublicBrowse: true,
