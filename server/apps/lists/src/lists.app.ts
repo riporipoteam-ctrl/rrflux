@@ -636,10 +636,13 @@ export function buildStoreFeedIds(rawKey: string): string[] | null {
       const drop = item.GiftDrop
       if (drop.IsQuery) return false
       if (key === 'skinsitems') {
-        if (!drop.EquipmentModificationGuid?.trim()) return false
+        if (!drop.EquipmentModificationGuid?.trim() || drop.ConsumableItemDesc?.trim()) return false
       } else if (consumablesKey) {
         if (!drop.ConsumableItemDesc?.trim()) return false
       } else {
+        // Food, films, KO icons, and other consumables also default AvatarItemType to 0.
+        // ConsumableItemDesc—not AvatarItemType—is the distinguishing field.
+        if (drop.ConsumableItemDesc?.trim() || drop.EquipmentModificationGuid?.trim()) return false
         if (drop.AvatarItemType !== 0 && drop.AvatarItemType !== 1) return false
         if (UNSELLABLE_RARITIES.includes(drop.Rarity)) return false
       }
