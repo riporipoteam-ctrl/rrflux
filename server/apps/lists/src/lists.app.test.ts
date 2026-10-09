@@ -23,6 +23,8 @@ describe('2025 Store feeds', () => {
     expect(ids).toEqual([...new Set(expected)])
 
     const clothingIds = new Set(ids)
+    // The Rec Center screenshot's 2/3/4-Star Unique Boxes are query drops too.
+    for (const boxId of ['538', '539', '541']) expect(clothingIds.has(boxId)).toBe(false)
     for (const item of sf32025.StoreItems) {
       if (item.GiftDrop.ConsumableItemDesc?.trim() || item.GiftDrop.IsQuery) {
         expect(clothingIds.has(String(item.PurchasableItemId))).toBe(false)
