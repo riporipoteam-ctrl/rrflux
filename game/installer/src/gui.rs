@@ -264,7 +264,7 @@ mod imp {
             win_h,
             None,
             None,
-            Some(hinstance),
+            hinstance,
             Some(ptr as *const c_void),
         ) {
             Ok(h) => h,
@@ -287,13 +287,13 @@ mod imp {
         {
             let s = &mut *ptr;
             s.hwnd = hwnd;
-            let dc = GetDC(hwnd);
+            let dc = GetDC(Some(hwnd));
             if !dc.is_invalid() {
                 let (bmp, w, h) = create_logo_dib(dc);
                 s.logo_bmp = bmp;
                 s.logo_w = w;
                 s.logo_h = h;
-                let _ = ReleaseDC(hwnd, dc);
+                let _ = ReleaseDC(Some(hwnd), dc);
             }
         }
 
@@ -472,7 +472,7 @@ mod imp {
                     x: loword(lparam.0),
                     y: hiword(lparam.0),
                 };
-                let _ = ScreenToClient(hwnd, &mut pt);
+                let _ = ScreenToClient(hwnd, &mut pt as *mut POINT);
                 let (min_r, close_r) = title_buttons(s);
                 if pt_in(pt, min_r) || pt_in(pt, close_r) {
                     return LRESULT(HT_CLIENT);
@@ -710,7 +710,7 @@ mod imp {
             }
             return;
         }
-        let mem = CreateCompatibleDC(hdc);
+        let mem = CreateCompatibleDC(Some(hdc));
         if mem.is_invalid() {
             return;
         }
