@@ -5249,6 +5249,17 @@ const app = new Hono<App>({ strict: false })
 			if (!catalog) {
 				return c.json({ success: false, error: { message: 'not found' } }, 404)
 			}
+			// Paginate store items if requested (skip/take or offset/limit).
+			// Defaults to full catalog for backward compatibility.
+			const _items = (catalog as any)?.StoreItems
+			if (Array.isArray(_items)) {
+				const _skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
+				const _takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
+				const _take = _takeRaw === '' ? _items.length : Math.max(0, Number.parseInt(_takeRaw, 10) || 0)
+				if (_skip !== 0 || _take !== _items.length) {
+					return c.json({ ...(catalog as any), StoreItems: _items.slice(_skip, _skip + _take) })
+				}
+			}
 			return c.json(catalog)
 		}
 	)
