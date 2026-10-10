@@ -287,13 +287,13 @@ mod imp {
         {
             let s = &mut *ptr;
             s.hwnd = hwnd;
-            let dc = GetDC(Some(hwnd));
+            let dc = GetDC(hwnd);
             if !dc.is_invalid() {
                 let (bmp, w, h) = create_logo_dib(dc);
                 s.logo_bmp = bmp;
                 s.logo_w = w;
                 s.logo_h = h;
-                let _ = ReleaseDC(Some(hwnd), dc);
+                let _ = ReleaseDC(hwnd, dc);
             }
         }
 
@@ -326,7 +326,7 @@ mod imp {
         let _ = DeleteObject(s.f_tiny);
     }
 
-    unsafe fn create_font(px: i32, weight: FW_WEIGHT) -> HFONT {
+    unsafe fn create_font(px: i32, weight: FONT_WEIGHT) -> HFONT {
         CreateFontW(
             px,
             0,
@@ -371,17 +371,20 @@ mod imp {
         bmi.bmiHeader.biHeight = h;
         bmi.bmiHeader.biPlanes = 1;
         bmi.bmiHeader.biBitCount = 32;
-        bmi.bmiHeader.biCompression = BI_RGB;
+        bmi.bmiHeader.biCompression = BI_RGB.0;
 
         let mut bits: *mut c_void = std::ptr::null_mut();
-        let hbmp = CreateDIBSection(
+        let hbmp = match CreateDIBSection(
             hdc,
             &bmi as *const BITMAPINFO,
             DIB_RGB_COLORS,
             &mut bits,
             HANDLE(std::ptr::null_mut()),
             0,
-        );
+        ) {
+            Ok(h) => h,
+            Err(_) => return (HBITMAP::default(), 0, 0),
+        };
         if hbmp.is_invalid() || bits.is_null() {
             return (HBITMAP::default(), 0, 0);
         }
@@ -710,16 +713,16 @@ mod imp {
             }
             return;
         }
-        let mem = CreateCompatibleDC(Some(hdc));
+        let mem = CreateCompatibleDC(hdc);
         if mem.is_invalid() {
             return;
         }
         let old = SelectObject(mem, s.logo_bmp);
         let bf = BLENDFUNCTION {
-            BlendOp: AC_SRC_OVER,
+            BlendOp: AC_SRC_OVER as u8,
             BlendFlags: 0,
             SourceConstantAlpha: 255,
-            AlphaFormat: AC_SRC_ALPHA,
+            AlphaFormat: AC_SRC_ALPHA as u8,
         };
         let _ = AlphaBlend(hdc, x, y, size, size, mem, 0, 0, s.logo_w, s.logo_h, bf);
         let _ = SelectObject(mem, old);
