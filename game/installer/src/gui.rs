@@ -264,7 +264,7 @@ mod imp {
             win_h,
             None,
             None,
-            hinstance,
+            Some(hinstance),
             Some(ptr as *const c_void),
         ) {
             Ok(h) => h,
