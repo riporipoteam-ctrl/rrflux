@@ -320,6 +320,26 @@ fn do_play(
         let _ = reason;
     }
 
+    // Apply Flux Rec logo bundles (overwrites wrong logos in place).
+    // Fail-soft: the game launches even if this fails.
+    send(80, "Applying Flux Rec branding…");
+    {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        if let Ok(r) = rt {
+            let client = reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(30))
+                .build();
+            if let Ok(c) = client {
+                let (p, _rx) = crate::progress::channel();
+                if let Err(e) = r.block_on(crate::apply_logo_bundle(&c, dir, &p)) {
+                    eprintln!("[library] logo bundle failed ({}); continuing.", e);
+                }
+            }
+        }
+    }
+
     // Update check (only if the worker didn't just do it).
     if !network_check_fresh() {
         send(82, "Checking for updates…");
