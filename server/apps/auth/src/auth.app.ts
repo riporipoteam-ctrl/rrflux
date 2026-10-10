@@ -847,12 +847,23 @@ const app = new Hono<App>()
 						500
 					)
 				}
-				// The reason is for the operator; the client is told only that it was rejected.
-				// A wrong app secret and a stale nonce look identical from the client side.
-				return c.json(
-					{ error: 'invalid_grant', error_description: 'invalid or missing platform_auth' },
-					400
-				)
+				// create_account asserting an unverifiable platform: don't refuse the signup,
+				// just bind no platform identity (verifiedPlatformId stays null). The game
+				// client always asserts Steam but its emulator ticket may not parse; refusing
+				// would block all emulator signups. www's /api/signup takes this same
+				// platform-less path deliberately.
+				if (grantType === 'create_account') {
+					logger.info('create_account proceeding without platform binding', {
+						grantType, status: proof.status,
+					})
+				} else {
+					// The reason is for the operator; the client is told only that it was rejected.
+					// A wrong app secret and a stale nonce look identical from the client side.
+					return c.json(
+						{ error: 'invalid_grant', error_description: 'invalid or missing platform_auth' },
+						400
+					)
+				}
 			}
 
 			// From here on `platformId` is the PROVEN identity wherever there is one — the
