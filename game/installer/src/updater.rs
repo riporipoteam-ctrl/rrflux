@@ -69,10 +69,13 @@ fn current_version() -> (u64, u64, u64) {
 
 /// What the update check decided.
 pub enum UpdateDecision {
-    /// No newer setup, or the check failed: just launch the game.
+    /// No newer setup: just launch the game.
     UpToDate,
     /// A newer setup is available at `download_url`.
     Available { version: String, download_url: String },
+    /// v1.0.5: the check failed (network error). The UI should tell the
+    /// user instead of silently saying "Ready to play".
+    CheckFailed,
 }
 
 /// Ask GitHub releases for a newer `FluxRec-Setup.exe`.
@@ -80,8 +83,9 @@ pub enum UpdateDecision {
 /// Shows "Checking for updates\u{2026}" on the progress handle. The check
 /// runs live on every call — there is deliberately no skip-cache: stamping
 /// "nothing new" (or a transient failure) must never hide a release that
-/// appears minutes later. Returns [`UpdateDecision::UpToDate`] on any
-/// failure — never an error.
+/// appears minutes later. Returns [`UpdateDecision::CheckFailed`] on network
+/// failure, [`UpdateDecision::UpToDate`] if the check succeeded and there's
+/// nothing newer.
 pub async fn check_for_updates(install_dir: &Path, progress: &Progress) -> UpdateDecision {
     progress.set_status("Checking for updates\u{2026}", 5);
 
@@ -109,20 +113,20 @@ async fn check_inner(client: &reqwest::Client) -> UpdateDecision {
         .await
     {
         Ok(r) => r,
-        Err(_) => return UpdateDecision::UpToDate,
+        // v1.0.5: network error -> CheckFailed (not silent UpToDate).
+        Err(_) => return UpdateDecision::CheckFailed,
     };
     if !resp.status().is_success() {
-        return UpdateDecision::UpToDate;
+        return UpdateDecision::CheckFailed;
     }
     let text = match resp.text().await {
         Ok(t) => t,
-        Err(_) => return UpdateDecision::UpToDate,
+        Err(_) => return UpdateDecision::CheckFailed,
     };
-    // A non-array body (e.g. an API error object) parses as Err here and
-    // falls through to UpToDate, same as before.
+    // A non-array body (e.g. an API error object) parses as Err here.
     let releases: Vec<serde_json::Value> = match serde_json::from_str(&text) {
         Ok(v) => v,
-        Err(_) => return UpdateDecision::UpToDate,
+        Err(_) => return UpdateDecision::CheckFailed,
     };
     find_update(&releases, current_version())
 }
