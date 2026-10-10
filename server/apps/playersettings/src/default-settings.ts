@@ -12,10 +12,14 @@
  * choose username → create password → Code of Conduct. Unproven at runtime;
  * verify with a fresh-account game run before treating this as the mechanism.
  * Existing players are unaffected (defaults seed only on first read).
+ *
+ * 2026-10-10: TUTORIAL_COMPLETE_MASK changed from '11' to '0' — '11' told
+ * new accounts their tutorials were already done, so the client skipped
+ * orientation entirely. '0' makes fresh accounts enter orientation.
  */
 export const DEFAULT_SETTINGS: Array<{ Key: string; Value: string }> = [
 	{ Key: 'Recroom.OOBE', Value: '77' },
-	{ Key: 'TUTORIAL_COMPLETE_MASK', Value: '11' },
+	{ Key: 'TUTORIAL_COMPLETE_MASK', Value: '0' },
 	{ Key: 'FIRST_TIME_IN_FLAGS', Value: '0' },
 	{ Key: 'Recroom.AccountCreation.HasStarted', Value: 'true' },
 	{ Key: 'Recroom.AccountCreation.HasChosenUsername', Value: 'false' },
