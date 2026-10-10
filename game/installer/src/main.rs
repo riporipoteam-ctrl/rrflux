@@ -1351,6 +1351,17 @@ pub(crate) fn install_patch2025(
         entry.read_to_end(&mut buf)
             .map_err(|e| format!("read {}: {}", name, e))?;
         let dest = target.join(name);
+        // Clear readonly (from v0.6.16 protection) before overwriting
+        #[cfg(windows)]
+        {
+            if let Ok(meta) = std::fs::metadata(&dest) {
+                let mut perms = meta.permissions();
+                if perms.readonly() {
+                    perms.set_readonly(false);
+                    let _ = std::fs::set_permissions(&dest, perms);
+                }
+            }
+        }
         std::fs::write(&dest, &buf)
             .map_err(|e| format!("write {}: {}", name, e))?;
         println!("[patch2025] installed {}", name);
@@ -1376,6 +1387,18 @@ pub(crate) fn install_patch2025(
          VoiceKeyXml=\n",
         ns_host
     );
+    // Clear readonly before overwriting
+    #[cfg(windows)]
+    {
+        let ini_path = target.join("2025patch.ini");
+        if let Ok(meta) = std::fs::metadata(&ini_path) {
+            let mut perms = meta.permissions();
+            if perms.readonly() {
+                perms.set_readonly(false);
+                let _ = std::fs::set_permissions(&ini_path, perms);
+            }
+        }
+    }
     std::fs::write(target.join("2025patch.ini"), ini_content)
         .map_err(|e| format!("write 2025patch.ini: {}", e))?;
     println!("[patch2025] wrote 2025patch.ini (ApiHost={})", ns_host);
@@ -1388,6 +1411,22 @@ pub(crate) fn install_patch2025(
     std::fs::write(target.join("RecRoomVR.bat"), vr_bat)
         .map_err(|e| format!("write RecRoomVR.bat: {}", e))?;
     println!("[patch2025] wrote launcher batch files");
+    
+    // v0.6.16: Protect critical Flux Rec files from editing — set readonly.
+    // This prevents accidental modification; the launcher can still overwrite
+    // them during updates (it clears readonly first).
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        for name in ["2025Patch.dll", "Injector.exe", "2025patch.ini"] {
+            let path = target.join(name);
+            if let Ok(meta) = std::fs::metadata(&path) {
+                let mut perms = meta.permissions();
+                perms.set_readonly(true);
+                let _ = std::fs::set_permissions(&path, perms);
+            }
+        }
+    }
     
     Ok(())
 }
