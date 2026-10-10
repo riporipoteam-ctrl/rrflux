@@ -5197,9 +5197,13 @@ const app = new Hono<App>({ strict: false })
 			if (!res.ok) return c.notFound()
 			const catalog = (await res.json()) as { StoreItems?: StoreItem[] }
 			if (Array.isArray(catalog.StoreItems)) {
+				const allItems = enrichWithThumbnails(repriceDeadCurrencyItems(catalog.StoreItems))
+				const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
+				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
+				const take = takeRaw === '' ? allItems.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
 				return c.json({
 					...catalog,
-					StoreItems: enrichWithThumbnails(repriceDeadCurrencyItems(catalog.StoreItems)),
+					StoreItems: allItems.slice(skip, skip + take),
 				})
 			}
 			return c.json(catalog)
@@ -5323,9 +5327,13 @@ app
 			if (!res.ok) return c.notFound()
 			const catalog = (await res.json()) as { StoreItems?: StoreItem[] }
 			if (Array.isArray(catalog.StoreItems)) {
+				const allItems = enrichWithThumbnails(repriceDeadCurrencyItems(catalog.StoreItems))
+				const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
+				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
+				const take = takeRaw === '' ? allItems.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
 				return c.json({
 					...catalog,
-					StoreItems: enrichWithThumbnails(repriceDeadCurrencyItems(catalog.StoreItems)),
+					StoreItems: allItems.slice(skip, skip + take),
 				})
 			}
 			return c.json(catalog)
