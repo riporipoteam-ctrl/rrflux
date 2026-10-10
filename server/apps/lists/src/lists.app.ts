@@ -572,6 +572,9 @@ const STORE_BROAD_FEED_KEYS = new Set([
   'appearance',
   'storeclothing',
   'allwearables',
+  // The avatar Customize view asks for `customizeitems?type=5`. Without this it falls
+  // through to the custom-avatar-item draw (an empty table), so Customize shows nothing.
+  'customizeitems',
 ])
 
 const canonicalAvatarNamesByDesc = new Map(

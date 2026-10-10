@@ -2656,5 +2656,61 @@
     "TagList": null,
     "ThumbnailImage": "5p7vXj6c3UmQKwem50BSIg.png",
     "Tooltip": "Red [Full Body] footwear that carries you through every Flux Rec adventure."
+  },
+  {
+    "AvatarItemType": 0,
+    "AvatarItemDesc": "fbdca48d-4ae6-41ad-8c33-b70a9e33fd77,,,",
+    "PlatformMask": -1,
+    "FriendlyName": "Action Hair",
+    "Tooltip": "",
+    "Rarity": 0
+  },
+  {
+    "AvatarItemType": 0,
+    "AvatarItemDesc": "2b7f4dae-51da-4af0-b009-12d6005c85c6,,,",
+    "PlatformMask": -1,
+    "FriendlyName": "Mullet Hair",
+    "Tooltip": "",
+    "Rarity": 0
+  },
+  {
+    "AvatarItemType": 0,
+    "AvatarItemDesc": "6b337a35-95d9-4b3a-9891-d9fbb06262aa,,,",
+    "PlatformMask": -1,
+    "FriendlyName": "Curly Mustache",
+    "Tooltip": "",
+    "Rarity": 0
+  },
+  {
+    "AvatarItemType": 0,
+    "AvatarItemDesc": "7c0b07a6-04a3-4ad4-98d2-fff12c48e7ef,b5779ba5-ff69-435f-84ac-a4fa1ecee782",
+    "PlatformMask": -1,
+    "FriendlyName": "Black Leggings",
+    "Tooltip": "",
+    "Rarity": 0
+  },
+  {
+    "AvatarItemType": 0,
+    "AvatarItemDesc": "0d74dd22-d707-4907-b3c7-5bdbfac079d5",
+    "PlatformMask": -1,
+    "FriendlyName": "Plaid Shirt",
+    "Tooltip": "",
+    "Rarity": 0
+  },
+  {
+    "AvatarItemType": 0,
+    "AvatarItemDesc": "75e51889-defa-4689-b3fb-32882e08e5d1,",
+    "PlatformMask": -1,
+    "FriendlyName": "Snowboard on Back",
+    "Tooltip": "",
+    "Rarity": 0
+  },
+  {
+    "AvatarItemType": 0,
+    "AvatarItemDesc": "ac957e1e-676b-45c9-a39d-b238d2329a03,",
+    "PlatformMask": -1,
+    "FriendlyName": "Horseshoe Bracelet",
+    "Tooltip": "",
+    "Rarity": 0
   }
 ]
