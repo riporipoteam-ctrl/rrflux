@@ -1584,6 +1584,19 @@ pub(crate) fn spawn_gui(
     })
 }
 
+/// Spawn the `--play` launcher GUI on its own thread: the compact launcher
+/// window instead of the full installer window. Same infallible guarantees
+/// as [`spawn_gui`].
+pub(crate) fn spawn_gui_launcher(
+    rx: std::sync::mpsc::Receiver<gui::GuiMsg>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(|| {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            gui::run_gui_launcher(rx)
+        }));
+    })
+}
+
 /// Native Win32 message box. `error` selects the error vs warning icon.
 /// A failed install must NEVER look successful — this is how v0.1.7's
 /// problems went undiagnosed. Non-Windows: no-op (callers also eprintln).
@@ -1720,7 +1733,7 @@ fn main() {
                     // dying here. (UAC cancel also lands in this arm.)
                     eprintln!("[updated] elevation unavailable ({e}) — launching installed game.");
                     let (progress, rx) = progress::channel();
-                    let gui_thread = spawn_gui(rx);
+                    let gui_thread = spawn_gui_launcher(rx);
                     launcher::launch_game(&dir, &progress);
                     progress.done();
                     let _ = gui_thread.join();

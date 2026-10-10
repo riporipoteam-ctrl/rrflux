@@ -66,7 +66,7 @@ pub fn run_launcher(
     photon_chat: &str,
 ) -> ! {
     let (progress, rx) = crate::progress::channel();
-    let gui_thread = crate::spawn_gui(rx);
+    let gui_thread = crate::spawn_gui_launcher(rx);
     ensure_recnet_hosts_entry();
 
     let rt = tokio::runtime::Builder::new_current_thread()
