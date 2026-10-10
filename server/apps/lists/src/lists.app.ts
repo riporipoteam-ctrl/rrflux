@@ -1097,7 +1097,11 @@ const app = new Hono<App>()
 			// first-party custom avatar items until something here ranks store items; the slug
 			// picks the slot, as it picks the category of a PurchasableItems row.
 			if (echoed === ListEntityType.Generic) {
-				return c.json({ Type: echoed, Entities: await genericRowEntities(c, key) })
+				const allEntities = await genericRowEntities(c, key)
+				const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
+				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
+				const take = takeRaw === '' ? allEntities.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
+				return c.json({ Type: echoed, Entities: allEntities.slice(skip, skip + take) })
 			}
 
 			// PURCHASABLE ITEMS is answered by the type as well, and from the same catalogue draw —
@@ -1109,7 +1113,15 @@ const app = new Hono<App>()
 			// draws the whole avatar-item catalog. They are all `type=4` and all answer bare ids, so
 			// the row key is the only thing in the request that says which.
 			if (echoed === ListEntityType.PurchasableItems) {
-				return c.json({ Type: echoed, Entities: await purchasableItemRowEntities(c, key) })
+				const allEntities = await purchasableItemRowEntities(c, key)
+				// Paginate: the client requests pages via skip/take (or offset/limit).
+				// Returning the full list on every page request causes duplicates
+				// when the client appends pages, and overwhelms the UI virtualization.
+				const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
+				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
+				const take = takeRaw === '' ? allEntities.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
+				const paged = allEntities.slice(skip, skip + take)
+				return c.json({ Type: echoed, Entities: paged })
 			}
 
 			// A per-caller row needs to know who is asking, so it is the one kind of row that
