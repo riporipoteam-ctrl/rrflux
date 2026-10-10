@@ -181,6 +181,7 @@ mod imp {
         NavSettings,
         Play,
         Uninstall,
+        Details, // v1.0.6
         ThemeLight,
         ThemeDark,
         Close,
@@ -227,6 +228,7 @@ mod imp {
         nav_settings: RECT,
         play: RECT,
         uninstall: RECT,
+        details: RECT, // v1.0.6: explicit Details button
         theme_light: RECT,
         theme_dark: RECT,
         close: RECT,
@@ -748,6 +750,12 @@ mod imp {
                 right: content_x + 40 + 680,
                 bottom: TITLE_H + 440,
             },
+            details: RECT {
+                left: content_x + 40 + 700,
+                top: TITLE_H + 408,
+                right: content_x + 40 + 800,
+                bottom: TITLE_H + 440,
+            },
             // Settings view
             theme_light: RECT {
                 left: content_x + 60,
@@ -831,6 +839,9 @@ mod imp {
                 }
                 if pt_in(&rects.uninstall, x, y) {
                     return Hot::Uninstall;
+                }
+                if pt_in(&rects.details, x, y) {
+                    return Hot::Details;
                 }
                 if pt_in(&rects.card, x, y) {
                     return Hot::Card;
@@ -1226,6 +1237,23 @@ mod imp {
             round_rect_path(hdc, un, 10, p.bg_hover)?;
         }
         draw_text(hdc, "Uninstall", un.left, un.top + 6, un.right - un.left, 22, p.text_dim, 13, false, true)?;
+
+        // v1.0.6: Details button (explicit, not just card click).
+        let det = &rects.details;
+        if st.hover == Hot::Details {
+            round_rect_path(hdc, det, 10, p.bg_hover)?;
+        } else {
+            round_rect_path(hdc, det, 10, p.bg_card)?;
+            // Border
+            let pen = CreatePen(PS_SOLID, 1, p.border);
+            if !pen.is_invalid() {
+                let old = SelectObject(hdc, pen);
+                // Draw border via round rect outline (simplified: just fill)
+                SelectObject(hdc, old);
+                DeleteObject(pen);
+            }
+        }
+        draw_text(hdc, "Details →", det.left, det.top + 6, det.right - det.left, 22, p.accent, 13, true, true)?;
 
         Ok(())
     }
@@ -1699,7 +1727,7 @@ mod imp {
                     start_play(hwnd, st);
                 }
             }
-            Hot::Card => {
+            Hot::Card | Hot::Details => {
                 if st.view == View::Library {
                     st.view = View::Detail;
                     let _ = InvalidateRect(hwnd, None, false);
