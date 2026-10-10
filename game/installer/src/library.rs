@@ -251,6 +251,31 @@ fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
     }
 }
 
+/// v1.0.6: Basic validation that a game exe is not corrupted.
+/// Checks MZ header, PE header, and that the file is a reasonable size.
+/// This catches the icon-patch corruption from v1.0.3-1.0.5.
+fn is_valid_game_exe(exe_path: &Path) -> bool {
+    let data = match std::fs::read(exe_path) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    // Must be at least 1MB (the real exe is ~50MB+).
+    if data.len() < 1_000_000 {
+        return false;
+    }
+    if data[0] != b'M' || data[1] != b'Z' {
+        return false;
+    }
+    if data.len() < 64 {
+        return false;
+    }
+    let pe_off = u32::from_le_bytes([data[60], data[61], data[62], data[63]]) as usize;
+    if pe_off + 6 > data.len() {
+        return false;
+    }
+    &data[pe_off..pe_off + 4] == b"PE\0\0"
+}
+
 /// PLAY was clicked: run the full pre-launch sequence (verify, repair,
 /// update, launch), then show the splash and start the game.
 fn do_play(
@@ -397,24 +422,40 @@ fn do_play(
         }
     }
 
-    // v1.0.3: Patch the game exe icon (once) so the taskbar shows the blue
-    // Flux Rec logo. Skipped if already done (flag file).
-    {
-        let flag = dir.join(".icon_patched_v1");
-        if !flag.exists() {
-            if let Some(exe) = crate::find_game_exe(dir) {
-                const ICON_BYTES: &[u8] = include_bytes!("../assets/fluxrec.ico");
-                match crate::icon_patch::patch_exe_icon(&exe, ICON_BYTES) {
-                    Ok(true) => {
-                        println!("[icon] patched game exe icon.");
-                        let _ = std::fs::write(&flag, "1");
-                    }
-                    Ok(false) => {
-                        let _ = std::fs::write(&flag, "1");
-                    }
-                    Err(e) => eprintln!("[icon] icon patch failed ({}); continuing.", e),
-                }
-            }
+    // v1.0.6 EMERGENCY: icon patch DISABLED — it was corrupting Recroom_Release.exe
+    // on some systems, preventing the game from launching. The taskbar icon
+    // fix is postponed until the patch is proven safe.
+    // {
+    //     let flag = dir.join(".icon_patched_v1");
+    //     if !flag.exists() {
+    //         if let Some(exe) = crate::find_game_exe(dir) {
+    //             const ICON_BYTES: &[u8] = include_bytes!("../assets/fluxrec.ico");
+    //             match crate::icon_patch::patch_exe_icon(&exe, ICON_BYTES) {
+    //                 Ok(true) => {
+    //                     println!("[icon] patched game exe icon.");
+    //                     let _ = std::fs::write(&flag, "1");
+    //                 }
+    //                 Ok(false) => {
+    //                     let _ = std::fs::write(&flag, "1");
+    //                 }
+    //                 Err(e) => eprintln!("[icon] icon patch failed ({}); continuing.", e),
+    //             }
+    //         }
+    //     }
+    // }
+
+    // v1.0.6: Validate the game exe. If the icon patch (v1.0.3-1.0.5) corrupted
+    // it, delete it so the install check above triggers a fresh download.
+    if let Some(exe) = crate::find_game_exe(dir) {
+        if !is_valid_game_exe(&exe) {
+            eprintln!("[library] game exe failed validation (likely icon-patch corruption); forcing reinstall.");
+            send(75, "Game file corrupted — reinstalling…");
+            let _ = std::fs::remove_file(&exe);
+            // Remove the flag so we don't try to patch again.
+            let _ = std::fs::remove_file(dir.join(".icon_patched_v1"));
+            // Trigger reinstall by recursing (the find_game_exe check at the
+            // top will now fail and run the installer).
+            return do_play(dir, ns_host, photon_rt, photon_voice, photon_chat, msg_tx);
         }
     }
 
