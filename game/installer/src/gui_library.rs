@@ -60,6 +60,10 @@ const SCREENSHOT_NAMES: &[&str] = &[
     "Paintball",
 ];
 
+// v1.0.5: the real Flux Rec logo (not the drawn approximation).
+#[cfg(windows)]
+const FLUXREC_LOGO_PNG: &[u8] = include_bytes!("../assets/fluxrec-logo.png");
+
 // ---------------------------------------------------------------------------
 // Non-Windows stubs.
 // ---------------------------------------------------------------------------
@@ -88,7 +92,7 @@ pub fn run_splash_gui(theme: Theme, rx: Receiver<()>) {
 
 #[cfg(windows)]
 mod imp {
-    use super::{LibraryConfig, Theme, View, SCREENSHOTS, SCREENSHOT_NAMES};
+    use super::{LibraryConfig, Theme, View, SCREENSHOTS, SCREENSHOT_NAMES, FLUXREC_LOGO_PNG};
     use crate::library::{LibCmd, LibMsg};
     use std::ffi::c_void;
     use std::sync::mpsc::{Receiver, Sender, TryRecvError};
@@ -211,6 +215,10 @@ mod imp {
         carousel_idx: usize,
         carousel_bitmaps: Vec<HBITMAP>, // decoded screenshots
         carousel_tick: u32,              // for auto-advance
+        // v1.0.5: real Flux Rec logo bitmap
+        logo_bitmap: HBITMAP,
+        // v1.0.5: update check error message (empty if none)
+        check_error: String,
     }
 
     // Button rects (computed per paint).
@@ -272,6 +280,8 @@ mod imp {
                 carousel_idx: 0,
                 carousel_bitmaps: Vec::new(),
                 carousel_tick: 0,
+                logo_bitmap: HBITMAP(std::ptr::null_mut()),
+                check_error: String::new(),
             });
 
             // v1.0.4: decode screenshots for the carousel (fail-soft).
@@ -282,6 +292,8 @@ mod imp {
                     state.carousel_bitmaps.push(bmp);
                 }
             }
+            // v1.0.5: decode the real Flux Rec logo (128x128).
+            state.logo_bitmap = png_to_bitmap(FLUXREC_LOGO_PNG, 128, 128);
             let state_ptr = Box::into_raw(state);
 
             // Center on screen.
@@ -330,14 +342,16 @@ mod imp {
                                     st.checking = false;
                                     st.update_available = update_available;
                                     st.update_version = update_version;
+                                    st.check_error.clear();
                                 }
                                 LibMsg::Checking => {
                                     st.checking = true;
+                                    st.check_error.clear();
                                 }
                                 LibMsg::CheckFailed(e) => {
                                     st.checking = false;
                                     st.ready = true;
-                                    st.stage = e;
+                                    st.check_error = e;
                                 }
                                 LibMsg::PlayerCount(c) => {
                                     st.players = Some(c);
@@ -581,18 +595,36 @@ mod imp {
 
     /// Decode an embedded JPEG to an HBITMAP (32-bit). Returns invalid on failure.
     unsafe fn jpeg_to_bitmap(jpeg_bytes: &[u8], target_w: i32, target_h: i32) -> HBITMAP {
-        // Decode with the image crate.
         let img = match image::load_from_memory_with_format(jpeg_bytes, image::ImageFormat::Jpeg) {
             Ok(i) => i.to_rgba8(),
             Err(_) => return HBITMAP(std::ptr::null_mut()),
         };
+        rgba_to_bitmap(&img, target_w, target_h)
+    }
+
+    /// Decode an embedded PNG to an HBITMAP (32-bit). Returns invalid on failure.
+    unsafe fn png_to_bitmap(png_bytes: &[u8], target_w: i32, target_h: i32) -> HBITMAP {
+        let img = match image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png) {
+            Ok(i) => i.to_rgba8(),
+            Err(_) => return HBITMAP(std::ptr::null_mut()),
+        };
+        // Reuse the DIB creation logic from jpeg_to_bitmap.
+        rgba_to_bitmap(&img, target_w, target_h)
+    }
+
+    /// Convert RGBA8 image to HBITMAP (shared by JPEG and PNG loaders).
+    unsafe fn rgba_to_bitmap(
+        img: &image::RgbaImage,
+        target_w: i32,
+        target_h: i32,
+    ) -> HBITMAP {
         let (sw, sh) = (img.width() as i32, img.height() as i32);
         if sw <= 0 || sh <= 0 {
             return HBITMAP(std::ptr::null_mut());
         }
         // Scale to target.
         let scaled = image::imageops::resize(
-            &img,
+            img,
             target_w as u32,
             target_h as u32,
             image::imageops::FilterType::Triangle,
@@ -931,8 +963,17 @@ mod imp {
         };
         fill_rect(mem, &side_r, p.bg_side)?;
 
-        // Sidebar logo + wordmark.
-        draw_logo(mem, 24, TITLE_H + 20, 40, p.accent)?;
+        // Sidebar logo + wordmark (v1.0.5: clean text badge, not the crude line-drawn R).
+        {
+            let badge = RECT {
+                left: 24,
+                top: TITLE_H + 20,
+                right: 64,
+                bottom: TITLE_H + 60,
+            };
+            round_rect_path(mem, &badge, 10, p.accent)?;
+            draw_text(mem, "RT", 24, TITLE_H + 26, 40, 28, COLORREF(0x00FFFFFF), 18, true, true)?;
+        }
         draw_text(
             mem,
             "RIPO TEAM",
@@ -1060,8 +1101,28 @@ mod imp {
         };
         // Clip banner to rounded top: approximate with gradient + logo.
         fill_gradient(hdc, &banner, p.banner_top, p.banner_bot)?;
-        // Big logo on banner.
-        draw_logo(hdc, banner.left + 36, banner.top + 44, 96, COLORREF(0x00FFFFFF))?;
+        // Big logo on banner (v1.0.5: real logo bitmap, not drawn approximation).
+        if !st.logo_bitmap.is_invalid() {
+            let mem_dc = CreateCompatibleDC(hdc);
+            if !mem_dc.is_invalid() {
+                let old = SelectObject(mem_dc, st.logo_bitmap);
+                BitBlt(
+                    hdc,
+                    banner.left + 36,
+                    banner.top + 44,
+                    96,
+                    96,
+                    mem_dc,
+                    0,
+                    0,
+                    SRCCOPY,
+                );
+                SelectObject(mem_dc, old);
+                DeleteDC(mem_dc);
+            }
+        } else {
+            draw_logo(hdc, banner.left + 36, banner.top + 44, 96, COLORREF(0x00FFFFFF))?;
+        }
         draw_text(
             hdc,
             "FLUX REC",
@@ -1125,6 +1186,9 @@ mod imp {
         // Status line.
         let status = if st.checking {
             "Checking for updates…"
+        } else if !st.check_error.is_empty() {
+            // v1.0.5: show network errors instead of "Ready to play".
+            &st.check_error
         } else if st.update_available {
             &format!("Update {} available", st.update_version)
         } else if st.ready {
@@ -1177,8 +1241,18 @@ mod imp {
         }
         draw_text(hdc, "←  Back", back.left + 8, back.top + 6, 90, 22, p.text_dim, 14, false, false)?;
 
-        // Title + logo.
-        draw_logo(hdc, cx + 40, TITLE_H + 52, 48, p.accent)?;
+        // Title + logo (v1.0.5: real logo bitmap).
+        if !st.logo_bitmap.is_invalid() {
+            let mem_dc = CreateCompatibleDC(hdc);
+            if !mem_dc.is_invalid() {
+                let old = SelectObject(mem_dc, st.logo_bitmap);
+                BitBlt(hdc, cx + 40, TITLE_H + 52, 48, 48, mem_dc, 0, 0, SRCCOPY);
+                SelectObject(mem_dc, old);
+                DeleteDC(mem_dc);
+            }
+        } else {
+            draw_logo(hdc, cx + 40, TITLE_H + 52, 48, p.accent)?;
+        }
         draw_text(hdc, "Flux Rec", cx + 104, TITLE_H + 52, 400, 36, p.text, 28, true, false)?;
         draw_text(
             hdc,
@@ -1575,6 +1649,10 @@ mod imp {
                     // v1.0.4: free carousel bitmaps.
                     for hbmp in (*ptr).carousel_bitmaps.drain(..) {
                         let _ = DeleteObject(hbmp);
+                    }
+                    // v1.0.5: free logo bitmap.
+                    if !(*ptr).logo_bitmap.is_invalid() {
+                        let _ = DeleteObject((*ptr).logo_bitmap);
                     }
                 }
                 PostQuitMessage(0);
