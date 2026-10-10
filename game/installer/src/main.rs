@@ -45,18 +45,16 @@ mod bypass;
 mod defender; // AV hardening (2026-09-24): Defender exclusions, quarantine self-heal, Unblock-File
 // v0.3.0: this module now manages 2025Patch (native DLL injection) instead
 // of BepInEx. Same public interface (verify/repair/sync) for launcher+defender.
-pub(crate) mod bepinex;
+mod bepinex;
 mod transaction; // v0.2.0: transactional staging, atomic swap, rollback
 mod guide; // one-time guided Windows Security exclusion setup (2026-09-25)
-pub(crate) mod gui;
-pub(crate) mod gui_library; // v1.0.0: Ripo Team Launcher library UI
-pub(crate) mod launcher;
-pub(crate) mod library; // v1.0.0: library flow (play/settings/uninstall)
+mod gui;
+mod launcher;
 mod patches; // Flux Rec client patches: welcome text, YouTube IDs (2026-09-24)
-pub(crate) mod progress;
+mod progress;
 mod segmented;
-pub(crate) mod stealth;
-pub(crate) mod updater;
+mod stealth;
+mod updater;
 mod vcredist;
 
 /// Client mirrors, fastest first. All serve the byte-identical client.zip
@@ -82,6 +80,7 @@ const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
     // logo) is uploaded to the mirror.
     ("6d3223da354de646ab79d5660dcac9d2.bundle", "2a94ec3a870aca582cb7d2666fc2f81a", 19_822_299),
     ("91aca73acb86d6607f0efa1f803348be.bundle", "c82afb3cf4106e2ff1e52770adce8b8a", 62_928_907),
+];
 ];
 const LOGO_BUNDLE_BASE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-patch-v2/";
 
@@ -124,7 +123,7 @@ const MAX_ATTEMPTS: u32 = 5;
 /// very slow to first byte; without this the request hangs indefinitely.
 const FIRST_BYTE_TIMEOUT_SECS: u64 = 180;
 
-pub(crate) fn default_install_dir() -> PathBuf {
+fn default_install_dir() -> PathBuf {
     let drive = std::env::var("SYSTEMDRIVE").unwrap_or_else(|_| "C:".to_string());
     PathBuf::from(format!("{drive}\\Games\\FluxRec"))
 }
@@ -686,8 +685,7 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
     // setup binary. The shortcuts point at it with `--play`, so every
     // launch goes through the update check + pretty window first.
     // Fail-soft: if the copy fails we fall back to the old direct target.
-    // v1.0.0: the launcher is now "Ripo Team Launcher".
-    let launcher_exe = dir.join("RipoTeamLauncher.exe");
+    let launcher_exe = dir.join("FluxRecLauncher.exe");
     let launcher_ok = match std::env::current_exe() {
         Ok(me) => {
             // remove-first: Windows cannot overwrite a running exe, and the
@@ -905,7 +903,7 @@ pub(crate) async fn apply_logo_bundle(
     Ok(())
 }
 
-pub(crate) async fn run_install(
+async fn run_install(
     dir: &Path,
     ns_host: &str,
     photon_rt: &str,
@@ -1768,9 +1766,8 @@ fn main() {
 
     // Launcher mode (the desktop shortcut target): update check, then game.
     // Never returns.
-    // v1.0.0: --play now opens the Ripo Team Launcher library UI.
     if play_mode {
-        library::run_library(&dir, &ns_host, &photon_rt, &photon_voice, &photon_chat);
+        launcher::run_launcher(&dir, &ns_host, &photon_rt, &photon_voice, &photon_chat);
     }
 
     // Install mode needs administrator rights: the VC++ runtime silent
