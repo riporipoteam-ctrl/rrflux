@@ -236,12 +236,6 @@ fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
                 update_version: version,
             });
         }
-        // v1.0.5: tell the UI the check failed so it can warn the user.
-        crate::updater::UpdateDecision::CheckFailed => {
-            let _ = msg_tx.send(LibMsg::CheckFailed(
-                "Couldn't reach GitHub to check for updates. Check your connection.".to_string(),
-            ));
-        }
         _ => {
             let _ = msg_tx.send(LibMsg::Ready {
                 update_available: false,
@@ -326,26 +320,6 @@ fn do_play(
         let _ = reason;
     }
 
-    // Apply Flux Rec logo bundles (overwrites wrong logos in place).
-    // Fail-soft: the game launches even if this fails.
-    send(80, "Applying Flux Rec branding…");
-    {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
-        if let Ok(r) = rt {
-            let client = reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(30))
-                .build();
-            if let Ok(c) = client {
-                let (p, _rx) = crate::progress::channel();
-                if let Err(e) = r.block_on(crate::apply_logo_bundle(&c, dir, &p)) {
-                    eprintln!("[library] logo bundle failed ({}); continuing.", e);
-                }
-            }
-        }
-    }
-
     // Update check (only if the worker didn't just do it).
     if !network_check_fresh() {
         send(82, "Checking for updates…");
@@ -394,27 +368,6 @@ fn do_play(
                 _ => {}
             }
             mark_network_check();
-        }
-    }
-
-    // v1.0.3: Patch the game exe icon (once) so the taskbar shows the blue
-    // Flux Rec logo. Skipped if already done (flag file).
-    {
-        let flag = dir.join(".icon_patched_v1");
-        if !flag.exists() {
-            if let Some(exe) = crate::find_game_exe(dir) {
-                const ICON_BYTES: &[u8] = include_bytes!("../assets/fluxrec.ico");
-                match crate::icon_patch::patch_exe_icon(&exe, ICON_BYTES) {
-                    Ok(true) => {
-                        println!("[icon] patched game exe icon.");
-                        let _ = std::fs::write(&flag, "1");
-                    }
-                    Ok(false) => {
-                        let _ = std::fs::write(&flag, "1");
-                    }
-                    Err(e) => eprintln!("[icon] icon patch failed ({}); continuing.", e),
-                }
-            }
         }
     }
 

@@ -34,35 +34,9 @@ pub struct LibraryConfig {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum View {
     Library,
-    Detail,   // v1.0.4: game detail view with screenshot carousel
     Settings,
     Working, // PLAY was clicked; showing progress
 }
-
-// v1.0.4: embedded screenshots for the detail carousel.
-#[cfg(windows)]
-const SCREENSHOTS: &[&[u8]] = &[
-    include_bytes!("../assets/screenshots/rec-center-1.jpg"),
-    include_bytes!("../assets/screenshots/rec-center-2.jpg"),
-    include_bytes!("../assets/screenshots/rec-center-3.jpg"),
-    include_bytes!("../assets/screenshots/rec-center-4.jpg"),
-    include_bytes!("../assets/screenshots/dorm-room.jpg"),
-    include_bytes!("../assets/screenshots/paintball.jpg"),
-];
-
-#[cfg(windows)]
-const SCREENSHOT_NAMES: &[&str] = &[
-    "Rec Center",
-    "Rec Center Stage",
-    "Rec Center Marquee",
-    "Rec Center Avatar",
-    "Dorm Room",
-    "Paintball",
-];
-
-// v1.0.5: the real Flux Rec logo (not the drawn approximation).
-#[cfg(windows)]
-const FLUXREC_LOGO_PNG: &[u8] = include_bytes!("../assets/fluxrec-logo.png");
 
 // ---------------------------------------------------------------------------
 // Non-Windows stubs.
@@ -92,7 +66,7 @@ pub fn run_splash_gui(theme: Theme, rx: Receiver<()>) {
 
 #[cfg(windows)]
 mod imp {
-    use super::{LibraryConfig, Theme, View, SCREENSHOTS, SCREENSHOT_NAMES, FLUXREC_LOGO_PNG};
+    use super::{LibraryConfig, Theme, View};
     use crate::library::{LibCmd, LibMsg};
     use std::ffi::c_void;
     use std::sync::mpsc::{Receiver, Sender, TryRecvError};
@@ -185,11 +159,6 @@ mod imp {
         ThemeDark,
         Close,
         Minimize,
-        Card,       // v1.0.4: click game card -> detail view
-        Back,       // v1.0.4: back from detail to library
-        CarouselPrev,
-        CarouselNext,
-        DetailPlay, // PLAY button in detail view
     }
 
     struct State {
@@ -211,14 +180,6 @@ mod imp {
         hover: Hot,
         anim_t: u32,       // ticks for animations
         progress_anim: f32, // smoothed progress 0..100
-        // v1.0.4: detail view carousel
-        carousel_idx: usize,
-        carousel_bitmaps: Vec<HBITMAP>, // decoded screenshots
-        carousel_tick: u32,              // for auto-advance
-        // v1.0.5: real Flux Rec logo bitmap
-        logo_bitmap: HBITMAP,
-        // v1.0.5: update check error message (empty if none)
-        check_error: String,
     }
 
     // Button rects (computed per paint).
@@ -232,12 +193,6 @@ mod imp {
         close: RECT,
         minimize: RECT,
         card: RECT,
-        // v1.0.4: detail view
-        back: RECT,
-        carousel: RECT,
-        carousel_prev: RECT,
-        carousel_next: RECT,
-        detail_play: RECT,
     }
 
     pub(super) fn run_library(
@@ -261,7 +216,7 @@ mod imp {
                 return Err(());
             }
 
-            let mut state = Box::new(State {
+            let state = Box::new(State {
                 theme: config.theme,
                 version: config.version,
                 view: View::Library,
@@ -277,23 +232,7 @@ mod imp {
                 hover: Hot::None,
                 anim_t: 0,
                 progress_anim: 0.0,
-                carousel_idx: 0,
-                carousel_bitmaps: Vec::new(),
-                carousel_tick: 0,
-                logo_bitmap: HBITMAP(std::ptr::null_mut()),
-                check_error: String::new(),
             });
-
-            // v1.0.4: decode screenshots for the carousel (fail-soft).
-            // Target size: 640x360 (16:9).
-            for jpeg in SCREENSHOTS {
-                let bmp = jpeg_to_bitmap(jpeg, 640, 360);
-                if !bmp.is_invalid() {
-                    state.carousel_bitmaps.push(bmp);
-                }
-            }
-            // v1.0.5: decode the real Flux Rec logo (128x128).
-            state.logo_bitmap = png_to_bitmap(FLUXREC_LOGO_PNG, 128, 128);
             let state_ptr = Box::into_raw(state);
 
             // Center on screen.
@@ -342,16 +281,14 @@ mod imp {
                                     st.checking = false;
                                     st.update_available = update_available;
                                     st.update_version = update_version;
-                                    st.check_error.clear();
                                 }
                                 LibMsg::Checking => {
                                     st.checking = true;
-                                    st.check_error.clear();
                                 }
                                 LibMsg::CheckFailed(e) => {
                                     st.checking = false;
                                     st.ready = true;
-                                    st.check_error = e;
+                                    st.stage = e;
                                 }
                                 LibMsg::PlayerCount(c) => {
                                     st.players = Some(c);
@@ -593,87 +530,6 @@ mod imp {
         Ok(())
     }
 
-    /// Decode an embedded JPEG to an HBITMAP (32-bit). Returns invalid on failure.
-    unsafe fn jpeg_to_bitmap(jpeg_bytes: &[u8], target_w: i32, target_h: i32) -> HBITMAP {
-        let img = match image::load_from_memory_with_format(jpeg_bytes, image::ImageFormat::Jpeg) {
-            Ok(i) => i.to_rgba8(),
-            Err(_) => return HBITMAP(std::ptr::null_mut()),
-        };
-        rgba_to_bitmap(&img, target_w, target_h)
-    }
-
-    /// Decode an embedded PNG to an HBITMAP (32-bit). Returns invalid on failure.
-    unsafe fn png_to_bitmap(png_bytes: &[u8], target_w: i32, target_h: i32) -> HBITMAP {
-        let img = match image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png) {
-            Ok(i) => i.to_rgba8(),
-            Err(_) => return HBITMAP(std::ptr::null_mut()),
-        };
-        // Reuse the DIB creation logic from jpeg_to_bitmap.
-        rgba_to_bitmap(&img, target_w, target_h)
-    }
-
-    /// Convert RGBA8 image to HBITMAP (shared by JPEG and PNG loaders).
-    unsafe fn rgba_to_bitmap(
-        img: &image::RgbaImage,
-        target_w: i32,
-        target_h: i32,
-    ) -> HBITMAP {
-        let (sw, sh) = (img.width() as i32, img.height() as i32);
-        if sw <= 0 || sh <= 0 {
-            return HBITMAP(std::ptr::null_mut());
-        }
-        // Scale to target.
-        let scaled = image::imageops::resize(
-            img,
-            target_w as u32,
-            target_h as u32,
-            image::imageops::FilterType::Triangle,
-        );
-        let (w, h) = (scaled.width() as i32, scaled.height() as i32);
-
-        // Create a 32-bit top-down DIB.
-        let bmi = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: w,
-                biHeight: -h, // negative = top-down
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0 as u32,
-                biSizeImage: 0,
-                biXPelsPerMeter: 0,
-                biYPelsPerMeter: 0,
-                biClrUsed: 0,
-                biClrImportant: 0,
-            },
-            bmiColors: [RGBQUAD::default()],
-        };
-        let mut bits: *mut c_void = std::ptr::null_mut();
-        let hdc = GetDC(None);
-        let hbmp = match CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) {
-            Ok(h) => h,
-            Err(_) => {
-                ReleaseDC(None, hdc);
-                return HBITMAP(std::ptr::null_mut());
-            }
-        };
-        ReleaseDC(None, hdc);
-        if bits.is_null() {
-            let _ = DeleteObject(hbmp);
-            return HBITMAP(std::ptr::null_mut());
-        }
-        // Copy pixels (RGBA -> BGRA).
-        let dst = std::slice::from_raw_parts_mut(bits as *mut u8, (w * h * 4) as usize);
-        let src = scaled.as_raw();
-        for i in 0..(w * h) as usize {
-            dst[i * 4] = src[i * 4 + 2];     // B
-            dst[i * 4 + 1] = src[i * 4 + 1]; // G
-            dst[i * 4 + 2] = src[i * 4];     // R
-            dst[i * 4 + 3] = src[i * 4 + 3]; // A
-        }
-        hbmp
-    }
-
     /// Draw the Flux Rec logo mark (rounded square with stylized "R").
     /// Simple geometric approximation of the blue logo.
     unsafe fn draw_logo(hdc: HDC, x: i32, y: i32, size: i32, accent: COLORREF) -> Silent {
@@ -773,37 +629,6 @@ mod imp {
                 right: WIN_W - 56,
                 bottom: 40,
             },
-            // v1.0.4: detail view
-            back: RECT {
-                left: content_x + 40,
-                top: TITLE_H + 16,
-                right: content_x + 140,
-                bottom: TITLE_H + 48,
-            },
-            carousel: RECT {
-                left: content_x + 40,
-                top: TITLE_H + 100,
-                right: content_x + 40 + 640,
-                bottom: TITLE_H + 100 + 360,
-            },
-            carousel_prev: RECT {
-                left: content_x + 48,
-                top: TITLE_H + 250,
-                right: content_x + 88,
-                bottom: TITLE_H + 290,
-            },
-            carousel_next: RECT {
-                left: content_x + 40 + 640 - 48,
-                top: TITLE_H + 250,
-                right: content_x + 40 + 640 - 8,
-                bottom: TITLE_H + 290,
-            },
-            detail_play: RECT {
-                left: content_x + 40,
-                top: TITLE_H + 500,
-                right: content_x + 240,
-                bottom: TITLE_H + 548,
-            },
         }
     }
 
@@ -831,23 +656,6 @@ mod imp {
                 }
                 if pt_in(&rects.uninstall, x, y) {
                     return Hot::Uninstall;
-                }
-                if pt_in(&rects.card, x, y) {
-                    return Hot::Card;
-                }
-            }
-            View::Detail => {
-                if pt_in(&rects.back, x, y) {
-                    return Hot::Back;
-                }
-                if pt_in(&rects.carousel_prev, x, y) {
-                    return Hot::CarouselPrev;
-                }
-                if pt_in(&rects.carousel_next, x, y) {
-                    return Hot::CarouselNext;
-                }
-                if pt_in(&rects.detail_play, x, y) {
-                    return Hot::DetailPlay;
                 }
             }
             View::Settings => {
@@ -963,17 +771,8 @@ mod imp {
         };
         fill_rect(mem, &side_r, p.bg_side)?;
 
-        // Sidebar logo + wordmark (v1.0.5: clean text badge, not the crude line-drawn R).
-        {
-            let badge = RECT {
-                left: 24,
-                top: TITLE_H + 20,
-                right: 64,
-                bottom: TITLE_H + 60,
-            };
-            round_rect_path(mem, &badge, 10, p.accent)?;
-            draw_text(mem, "RT", 24, TITLE_H + 26, 40, 28, COLORREF(0x00FFFFFF), 18, true, true)?;
-        }
+        // Sidebar logo + wordmark.
+        draw_logo(mem, 24, TITLE_H + 20, 40, p.accent)?;
         draw_text(
             mem,
             "RIPO TEAM",
@@ -1032,7 +831,6 @@ mod imp {
         // Content.
         match st.view {
             View::Library => draw_library_view(mem, st, &rects, p)?,
-            View::Detail => draw_detail_view(mem, st, &rects, p)?,
             View::Settings => draw_settings_view(mem, st, &rects, p)?,
             View::Working => draw_working_view(mem, st, &rects, p)?,
         }
@@ -1101,28 +899,8 @@ mod imp {
         };
         // Clip banner to rounded top: approximate with gradient + logo.
         fill_gradient(hdc, &banner, p.banner_top, p.banner_bot)?;
-        // Big logo on banner (v1.0.5: real logo bitmap, not drawn approximation).
-        if !st.logo_bitmap.is_invalid() {
-            let mem_dc = CreateCompatibleDC(hdc);
-            if !mem_dc.is_invalid() {
-                let old = SelectObject(mem_dc, st.logo_bitmap);
-                BitBlt(
-                    hdc,
-                    banner.left + 36,
-                    banner.top + 44,
-                    96,
-                    96,
-                    mem_dc,
-                    0,
-                    0,
-                    SRCCOPY,
-                );
-                SelectObject(mem_dc, old);
-                DeleteDC(mem_dc);
-            }
-        } else {
-            draw_logo(hdc, banner.left + 36, banner.top + 44, 96, COLORREF(0x00FFFFFF))?;
-        }
+        // Big logo on banner.
+        draw_logo(hdc, banner.left + 36, banner.top + 44, 96, COLORREF(0x00FFFFFF))?;
         draw_text(
             hdc,
             "FLUX REC",
@@ -1186,9 +964,6 @@ mod imp {
         // Status line.
         let status = if st.checking {
             "Checking for updates…"
-        } else if !st.check_error.is_empty() {
-            // v1.0.5: show network errors instead of "Ready to play".
-            &st.check_error
         } else if st.update_available {
             &format!("Update {} available", st.update_version)
         } else if st.ready {
@@ -1230,127 +1005,8 @@ mod imp {
         Ok(())
     }
 
-    /// v1.0.4: game detail view with screenshot carousel.
-    unsafe fn draw_detail_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
+    unsafe fn draw_settings_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
         let cx = SIDEBAR_W;
-
-        // Back button.
-        let back = &rects.back;
-        if st.hover == Hot::Back {
-            round_rect_path(hdc, back, 10, p.bg_hover)?;
-        }
-        draw_text(hdc, "←  Back", back.left + 8, back.top + 6, 90, 22, p.text_dim, 14, false, false)?;
-
-        // Title + logo (v1.0.5: real logo bitmap).
-        if !st.logo_bitmap.is_invalid() {
-            let mem_dc = CreateCompatibleDC(hdc);
-            if !mem_dc.is_invalid() {
-                let old = SelectObject(mem_dc, st.logo_bitmap);
-                BitBlt(hdc, cx + 40, TITLE_H + 52, 48, 48, mem_dc, 0, 0, SRCCOPY);
-                SelectObject(mem_dc, old);
-                DeleteDC(mem_dc);
-            }
-        } else {
-            draw_logo(hdc, cx + 40, TITLE_H + 52, 48, p.accent)?;
-        }
-        draw_text(hdc, "Flux Rec", cx + 104, TITLE_H + 52, 400, 36, p.text, 28, true, false)?;
-        draw_text(
-            hdc,
-            "The private Rec Room revival by Ripo Team",
-            cx + 104,
-            TITLE_H + 88,
-            500,
-            22,
-            p.text_dim,
-            14,
-            false,
-            false,
-        )?;
-
-        // Screenshot carousel.
-        let car = &rects.carousel;
-        round_rect_path(hdc, car, 16, p.bg_card)?;
-        if !st.carousel_bitmaps.is_empty() {
-            let idx = st.carousel_idx % st.carousel_bitmaps.len();
-            let hbmp = st.carousel_bitmaps[idx];
-            let mem_dc = CreateCompatibleDC(hdc);
-            if !mem_dc.is_invalid() {
-                let old = SelectObject(mem_dc, hbmp);
-                BitBlt(hdc, car.left, car.top, 640, 360, mem_dc, 0, 0, SRCCOPY);
-                SelectObject(mem_dc, old);
-                DeleteDC(mem_dc);
-            }
-            let name = SCREENSHOT_NAMES.get(idx).copied().unwrap_or("");
-            draw_text(hdc, name, car.left, car.bottom + 8, 640, 22, p.text_dim, 13, false, true)?;
-            // Dots.
-            let n = st.carousel_bitmaps.len();
-            let dot_y = car.bottom + 34;
-            let total_w = (n as i32) * 16;
-            let start_x = car.left + (640 - total_w) / 2;
-            for i in 0..n {
-                let c = if i == idx { p.accent } else { p.track };
-                let br = CreateSolidBrush(c);
-                if !br.is_invalid() {
-                    let pen = CreatePen(PS_SOLID, 1, c);
-                    let ob = SelectObject(hdc, br);
-                    let op = SelectObject(hdc, pen);
-                    Ellipse(hdc, start_x + (i as i32) * 16, dot_y, start_x + (i as i32) * 16 + 8, dot_y + 8);
-                    SelectObject(hdc, ob);
-                    SelectObject(hdc, op);
-                    DeleteObject(br);
-                    DeleteObject(pen);
-                }
-            }
-        } else {
-            draw_text(hdc, "Screenshots loading…", car.left, car.top + 160, 640, 30, p.text_dim, 14, false, true)?;
-        }
-
-        // Prev/Next buttons.
-        for (r, label, hot) in [
-            (&rects.carousel_prev, "‹", Hot::CarouselPrev),
-            (&rects.carousel_next, "›", Hot::CarouselNext),
-        ] {
-            if st.hover == hot {
-                round_rect_path(hdc, r, 20, p.accent)?;
-                draw_text(hdc, label, r.left, r.top + 2, 40, 36, COLORREF(0x00FFFFFF), 24, true, true)?;
-            } else {
-                let br = CreateSolidBrush(p.bg_card);
-                if !br.is_invalid() {
-                    let pen = CreatePen(PS_SOLID, 1, p.border);
-                    let ob = SelectObject(hdc, br);
-                    let op = SelectObject(hdc, pen);
-                    Ellipse(hdc, r.left, r.top, r.right, r.bottom);
-                    SelectObject(hdc, ob);
-                    SelectObject(hdc, op);
-                    DeleteObject(br);
-                    DeleteObject(pen);
-                }
-                draw_text(hdc, label, r.left, r.top + 2, 40, 36, p.text, 24, true, true)?;
-            }
-        }
-
-        // Description.
-        let desc = "Hang out with friends, explore player-created rooms, and play games like paintball, laser tag, and quests — all in the private Flux Rec universe. Your dorm room is your home base. No Steam required. © 2026 Ripo Team.";
-        draw_text(hdc, desc, cx + 40, TITLE_H + 520, 640, 60, p.text_dim, 13, false, false)?;
-
-        // Player count.
-        let players_txt = match st.players {
-            Some(c) => format!("👥 {} players online now", c),
-            None => "👥 …".to_string(),
-        };
-        draw_text(hdc, &players_txt, cx + 40, TITLE_H + 580, 300, 24, p.text, 14, true, false)?;
-
-        // PLAY button.
-        let dp = &rects.detail_play;
-        let hover = st.hover == Hot::DetailPlay;
-        round_rect_path(hdc, dp, 14, if hover { p.accent_dark } else { p.accent })?;
-        let label = if st.update_available { "⟳  UPDATE & PLAY" } else { "▶  PLAY" };
-        draw_text(hdc, label, dp.left, dp.top + 12, dp.right - dp.left, 26, COLORREF(0x00FFFFFF), 16, true, true)?;
-
-        Ok(())
-    }
-
-    unsafe fn draw_settings_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {        let cx = SIDEBAR_W;
         draw_text(hdc, "Settings", cx + 40, TITLE_H + 16, 300, 30, p.text, 22, true, false)?;
 
         draw_text(hdc, "Appearance", cx + 60, TITLE_H + 80, 300, 26, p.text, 16, true, false)?;
@@ -1576,15 +1232,6 @@ mod imp {
                 let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
                 if !ptr.is_null() {
                     (*ptr).anim_t = (*ptr).anim_t.wrapping_add(1);
-                    // v1.0.4: auto-advance carousel every ~4s (50ms timer * 80).
-                    if (*ptr).view == View::Detail && !(*ptr).carousel_bitmaps.is_empty() {
-                        (*ptr).carousel_tick += 1;
-                        if (*ptr).carousel_tick >= 80 {
-                            (*ptr).carousel_tick = 0;
-                            (*ptr).carousel_idx =
-                                ((*ptr).carousel_idx + 1) % (*ptr).carousel_bitmaps.len();
-                        }
-                    }
                     let _ = InvalidateRect(hwnd, None, false);
                 }
                 LRESULT(0)
@@ -1646,30 +1293,12 @@ mod imp {
                 let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
                 if !ptr.is_null() {
                     let _ = (*ptr).cmd_tx.send(LibCmd::Close);
-                    // v1.0.4: free carousel bitmaps.
-                    for hbmp in (*ptr).carousel_bitmaps.drain(..) {
-                        let _ = DeleteObject(hbmp);
-                    }
-                    // v1.0.5: free logo bitmap.
-                    if !(*ptr).logo_bitmap.is_invalid() {
-                        let _ = DeleteObject((*ptr).logo_bitmap);
-                    }
                 }
                 PostQuitMessage(0);
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
-    }
-
-    unsafe fn start_play(hwnd: HWND, st: &mut State) {
-        st.view = View::Working;
-        st.percent = 0;
-        st.stage = "Starting…".to_string();
-        st.detail = String::new();
-        st.progress_anim = 0.0;
-        let _ = st.cmd_tx.send(LibCmd::Play);
-        let _ = InvalidateRect(hwnd, None, false);
     }
 
     unsafe fn handle_click(hwnd: HWND, st: &mut State, hot: Hot, _rects: &Rects) {
@@ -1691,39 +1320,12 @@ mod imp {
             }
             Hot::Play => {
                 if st.view == View::Library {
-                    start_play(hwnd, st);
-                }
-            }
-            Hot::DetailPlay => {
-                if st.view == View::Detail {
-                    start_play(hwnd, st);
-                }
-            }
-            Hot::Card => {
-                if st.view == View::Library {
-                    st.view = View::Detail;
-                    let _ = InvalidateRect(hwnd, None, false);
-                }
-            }
-            Hot::Back => {
-                if st.view == View::Detail {
-                    st.view = View::Library;
-                    let _ = InvalidateRect(hwnd, None, false);
-                }
-            }
-            Hot::CarouselPrev => {
-                if st.view == View::Detail && !st.carousel_bitmaps.is_empty() {
-                    let n = st.carousel_bitmaps.len();
-                    st.carousel_idx = (st.carousel_idx + n - 1) % n;
-                    st.carousel_tick = 0;
-                    let _ = InvalidateRect(hwnd, None, false);
-                }
-            }
-            Hot::CarouselNext => {
-                if st.view == View::Detail && !st.carousel_bitmaps.is_empty() {
-                    let n = st.carousel_bitmaps.len();
-                    st.carousel_idx = (st.carousel_idx + 1) % n;
-                    st.carousel_tick = 0;
+                    st.view = View::Working;
+                    st.percent = 0;
+                    st.stage = "Starting…".to_string();
+                    st.detail = String::new();
+                    st.progress_anim = 0.0;
+                    let _ = st.cmd_tx.send(LibCmd::Play);
                     let _ = InvalidateRect(hwnd, None, false);
                 }
             }
