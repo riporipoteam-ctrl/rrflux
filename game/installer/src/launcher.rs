@@ -316,7 +316,8 @@ pub fn run_launcher(
 /// Any spawn or wait failure returns false so the caller falls back to the
 /// installed game. Shows "Installing update\u{2026}" while the child runs;
 /// the update's own window carries the detailed progress.
-fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> bool {
+/// v1.0.0: made pub(crate) for the library flow.
+pub(crate) fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> bool {
     let mut child = match crate::stealth::hidden_command(
         dest.to_str().unwrap_or("FluxRec-Setup-update.exe"),
     )
@@ -408,7 +409,8 @@ fn open_url_in_browser(_url: &str) {}
 /// on every launch. Unity caches HTTP responses (including the storefront
 /// JSON) in LocalLow; stale cache was causing the client to use old
 /// AvatarItemType data even after backend fixes deployed.
-fn clear_unity_http_cache(progress: &Progress) {
+/// v1.0.0: made pub(crate) for the library flow.
+pub(crate) fn clear_unity_http_cache(progress: &Progress) {
     progress.set_status("Launching Flux Rec…", 100);
     // Unity player cache locations for Rec Room on Windows.
     // v0.6.16: Fast path — directly target known Unity cache dirs instead of
