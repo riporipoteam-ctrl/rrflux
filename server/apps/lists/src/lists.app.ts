@@ -506,7 +506,7 @@ const STORE_CATEGORY_TERMS: Record<string, string[]> = {
     'hat', 'cap', 'beanie', 'crown', 'helmet', 'headband', 'headwear', 'tiara', 'visor',
     'beret', 'fedora', 'sombrero', 'bandana', 'horn', 'antler', 'headset', 'headphone',
     'head mirror', 'muff', 'diadem', 'halo', 'headpiece', 'veil', 'cowl', 'head wrap',
-    'antenna', 'top hat', 'hood',
+    'antenna', 'top hat', 'hood', 'helm',
   ],
   topsitems: [
     'shirt', 'tee', 't-shirt', 'tank', 'polo', 'blouse', 'jacket', 'dress', 'vest', 'sweater',
@@ -527,16 +527,17 @@ const STORE_CATEGORY_TERMS: Record<string, string[]> = {
   waistitems: ['belt', 'waist', 'sash', 'waistband', 'waist pack', 'fanny pack'],
   handsitems: [
     'glove', 'hand', 'wrist', 'mittens', 'mitten', 'gauntlet', 'bracer', 'wristband',
-    'bracelet', 'cuff', 'floatie', 'wrist tape',
+    'bracelet', 'cuff', 'floatie', 'wrist tape', 'watch', 'mitt',
   ],
   shoulderitems: [
     'quiver', 'backpack', 'cape', 'shoulder', 'back accessory', 'wing', 'wings', 'jetpack',
     'back ', 'on back', 'harness', 'board', 'bag', 'satchel', 'rucksack', 'knapsack', 'purse',
+    'pauldron', 'sword', 'cloak', 'guitar', 'banjo',
   ],
   backpackitems: ['backpack', 'rucksack', 'knapsack', 'satchel', 'bookbag', 'purse', 'schoolbag'],
   eyewearitems: [
     'glasses', 'goggles', 'eyewear', 'sunglasses', 'spectacles', 'shades', 'binoculars',
-    'monocle', 'eye mask', 'visor',
+    'monocle', 'eye mask', 'visor', 'eyepatch',
   ],
   earwearitems: [
     'earring', 'earrings', 'earwear', 'ear muffs', 'earmuffs', 'earpiece', 'earphones',
@@ -544,7 +545,7 @@ const STORE_CATEGORY_TERMS: Record<string, string[]> = {
   ],
   neckwearitems: [
     'necklace', 'neckwear', 'scarf', 'bow tie', 'bowtie', 'tie', 'choker', 'pendant', 'collar',
-    'cravat', 'neck piece', 'bandana', 'ascot', 'necktie',
+    'cravat', 'neck piece', 'bandana', 'ascot', 'necktie', 'amulet',
   ],
   hairitems: [
     'hairstyle', 'wig', 'ponytail', 'pony tail', 'mohawk', 'afro', 'braid', 'braids', 'bob hair',
