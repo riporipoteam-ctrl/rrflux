@@ -974,42 +974,32 @@ mod imp {
         };
         fill_rect(mem, &side_r, p.bg_side)?;
 
-        // Sidebar logo + wordmark (v1.0.5: clean text badge, not the crude line-drawn R).
-        {
-            let badge = RECT {
-                left: 24,
-                top: TITLE_H + 20,
-                right: 64,
-                bottom: TITLE_H + 60,
-            };
-            round_rect_path(mem, &badge, 10, p.accent)?;
-            draw_text(mem, "RT", 24, TITLE_H + 26, 40, 28, COLORREF(0x00FFFFFF), 18, true, true)?;
-        }
+        // Sidebar logo + wordmark (v1.0.10: clean text only, no icon).
+        // The drawn "R"/"RT" badges looked amateur — just use typography.
         draw_text(
             mem,
             "RIPO TEAM",
-            76,
+            24,
             TITLE_H + 24,
-            140,
+            160,
             22,
             p.text,
-            17,
+            15,
             true,
             false,
         )?;
         draw_text(
             mem,
             "Game Launcher",
-            76,
-            TITLE_H + 44,
-            140,
+            24,
+            TITLE_H + 46,
+            160,
             18,
             p.text_dim,
             12,
             false,
             false,
         )?;
-
         // Nav buttons.
         draw_nav(mem, &rects.nav_library, "📚  Library", st.view == View::Library, st.hover == Hot::NavLibrary, p)?;
         draw_nav(mem, &rects.nav_settings, "⚙️  Settings", st.view == View::Settings, st.hover == Hot::NavSettings, p)?;
