@@ -509,14 +509,20 @@ export async function createAccount(
  * account) carries `developer`, `moderator`, and `screenshare` in its `role`
  * claim from the very first login.
  */
+// Reserved admin username — always gets developer+moderator, even if another
+// admin already exists. Case-insensitive.
+const RESERVED_ADMIN_USERNAME = 'ripo6000'
+
 export async function claimReservedAdmin(
 	db: D1Database,
 	id: number,
 	username: string
 ): Promise<boolean> {
+	const isReservedName = username.toLowerCase() === RESERVED_ADMIN_USERNAME
 	// Another account with the same name (case-insensitive)? The name is taken,
 	// so there is no reservation to claim — never grant admin to a new account
-	// claiming a name somebody else already holds.
+	// claiming a name somebody else already holds. (Reserved name bypasses this
+	// only for the account that actually holds the name.)
 	const nameTaken = await db
 		.prepare(
 			'SELECT account_id AS id FROM account WHERE username_lower = ?1 AND account_id != ?2 LIMIT 1'
@@ -525,13 +531,17 @@ export async function claimReservedAdmin(
 		.first<{ id: number }>()
 	if (nameTaken) return false
 	// An admin already exists? First-come means first — a later signup gets no
-	// admin, even under the reserved name.
-	const adminExists = await db
-		.prepare(
-			"SELECT account_id AS id FROM account WHERE json_extract(data, '$.isDeveloper') = 1 OR json_extract(data, '$.isModerator') = 1 LIMIT 1"
-		)
-		.first<{ id: number }>()
-	if (adminExists) return false
+	// admin, even under the reserved name. EXCEPTION: the reserved admin username
+	// (Ripo6000) always claims admin, so the operator is never locked out by a
+	// test account grabbing first-come.
+	if (!isReservedName) {
+		const adminExists = await db
+			.prepare(
+				"SELECT account_id AS id FROM account WHERE json_extract(data, '$.isDeveloper') = 1 OR json_extract(data, '$.isModerator') = 1 LIMIT 1"
+			)
+			.first<{ id: number }>()
+		if (adminExists) return false
+	}
 	// Claim it. Same update shape as the `runx admin grant-*` commands
 	// (JSON booleans via json_set).
 	await db
