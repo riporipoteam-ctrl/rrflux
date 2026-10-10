@@ -371,8 +371,11 @@ fn do_play(
         }
     }
 
-    // Update check (only if the worker didn't just do it).
-    if !network_check_fresh() {
+    // Update check on PLAY: ALWAYS check live (v1.0.7 fix).
+    // The 1-hour cache is for the background worker at startup, but when the
+    // user explicitly presses PLAY, they expect a fresh check. The old code
+    // skipped the check if the worker had run recently, so updates were missed.
+    {
         send(82, "Checking for updates…");
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
