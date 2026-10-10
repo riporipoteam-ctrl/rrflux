@@ -254,7 +254,7 @@ mod imp {
         let ptr = Box::into_raw(state);
 
         let hwnd = match CreateWindowExW(
-            WS_EX_APPWINDOW,
+            WS_EX_APPWINDOW | WS_EX_COMPOSITED,
             class_name,
             title,
             WS_POPUP | WS_VISIBLE,
@@ -388,10 +388,12 @@ mod imp {
         if hbmp.is_invalid() || bits.is_null() {
             return (HBITMAP::default(), 0, 0);
         }
-        // Copy rows (BMP is bottom-up when biHeight > 0) and premultiply.
+        // Copy rows and premultiply. Both the BMP file (biHeight > 0) and the DIB
+        // section (biHeight = h > 0) are bottom-up, so rows copy directly
+        // without flipping. (The old ha-1-row flip drew the logo upside down.)
         let dst = bits as *mut u8;
         for row in 0..ha {
-            let src_row = if h > 0 { ha - 1 - row } else { row };
+            let src_row = row;
             let sp = bytes[off + src_row * row_bytes..].as_ptr();
             let dp = dst.add(row * row_bytes);
             for i in 0..w as usize {

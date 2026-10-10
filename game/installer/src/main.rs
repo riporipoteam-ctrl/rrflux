@@ -73,8 +73,8 @@ const PATCH2025_URL: &str = "https://github.com/recflare/patch-2025/releases/dow
 /// then copied over the stock bundle. Backups are kept as .stock files.
 const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
     // (filename, md5, size)
-    ("063b6b6653aa642616fd21d3d4701899.bundle", "95624fde710651e930d9f93b74438477", 27_981_907),
-    ("2b731967c40860818dbeadf308b851f5.bundle", "9432291269dc067ace03f76305638467", 11_326_577),
+    // Note: 063b6b6653aa642616fd21d3d4701899.bundle and 2b731967c40860818dbeadf308b851f5.bundle
+    // were removed — their URLs 404 on the mirror, causing slow startup waits.
     ("6d3223da354de646ab79d5660dcac9d2.bundle", "2a94ec3a870aca582cb7d2666fc2f81a", 19_822_299),
     ("91aca73acb86d6607f0efa1f803348be.bundle", "c82afb3cf4106e2ff1e52770adce8b8a", 62_928_907),
     ("94e46740de5686a7dc4491ef7d58c517.bundle", "59bacad169acb6eb3786ea1b2f46455f", 986_601),
@@ -839,11 +839,20 @@ pub(crate) async fn apply_logo_bundle(
         }
 
         // Idempotency: if the installed bundle already has our patched hash, skip.
-        if let Ok(h) = md5_of_file(&target) {
-            if h.eq_ignore_ascii_case(expected_md5) {
-                println!("[logo] {} already patched, skipping.", filename);
-                continue;
+        // Fast path: check file size first to avoid hashing large bundles on every launch.
+        let mut needs_patch = true;
+        if let Ok(meta) = std::fs::metadata(&target) {
+            if meta.len() == *expected_size {
+                if let Ok(h) = md5_of_file(&target) {
+                    if h.eq_ignore_ascii_case(expected_md5) {
+                        println!("[logo] {} already patched, skipping.", filename);
+                        needs_patch = false;
+                    }
+                }
             }
+        }
+        if !needs_patch {
+            continue;
         }
 
         // Download the patched bundle (verified by MD5 + size).
