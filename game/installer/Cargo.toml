@@ -1,6 +1,6 @@
 [package]
 name = "fluxrec-installer"
-version = "1.0.9"
+version = "0.6.17"
 edition = "2021"
 description = "Zero-touch Flux Rec setup: fetches the 2025 Rec Room client, 2025Patch and config, no Steam client needed."
 
@@ -24,9 +24,6 @@ hex = "0.4"
 flate2 = "1"
 serde_json = "1"
 sevenz-rust = "0.6"
-# JPEG decoding for the launcher screenshot carousel (v1.0.4).
-# PNG for the Flux Rec logo (v1.0.5).
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # Win32 GUI (installer window) — Windows-only; other targets skip it so
 # `cargo check` on Linux stays light.
