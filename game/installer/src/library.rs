@@ -391,6 +391,27 @@ fn do_play(
         }
     }
 
+    // v1.0.3: Patch the game exe icon (once) so the taskbar shows the blue
+    // Flux Rec logo. Skipped if already done (flag file).
+    {
+        let flag = dir.join(".icon_patched_v1");
+        if !flag.exists() {
+            if let Some(exe) = crate::find_game_exe(dir) {
+                const ICON_BYTES: &[u8] = include_bytes!("../assets/fluxrec.ico");
+                match crate::icon_patch::patch_exe_icon(&exe, ICON_BYTES) {
+                    Ok(true) => {
+                        println!("[icon] patched game exe icon.");
+                        let _ = std::fs::write(&flag, "1");
+                    }
+                    Ok(false) => {
+                        let _ = std::fs::write(&flag, "1");
+                    }
+                    Err(e) => eprintln!("[icon] icon patch failed ({}); continuing.", e),
+                }
+            }
+        }
+    }
+
     // Clear Unity's HTTP cache (fast path) so the client fetches fresh data.
     send(92, "Launching Flux Rec…");
     {
