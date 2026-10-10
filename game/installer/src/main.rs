@@ -1288,16 +1288,14 @@ async fn apply_common_components(
     // v0.3.0: 2025 client uses 2025Patch (native DLL injection) instead of BepInEx.
     // The patch files (2025Patch.dll, Injector.exe, 2025patch.ini) go next to
     // Recroom_Release.exe. The injector launches the game with the patch.
+    // v1.0.1: files are embedded — no download needed.
     progress.set_stage("Installing 2025Patch…");
-    let patch_zip = fetch_patch2025_zip(client, progress).await?;
     install_patch2025(
         target,
-        &patch_zip,
+        std::path::Path::new(""),
         ns_host,
         progress,
     )?;
-    // Clean up the temp patch zip.
-    let _ = std::fs::remove_file(&patch_zip);
 
     // 6. Configuration lives in 2025patch.ini (written by install_patch2025).
     progress.set_stage("Writing configuration…");
@@ -1331,27 +1329,24 @@ pub(crate) async fn fetch_patch2025_zip(
     Ok(dest)
 }
 
-/// Install 2025Patch: extract DLL, injector, and write configured 2025patch.ini.
+/// Install 2025Patch: write DLL, injector, and configured 2025patch.ini.
+/// v1.0.1: files are embedded in the binary (no GitHub download).
 pub(crate) fn install_patch2025(
     target: &std::path::Path,
-    patch_zip: &std::path::Path,
+    _patch_zip: &std::path::Path,
     ns_host: &str,
     _progress: &progress::Progress,
 ) -> Result<(), String> {
-    use std::io::Read;
-    
-    let file = std::fs::File::open(patch_zip)
-        .map_err(|e| format!("open patch zip: {}", e))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("read patch zip: {}", e))?;
-    
-    // Extract 2025Patch.dll and Injector.exe next to Recroom_Release.exe
-    for name in ["2025Patch.dll", "Injector.exe"] {
-        let mut entry = archive.by_name(name)
-            .map_err(|e| format!("patch zip missing {}: {}", name, e))?;
-        let mut buf = Vec::new();
-        entry.read_to_end(&mut buf)
-            .map_err(|e| format!("read {}: {}", name, e))?;
+    // v1.0.1: Use embedded files instead of downloading from GitHub.
+    // The GitHub download was failing on some networks ("error sending
+    // request"), breaking installs. The files are small (67KB + 39KB),
+    // so embedding them is reliable and fast.
+    // so embedding them is reliable and fast.
+    const PATCH_DLL: &[u8] = include_bytes!("../assets/2025Patch.dll");
+    const INJECTOR_EXE: &[u8] = include_bytes!("../assets/Injector.exe");
+
+    // Write 2025Patch.dll and Injector.exe next to Recroom_Release.exe
+    for (name, bytes) in [("2025Patch.dll", PATCH_DLL), ("Injector.exe", INJECTOR_EXE)] {
         let dest = target.join(name);
         // Clear readonly (from v0.6.16 protection) before overwriting
         #[cfg(windows)]
@@ -1364,9 +1359,9 @@ pub(crate) fn install_patch2025(
                 }
             }
         }
-        std::fs::write(&dest, &buf)
+        std::fs::write(&dest, bytes)
             .map_err(|e| format!("write {}: {}", name, e))?;
-        println!("[patch2025] installed {}", name);
+        println!("[patch2025] installed {} ({} bytes, embedded)", name, bytes.len());
     }
     
     // Write configured 2025patch.ini with Flux Rec backend
