@@ -251,29 +251,128 @@ fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
     }
 }
 
-/// v1.0.6: Basic validation that a game exe is not corrupted.
-/// Checks MZ header, PE header, and that the file is a reasonable size.
-/// This catches the icon-patch corruption from v1.0.3-1.0.5.
-fn is_valid_game_exe(exe_path: &Path) -> bool {
-    let data = match std::fs::read(exe_path) {
-        Ok(d) => d,
-        Err(_) => return false,
+/// v1.0.8: Smart repair — scan the game folder and only fix what's actually
+/// broken, instead of nuking everything for one bad file.
+/// Returns Ok(true) if the install is healthy, Ok(false) if it needs a full
+/// reinstall, Err(msg) if repair failed.
+fn smart_repair(
+    dir: &Path,
+    ns_host: &str,
+    photon_rt: &str,
+    photon_voice: &str,
+    photon_chat: &str,
+    msg_tx: &Sender<LibMsg>,
+) -> Result<bool, String> {
+    let send = |percent: u8, stage: &str| {
+        let _ = msg_tx.send(LibMsg::Progress {
+            percent,
+            stage: stage.to_string(),
+            detail: String::new(),
+        });
     };
-    // Must be at least 1MB (the real exe is ~50MB+).
-    if data.len() < 1_000_000 {
-        return false;
+
+    // Count files to gauge install health.
+    let file_count = count_files(dir);
+    println!("[smart-repair] found {} files in game dir", file_count);
+
+    // If the dir is essentially empty, do a full install.
+    if file_count < 100 {
+        println!("[smart-repair] dir nearly empty — full install needed");
+        return Ok(false);
     }
-    if data[0] != b'M' || data[1] != b'Z' {
-        return false;
+
+    // Dir has substance — do targeted repairs.
+    send(70, "Scanning game files…");
+    let mut repaired = 0;
+
+    // 1. Patch files: restore from embedded (no download).
+    {
+        const PATCH_DLL: &[u8] = include_bytes!("../assets/2025Patch.dll");
+        const INJECTOR: &[u8] = include_bytes!("../assets/Injector.exe");
+        let patch_dll = dir.join("2025Patch.dll");
+        let injector = dir.join("Injector.exe");
+        let patch_ini = dir.join("2025patch.ini");
+
+        if !patch_dll.is_file() {
+            println!("[smart-repair] restoring 2025Patch.dll from embedded");
+            let _ = std::fs::write(&patch_dll, PATCH_DLL);
+            repaired += 1;
+        }
+        if !injector.is_file() {
+            println!("[smart-repair] restoring Injector.exe from embedded");
+            let _ = std::fs::write(&injector, INJECTOR);
+            repaired += 1;
+        }
+        if !patch_ini.is_file() {
+            println!("[smart-repair] restoring 2025patch.ini");
+            let _ = std::fs::write(&patch_ini, "[2025Patch]\n");
+            repaired += 1;
+        }
     }
-    if data.len() < 64 {
-        return false;
+
+    // 2. Game exe: check exists and has valid MZ header.
+    // v1.0.8: DO NOT delete on validation failure — the icon patch is disabled,
+    // and a false positive would nuke 3.6GB. Just warn.
+    if let Some(exe) = crate::find_game_exe(dir) {
+        if !has_valid_mz(&exe) {
+            eprintln!("[smart-repair] WARNING: game exe has invalid header: {}", exe.display());
+            // Don't delete — let the user decide. Return false to trigger
+            // a manual reinstall prompt, not an automatic nuke.
+            return Err("Game exe appears corrupted. Please reinstall from Setup.".to_string());
+        }
+    } else {
+        // Exe missing but dir has files — strange, but don't nuke.
+        // The full install check at the top of do_play will handle it.
+        return Ok(false);
     }
-    let pe_off = u32::from_le_bytes([data[60], data[61], data[62], data[63]]) as usize;
-    if pe_off + 6 > data.len() {
-        return false;
+
+    if repaired > 0 {
+        println!("[smart-repair] repaired {} files", repaired);
+    } else {
+        println!("[smart-repair] all critical files OK");
     }
-    &data[pe_off..pe_off + 4] == b"PE\0\0"
+    Ok(true)
+}
+
+/// Count files in a directory (recursive, fast).
+fn count_files(dir: &Path) -> usize {
+    let mut count = 0;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                count += 1;
+            } else if path.is_dir() {
+                // Don't recurse into huge dirs for speed — just count top 2 levels
+                if let Ok(sub) = std::fs::read_dir(&path) {
+                    for sub_entry in sub.flatten() {
+                        if sub_entry.path().is_file() {
+                            count += 1;
+                        }
+                        if count > 5000 {
+                            return count; // Enough to know it's a full install
+                        }
+                    }
+                }
+            }
+            if count > 5000 {
+                return count;
+            }
+        }
+    }
+    count
+}
+
+/// Check if a file has a valid MZ (DOS) header.
+fn has_valid_mz(path: &Path) -> bool {
+    if let Ok(mut f) = std::fs::File::open(path) {
+        use std::io::Read;
+        let mut buf = [0u8; 2];
+        if f.read_exact(&mut buf).is_ok() {
+            return buf == [b'M', b'Z'];
+        }
+    }
+    false
 }
 
 /// PLAY was clicked: run the full pre-launch sequence (verify, repair,
@@ -296,8 +395,21 @@ fn do_play(
 
     send(5, "Preparing Flux Rec…");
 
-    // If the game was never installed, run the full install first.
-    if crate::find_game_exe(dir).is_none() {
+    // v1.0.8: Smart repair FIRST — scan the folder and fix only what's broken.
+    // If the dir has substance (>100 files), do targeted repairs instead of
+    // a full 3.6GB reinstall.
+    let needs_full_install = match smart_repair(dir, ns_host, photon_rt, photon_voice, photon_chat, msg_tx) {
+        Ok(healthy) => !healthy,
+        Err(e) => {
+            send(100, &e);
+            std::thread::sleep(Duration::from_secs(6));
+            std::process::exit(1);
+        }
+    };
+
+    // If the game was never installed (or smart repair says it's empty),
+    // run the full install.
+    if needs_full_install || crate::find_game_exe(dir).is_none() {
         send(8, "Installing game files…");
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -446,21 +558,6 @@ fn do_play(
     //         }
     //     }
     // }
-
-    // v1.0.6: Validate the game exe. If the icon patch (v1.0.3-1.0.5) corrupted
-    // it, delete it so the install check above triggers a fresh download.
-    if let Some(exe) = crate::find_game_exe(dir) {
-        if !is_valid_game_exe(&exe) {
-            eprintln!("[library] game exe failed validation (likely icon-patch corruption); forcing reinstall.");
-            send(75, "Game file corrupted — reinstalling…");
-            let _ = std::fs::remove_file(&exe);
-            // Remove the flag so we don't try to patch again.
-            let _ = std::fs::remove_file(dir.join(".icon_patched_v1"));
-            // Trigger reinstall by recursing (the find_game_exe check at the
-            // top will now fail and run the installer).
-            return do_play(dir, ns_host, photon_rt, photon_voice, photon_chat, msg_tx);
-        }
-    }
 
     // Clear Unity's HTTP cache (fast path) so the client fetches fresh data.
     send(92, "Launching Flux Rec…");
