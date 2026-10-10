@@ -5,6 +5,7 @@ import { withNotFound, withOnError } from '@repo/hono-helpers'
 
 import { buildEndpoints } from './endpoints'
 
+import type { Context } from 'hono'
 import type { App } from './context'
 
 /**
@@ -30,5 +31,30 @@ const app = new Hono<App>()
 
 	// Endpoints document, derived from the deploy-time base domain.
 	.get('/', (c) => c.json(buildEndpoints(c.env.DOMAIN, c.env.SUBDOMAINS)))
+
+/**
+ * The 2025 client's orientation flow looks rooms up on the ns host itself
+ * (`https://ns.rec.net//rooms?name=SocialOrientation…`) rather than on the
+ * Rooms service host — the real ns.rec.net answered those. Proxy them to the
+ * Rooms service instead of 404ing, so "Go Now!" can resolve the next room.
+ * The double slash is the client's own doing; collapse it before proxying.
+ */
+const proxyToRooms = (c: Context<App>) => {
+	const roomsBase = buildEndpoints(c.env.DOMAIN, c.env.SUBDOMAINS)['Rooms']
+	const url = new URL(c.req.url)
+	const path = url.pathname.replace(/\/{2,}/g, '/')
+	return fetch(new Request(`${roomsBase}${path}${url.search}`, c.req.raw))
+}
+
+app.all('/rooms', proxyToRooms)
+app.all('/rooms/*', proxyToRooms)
+
+// Hono matches `//rooms` literally, so catch the client's double-slash form here.
+app.use('*', async (c, next) => {
+	if (/^\/{2,}rooms(\/|$)/.test(new URL(c.req.url).pathname)) {
+		return proxyToRooms(c)
+	}
+	await next()
+})
 
 export default app
