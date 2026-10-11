@@ -53,4 +53,4 @@ jobs:
 
       - name: Test room/save and subroom ID regressions
         working-directory: server/apps/rooms
-        run: pnpm run test -- src/test/integration/api.test.ts -t "save|SubRoomId"
+        run: pnpm exec vitest run src/test/integration/api.test.ts -t "save|SubRoomId"
