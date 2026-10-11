@@ -86,7 +86,7 @@ const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
     // (contains Rec Room face + graduation photo, not the logo).
     ("94e46740de5686a7dc4491ef7d58c517.bundle", "5647509ee0fb46807927603931491225", 986_601),
     ("6d3223da354de646ab79d5660dcac9d2.bundle.gz", "c5d71893019bbfc5804eb6ea5b92e4f9", 4_274_707),
-    ("91aca73acb86d6607f0efa1f803348be.bundle", "c82afb3cf4106e2ff1e52770adce8b8a", 62_928_907),
+    ("91aca73acb86d6607f0efa1f803348be.bundle", "a5956402fb8657202e52320a068f2a56", 62_928_907),
 ];
 const LOGO_BUNDLE_BASE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-patch-v3/";
 
@@ -961,12 +961,12 @@ pub(crate) async fn apply_logo_bundle(
         // Fast path: check file size first to avoid hashing large bundles on every launch.
         let mut needs_patch = true;
         // Decompressed bundle hashes (must match the hardcoded check below after download).
-        let decompressed_hash = if filename.contains("6d3223da") {
-            "1a8cdcfb9e56ef380db629469581829a" // v3 blue logo
-        } else {
-            expected_md5 // fallback for non-gzipped entries
-        };
-        let decompressed_size: u64 = 19_822_299;
+        let (decompressed_hash, decompressed_size): (&str, u64) =
+            if filename.contains("6d3223da") {
+                ("1a8cdcfb9e56ef380db629469581829a", 19_822_299) // v3 blue logo, decompressed
+            } else {
+                (expected_md5, *expected_size) // non-gzipped: file hash/size directly
+            };
         if let Ok(meta) = std::fs::metadata(&target) {
             if meta.len() == decompressed_size {
                 if let Ok(h) = md5_of_file(&target) {
