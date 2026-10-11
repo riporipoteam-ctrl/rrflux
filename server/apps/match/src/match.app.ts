@@ -939,7 +939,13 @@ function instanceFieldsFromRoom(room: Room, subRoomId?: number) {
 	// (without it the new scene won't load). Personal dorms are the exception: they
 	// carry the owner prefix `@<user>'s Dorm` and must NOT also get a `^`.
 	const rawName = str(room.Name, 'Room')
-	const name = rawName.startsWith('^') || rawName.startsWith('@') ? rawName : `^${rawName}`
+	// Earlier builds could persist a public-room prefix on a personal dorm.
+	// Remove only that accidental prefix; normal public-room names keep their `^`.
+	const normalizedName = room.IsDorm === true ? rawName.replace(/^\^+(?=@)/, '') : rawName
+	const name =
+		normalizedName.startsWith('^') || normalizedName.startsWith('@')
+			? normalizedName
+			: `^${normalizedName}`
 	return {
 		roomId: num(room.RoomId, 1),
 		subRoomId: num(sub?.SubRoomId, 1),
