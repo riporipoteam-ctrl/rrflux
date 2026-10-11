@@ -143,9 +143,9 @@ public class Plugin : BasePlugin
         Patches.NametagBadgePatch.Apply();
 
 
-        // The broad-reflection ChatBubblePatch was removed after it reproduced
-        // a room-loading hang at 18%. Do not re-enable it until the handler can be
-        // patched by a verified signature and tested in a live room.
+        // The experimental ChatBubblePatch was removed in the rollback for the
+        // 18% room-loading hang. Do not re-enable it until its target is verified
+        // against this client build and tested in a live room.
 
         // StoreCrashGuardPatch REMOVED 2026-09-25: the user explicitly rejected
         // broad exception suppression. The Store blank page needs a real root-cause
