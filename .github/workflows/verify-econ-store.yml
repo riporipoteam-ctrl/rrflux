@@ -1,6 +1,14 @@
 name: Verify Econ Store regression tests
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/verify-econ-store.yml'
+      - 'server/apps/econ/src/econ.app.ts'
+      - 'server/apps/econ/src/catalog-load.ts'
+      - 'server/apps/econ/src/test/integration/api.test.ts'
+      - 'server/apps/econ/static/storefronts/sf2.json'
+      - 'server/apps/econ/static/db/skins.json'
   push:
     branches: [main]
     paths:
