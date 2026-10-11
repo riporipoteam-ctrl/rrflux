@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       workers:
-        description: 'Comma-separated worker dirs to deploy (default: auth,accounts,rooms,econ,api,lists,discovery,clubs,img)'
+        description: 'Comma-separated worker dirs to deploy (default: auth,accounts,rooms,econ,api,lists,discovery,clubs,img,match)'
         required: false
-        default: 'auth,accounts,rooms,econ,api,lists,discovery,clubs,img'
+        default: 'auth,accounts,rooms,econ,api,lists,discovery,clubs,img,match'
       target:
         description: "Deploy target: 'workers-dev' deploys to <name>.workers.dev; 'custom-domain' deploys onto <subdomain>.recflare.net (the client-facing hosts)"
         required: false
@@ -21,6 +21,7 @@ on:
       - 'server/apps/auth/**'
       - 'server/apps/econ/**'
       - 'server/apps/rooms/**'
+      - 'server/apps/match/**'
       - 'server/apps/lists/**'
       - 'server/apps/discovery/**'
       - 'server/packages/domain/**'
@@ -74,7 +75,7 @@ jobs:
           set -euo pipefail
           WORKERS_INPUT="${{ inputs.workers }}"
           if [ -z "$WORKERS_INPUT" ]; then
-            WORKERS_INPUT='api,auth,econ,lists,discovery,rooms'
+            WORKERS_INPUT='api,auth,econ,lists,discovery,rooms,match'
           fi
           IFS=',' read -ra WORKERS <<< "$WORKERS_INPUT"
           for worker in "${WORKERS[@]}"; do
