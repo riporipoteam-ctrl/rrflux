@@ -2140,7 +2140,134 @@ async function attachStats(
 	}
 }
 
+/** Normalize historic SubRoomIds that cannot round-trip through JavaScript numbers.
+ *
+ * Room clients and workers pass SubRoomIds as JS numbers. If a value exceeds
+ * Number.MAX_SAFE_INTEGER, a save can be inserted under the rounded value while the
+ * subroom row retains the exact 64-bit integer; current_save_id then never gets updated.
+ * That leaves a saved scene invisible to the loader. Re-key the subroom and every
+ * referencing row to a fresh safe integer before the room is served.
+ */
+async function repairUnsafeSubRoomIds(db: D1Database, roomIds: number[]): Promise<void> {
+	const safeRoomIds = [...new Set(roomIds.filter((id) => Number.isSafeInteger(id) && id > 0))]
+	if (safeRoomIds.length === 0) return
+
+	const placeholders = safeRoomIds.map((_, i) => `?${i + 1}`).join(', ')
+	const { results } = await db
+		.prepare(
+			`SELECT CAST(s.sub_room_id AS TEXT) AS old_id, s.room_id,
+			        s.current_save_id, s.staged_save_id,
+			        json_extract(r.data, '$.IsDorm') AS is_dorm
+			 FROM subroom s JOIN room r ON r.room_id = s.room_id
+			 WHERE (s.sub_room_id > 9007199254740991 OR s.sub_room_id < -9007199254740991)
+			   AND s.room_id IN (${placeholders})
+			 ORDER BY s.sub_room_id`
+		)
+		.bind(...safeRoomIds)
+		.all<{
+			old_id: string
+			room_id: number
+			current_save_id: number | null
+			staged_save_id: number | null
+			is_dorm: number | boolean | null
+		}>()
+
+	if (results.length === 0) return
+
+	const { results: availableTables } = await db
+		.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('room_instance', 'presence')`)
+		.all<{ name: string }>()
+	const tables = new Set(availableTables.map((row) => row.name))
+
+	for (const row of results) {
+		// Several distinct unsafe integers can collapse to the same JS number. Never merge
+		// their saves automatically: stop and preserve data for a manual repair instead.
+		const collision = await db
+			.prepare(
+				`SELECT COUNT(*) AS count FROM subroom
+				 WHERE (sub_room_id > 9007199254740991 OR sub_room_id < -9007199254740991)
+				   AND CAST(sub_room_id AS REAL) = CAST(?1 AS REAL)`
+			)
+			.bind(row.old_id)
+			.first<{ count: number }>()
+		if ((collision?.count ?? 0) !== 1) {
+			throw new Error('Unsafe SubRoomId collision; refusing to merge scene-save records')
+		}
+
+		const next = await db
+			.prepare(
+				`SELECT COALESCE(MAX(sub_room_id), 0) + 1 AS next_id
+				 FROM subroom WHERE sub_room_id BETWEEN 1 AND 9007199254740991`
+			)
+			.first<{ next_id: number }>()
+		const nextId = next?.next_id
+		if (typeof nextId !== 'number' || !Number.isSafeInteger(nextId) || nextId <= 0) {
+			throw new Error('Could not allocate a safe SubRoomId during repair')
+		}
+
+		// The scene-save POST has historically inserted the nearest representable double
+		// for the subroom ID. Match by REAL representation to recover those orphaned rows.
+		let publishSaveId: number | null = null
+		const isDorm = row.is_dorm === true || row.is_dorm === 1
+		if (isDorm && row.current_save_id == null && row.staged_save_id == null) {
+			const latest = await db
+				.prepare(
+					`SELECT sub_room_data_save_id FROM subroom_save
+					 WHERE CAST(sub_room_id AS REAL) = CAST(?1 AS REAL)
+					   AND COALESCE(json_extract(data, '$.DataBlob'), '') <> ''
+					 ORDER BY sub_room_data_save_id DESC LIMIT 1`
+				)
+				.bind(row.old_id)
+				.first<{ sub_room_data_save_id: number }>()
+			publishSaveId = latest?.sub_room_data_save_id ?? null
+		}
+
+		const updates = [
+			db.prepare(
+				`UPDATE subroom_save SET sub_room_id = ?2
+				 WHERE CAST(sub_room_id AS REAL) = CAST(?1 AS REAL)`
+			).bind(row.old_id, nextId),
+			db.prepare(
+				`UPDATE subroom_permission SET sub_room_id = ?2
+				 WHERE CAST(sub_room_id AS REAL) = CAST(?1 AS REAL)`
+			).bind(row.old_id, nextId),
+		]
+		if (tables.has('room_instance')) {
+			updates.push(
+				db.prepare(
+					`UPDATE room_instance SET data = json_set(data, '$.subRoomId', ?3)
+					 WHERE json_extract(data, '$.roomId') = ?1
+					   AND CAST(json_extract(data, '$.subRoomId') AS REAL) = CAST(?2 AS REAL)`
+				).bind(row.room_id, row.old_id, nextId)
+			)
+		}
+		if (tables.has('presence')) {
+			updates.push(
+				db.prepare(
+					`UPDATE presence SET data = json_set(data, '$.roomInstance.subRoomId', ?3)
+					 WHERE json_extract(data, '$.roomInstance.roomId') = ?1
+					   AND CAST(json_extract(data, '$.roomInstance.subRoomId') AS REAL) = CAST(?2 AS REAL)`
+				).bind(row.room_id, row.old_id, nextId)
+			)
+		}
+		updates.push(
+			db.prepare('UPDATE subroom SET sub_room_id = ?2 WHERE CAST(sub_room_id AS TEXT) = ?1')
+				.bind(row.old_id, nextId)
+		)
+		if (publishSaveId !== null) {
+			updates.push(
+				db.prepare(
+					'UPDATE subroom SET current_save_id = ?2, staged_save_id = NULL WHERE sub_room_id = ?1 AND current_save_id IS NULL AND staged_save_id IS NULL'
+				).bind(nextId, publishSaveId)
+			)
+		}
+
+		await db.batch(updates)
+	}
+}
+
 /** Hydrate a single room's `SubRooms` and derived `Stats` (no-op for null). */
+
 async function hydrateRoom(db: D1Database, room: Room | null): Promise<Room | null> {
 	if (room) await hydrateRooms(db, [room])
 	return room
@@ -2158,6 +2285,12 @@ async function hydrateRooms(
 	rooms: Room[],
 	stats?: Map<number, RoomStats>
 ): Promise<Room[]> {
+	// Old subroom IDs can be wider than JavaScript's safe integer range. Normalize those
+	// rows before a response exposes their IDs or a later save tries to update them.
+	await repairUnsafeSubRoomIds(
+		db,
+		rooms.map((room) => Number(room.RoomId))
+	)
 	await Promise.all([
 		attachSubRooms(db, rooms),
 		attachTags(db, rooms),
@@ -2387,11 +2520,24 @@ export async function insertSubRoom(
 	roomId: number,
 	sub: SubRoom
 ): Promise<SubRoom> {
+	// Do not use SQLite's AUTOINCREMENT sequence for SubRoomId. A historic row
+	// imported a 64-bit ID above Number.MAX_SAFE_INTEGER, poisoning sqlite_sequence:
+	// every new ID would then be imprecise in JavaScript and saves could no longer point
+	// back to the subroom row. Allocate from the safe-integer range explicitly instead.
 	const row = await db
-		.prepare('INSERT INTO subroom (room_id, data) VALUES (?1, ?2) RETURNING sub_room_id')
+		.prepare(
+			`INSERT INTO subroom (sub_room_id, room_id, data)
+			 SELECT COALESCE(MAX(CASE WHEN sub_room_id BETWEEN 1 AND 9007199254740991
+			                           THEN sub_room_id END), 0) + 1, ?1, ?2
+			 FROM subroom
+			 RETURNING sub_room_id`
+		)
 		.bind(roomId, serializeSubRoom(sub, roomId))
 		.first<{ sub_room_id: number }>()
 	const subRoomId = row!.sub_room_id
+	if (!Number.isSafeInteger(subRoomId) || subRoomId <= 0) {
+		throw new Error('Could not allocate a safe SubRoomId')
+	}
 	const created: SubRoom = {
 		...sub,
 		SubRoomId: subRoomId,
