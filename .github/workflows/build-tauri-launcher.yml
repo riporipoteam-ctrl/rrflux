@@ -1,0 +1,65 @@
+name: Build and publish Flux Rec Tauri launcher
+
+on:
+  pull_request:
+    paths:
+      - 'launcher/**'
+      - '.github/workflows/build-tauri-launcher.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'launcher/**'
+      - '.github/workflows/build-tauri-launcher.yml'
+
+jobs:
+  windows-launcher:
+    name: Build Windows launcher
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        working-directory: launcher
+        run: npm install
+
+      - name: Build Tauri installer
+        working-directory: launcher
+        env:
+          # Same compile-time Firebase configuration used by the existing game launcher.
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+        run: npm run tauri -- build
+
+      - name: Upload launcher installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flux-Rec-Launcher-v0.1.3-Windows
+          if-no-files-found: error
+          path: launcher/src-tauri/target/release/bundle/nsis/*.exe
+
+      - name: Publish launcher prerelease
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "fluxrec-launcher-v0.1.3"
+          $assets = Get-ChildItem "launcher\src-tauri\target\release\bundle\nsis\*.exe"
+          if (-not $assets -or $assets.Count -eq 0) { throw "Tauri NSIS installer was not produced" }
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --prerelease --title "Flux Rec Launcher v0.1.3" --notes "Blue Flux Rec branding, refreshed launcher UI, and launch-time game manifest/update checks."
+            if ($LASTEXITCODE -ne 0) { throw "Could not create launcher release" }
+          }
+          foreach ($asset in $assets) {
+            gh release upload $tag $asset.FullName --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Could not upload $($asset.Name)" }
+          }

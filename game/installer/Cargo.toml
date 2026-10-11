@@ -1,13 +1,14 @@
 [package]
 name = "fluxrec-installer"
-version = "1.0.19"
+version = "1.0.20"
 edition = "2021"
 description = "Zero-touch Flux Rec setup: fetches the 2025 Rec Room client, 2025Patch and config, no Steam client needed."
 
 [build-dependencies]
-# Embeds the Flux Rec icon + version metadata into FluxRec-Setup.exe on
-# Windows CI. build.rs no-ops on other platforms so Linux checks stay clean.
+# Embeds the generated single-colour Flux Rec icon + version metadata on Windows CI.
+# Keep PNG encoding available to build.rs so the executable icon uses the same approved mark.
 winres = "0.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [[bin]]
 name = "FluxRec-Setup"

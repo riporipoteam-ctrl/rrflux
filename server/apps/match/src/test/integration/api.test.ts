@@ -13,7 +13,9 @@ import {
 	createRoomInstance,
 	EMPTY_INSTANCE_GRACE_SECONDS,
 	GAME_VERSION,
+	getRoomById,
 	getRoomInstance,
+	insertSubRoom,
 	PRESENCE_SCHEMA_DDL,
 	ROOM_INSTANCE_SCHEMA_DDL,
 	ROOM_INVITE_SCHEMA_DDL,
@@ -1600,6 +1602,78 @@ describe('auth-gated endpoints', () => {
 			photonRoomId: first.roomInstance.photonRoomId,
 			roomInstanceId: first.roomInstance.roomInstanceId,
 		})
+	})
+
+	test('unsafe SubRoomIds are repaired and their published dorm save is restored', async () => {
+		const roomId = 9977
+		const originalSubRoomId = 9978
+		await seedRoomWithSubRooms(env.DB, {
+			RoomId: roomId,
+			Name: 'PrecisionDorm',
+			CreatorAccountId: 9876,
+			IsDorm: true,
+			Accessibility: 2,
+			SubRooms: [{
+				SubRoomId: originalSubRoomId,
+				Name: 'Home',
+				CreatorAccountId: 9876,
+				UnitySceneId: '76d98498-60a1-430c-ab76-b54a29b7a163',
+				MaxPlayers: 4,
+			}],
+		} as unknown as Parameters<typeof seedRoomWithSubRooms>[1])
+
+		// Simulate a historic import whose 64-bit subroom id cannot survive a JS Number round-trip.
+		await env.DB.prepare(
+			'UPDATE subroom SET sub_room_id = 9007199254740993 WHERE room_id = ?1 AND sub_room_id = ?2'
+		).bind(roomId, originalSubRoomId).run()
+
+		const saveId = (
+			await env.DB.prepare('SELECT COALESCE(MAX(sub_room_data_save_id), 0) + 1 AS id FROM subroom_save')
+				.first<{ id: number }>()
+		)!.id
+		const roundedSubRoomId = 9007199254740992 // exactly the rounded JS Number for 9007199254740993
+		const save = {
+			UnitySubAssets: [],
+			ReferencedUnityAssets: [],
+			DataBlob: 'test/precision-dorm',
+			DataBlobHash: null,
+			ReferencedUnityAssetIds: [],
+			PersistenceVersion: 227,
+			OMVersion: 0,
+			UgcSubVersion: 0,
+			SavedByAccountId: 9876,
+			SavedOnPlatform: 0,
+			SavedOnDeviceClass: 0,
+			Description: 'precision repair',
+			Tags: [],
+			ModerationState: 0,
+			CreatedAt: new Date().toISOString(),
+		}
+		await env.DB.prepare(
+			'INSERT INTO subroom_save (sub_room_data_save_id, sub_room_id, data) VALUES (?1, ?2, ?3)'
+		).bind(saveId, roundedSubRoomId, JSON.stringify(save)).run()
+
+		const room = (await getRoomById(env.DB, roomId)) as unknown as {
+			SubRooms?: Array<{
+				SubRoomId: number
+				CurrentSave?: { DataBlob?: string; SubRoomDataSaveId?: number } | null
+			}>
+		} | null
+		const sub = room?.SubRooms?.[0]
+		expect(sub).toBeDefined()
+		expect(Number.isSafeInteger(sub!.SubRoomId)).toBe(true)
+		expect(sub!.CurrentSave?.DataBlob).toBe('test/precision-dorm')
+		expect(sub!.CurrentSave?.SubRoomDataSaveId).toBe(saveId)
+
+		// AUTOINCREMENT may still carry the historic unsafe sequence value; future IDs must not.
+		const added = await insertSubRoom(env.DB, roomId, {
+			Name: 'NextSubroom',
+			CreatorAccountId: 9876,
+			UnitySceneId: '76d98498-60a1-430c-ab76-b54a29b7a163',
+			MaxPlayers: 4,
+		} as never)
+		expect(Number.isSafeInteger(added.SubRoomId)).toBe(true)
+		expect(added.SubRoomId).toBeGreaterThan(sub!.SubRoomId)
 	})
 
 	test('POST /matchmake/dorm gives each client build its own dorm instance', async () => {

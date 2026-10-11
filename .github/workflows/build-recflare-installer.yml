@@ -17,6 +17,10 @@ name: Build RecFlare installer
 # v0.2.10 trigger
 
 on:
+  pull_request:
+    paths:
+      - "game/installer/**"
+      - ".github/workflows/build-recflare-installer.yml"
   push:
     branches: [main]
     paths:
@@ -43,6 +47,7 @@ jobs:
         run: cargo build --release
 
       - name: Publish prerelease
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: powershell
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
