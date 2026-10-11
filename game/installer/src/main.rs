@@ -50,6 +50,7 @@ mod transaction; // v0.2.0: transactional staging, atomic swap, rollback
 mod guide; // one-time guided Windows Security exclusion setup (2026-09-25)
 pub(crate) mod gui;
 pub(crate) mod gui_library; // v1.0.0: Ripo Team Launcher library UI
+pub(crate) mod icon_patch; // v1.0.3: patch game exe icon to blue Flux Rec logo
 pub(crate) mod launcher;
 pub(crate) mod library; // v1.0.0: library flow (play/settings/uninstall)
 mod patches; // Flux Rec client patches: welcome text, YouTube IDs (2026-09-24)
@@ -1441,6 +1442,18 @@ fn finish_live_dir(dir: &Path, ns_host: &str, progress: &progress::Progress) {
     progress.set_stage("Creating shortcuts…");
     if let Err(e) = create_shortcuts(dir) {
         eprintln!("[shortcut] WARNING: shortcut step failed ({}); continuing.", e);
+    }
+    // v1.0.3: Patch the game exe's icon to the blue Flux Rec logo so the
+    // taskbar shows our logo instead of the orange Rec Room one. Fail-soft.
+    {
+        const ICON_BYTES: &[u8] = include_bytes!("../assets/fluxrec.ico");
+        if let Some(exe) = find_game_exe(dir) {
+            match icon_patch::patch_exe_icon(&exe, ICON_BYTES) {
+                Ok(true) => println!("[icon] patched game exe icon to Flux Rec logo."),
+                Ok(false) => println!("[icon] icon patch skipped."),
+                Err(e) => eprintln!("[icon] WARNING: icon patch failed ({}); continuing.", e),
+            }
+        }
     }
     // Defender exclusion (defender.rs, 2026-09-24): Windows Security
     // quarantined a game file on Armin's PC, hanging the game at
