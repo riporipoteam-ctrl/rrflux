@@ -78,12 +78,13 @@ const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
     // (filename, md5, size)
     // Note: 063b6b6653aa642616fd21d3d4701899.bundle and 2b731967c40860818dbeadf308b851f5.bundle
     // were removed — their URLs 404 on the mirror, causing slow startup waits.
-    // v1.0.2: 94e46740de5686a7dc4491ef7d58c517.bundle RE-ADDED with the FIXED
-    // blue geometric logo (transparent). The old MD5 (59bacad1...) was the
-    // wrong circular logo; the new MD5 (5647509e...) is the correct one.
-    // The launcher overwrites the wrong bundle in place.
+    // v1.0.15: 6d3223da354de646ab79d5660dcac9d2.bundle FIXED — the RecRoomLogo
+    // texture (256x256) now has the correct transparent blue Flux Rec logo.
+    // The old MD5 (2a94ec3a...) had the wrong circular logo.
+    // v1.0.2: 94e46740de5686a7dc4491ef7d58c517.bundle was the WRONG file
+    // (contains Rec Room face + graduation photo, not the logo).
     ("94e46740de5686a7dc4491ef7d58c517.bundle", "5647509ee0fb46807927603931491225", 986_601),
-    ("6d3223da354de646ab79d5660dcac9d2.bundle", "2a94ec3a870aca582cb7d2666fc2f81a", 19_822_299),
+    ("6d3223da354de646ab79d5660dcac9d2.bundle", "3ac82c0bb9b12aefcfce4d6a7262cd6e", 19_822_299),
     ("91aca73acb86d6607f0efa1f803348be.bundle", "c82afb3cf4106e2ff1e52770adce8b8a", 62_928_907),
 ];
 const LOGO_BUNDLE_BASE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-patch-v2/";
