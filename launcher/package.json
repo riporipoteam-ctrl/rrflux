@@ -1,1 +1,11 @@
-{"devDependencies":{"@tauri-apps/cli":"^2"},"name":"rrflux-launcher","private":true,"scripts":{"tauri":"tauri"},"version":"0.1.0"}
+{
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  },
+  "name": "rrflux-launcher",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "version": "0.1.3"
+}
