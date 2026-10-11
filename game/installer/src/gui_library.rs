@@ -670,10 +670,13 @@ mod imp {
         let dst = std::slice::from_raw_parts_mut(bits as *mut u8, (w * h * 4) as usize);
         let src = scaled.as_raw();
         for i in 0..(w * h) as usize {
-            dst[i * 4] = src[i * 4 + 2];     // B
-            dst[i * 4 + 1] = src[i * 4 + 1]; // G
-            dst[i * 4 + 2] = src[i * 4];     // R
-            dst[i * 4 + 3] = src[i * 4 + 3]; // A
+            let alpha = src[i * 4 + 3] as u16;
+            // AlphaBlend requires premultiplied BGRA; without this, transparent pixels
+            // can produce coloured halos and make the logo look multicoloured on light UI.
+            dst[i * 4] = ((src[i * 4 + 2] as u16 * alpha) / 255) as u8;     // B
+            dst[i * 4 + 1] = ((src[i * 4 + 1] as u16 * alpha) / 255) as u8; // G
+            dst[i * 4 + 2] = ((src[i * 4] as u16 * alpha) / 255) as u8;     // R
+            dst[i * 4 + 3] = alpha as u8; // A
         }
         hbmp
     }
