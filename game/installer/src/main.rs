@@ -1001,7 +1001,7 @@ pub(crate) async fn apply_logo_bundle(
             std::fs::write(&out_path, &decompressed).map_err(|e| e.to_string())?;
             let _ = std::fs::remove_file(&tmp_path);
             // Verify decompressed MD5
-            let decompressed_md5 = "3ac82c0bb9b12aefcfce4d6a7262cd6e";
+            let decompressed_md5 = "1a8cdcfb9e56ef380db629469581829a";
             if !file_ok(&out_path, Some(decompressed_md5), Some(19_822_299)) {
                 let _ = std::fs::remove_file(&out_path);
                 return Err(format!("logo bundle {} decompressed verification failed", filename));
