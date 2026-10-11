@@ -97,19 +97,21 @@ mod imp {
     const TIMER_MS: u32 = 50;
 
     // Palette (COLORREF = 0x00BBGGRR).
-    const BG: COLORREF = COLORREF(0x00170E0B); // #0B0E17 deep navy-black
-    const BG_TITLE: COLORREF = COLORREF(0x0019110D); // #0D1119 title bar
-    const BG_SIDE: COLORREF = COLORREF(0x001F1411); // #11141F sidebar
-    const BG_CARD: COLORREF = COLORREF(0x00281B16); // #161B28 cards
+    // v1.0.17: LIGHT THEME redesign — clean, modern, airy.
+    const BG: COLORREF = COLORREF(0x00FFFFFF); // #FFFFFF white
+    const BG_TITLE: COLORREF = COLORREF(0x00FFFFFF); // #FFFFFF title bar
+    const BG_SIDE: COLORREF = COLORREF(0x00FAF7F5); // #F5F7FA light sidebar
+    const BG_CARD: COLORREF = COLORREF(0x00FFFFFF); // #FFFFFF cards
     const BLUE: COLORREF = COLORREF(0x00FF9B2E); // Flux blue #2E9BFF
     const BLUE_LIGHT: COLORREF = COLORREF(0x00FFC76F); // #6FC7FF highlight
-    const BLUE_DIM: COLORREF = COLORREF(0x0080501A); // dim blue
-    const WHITE: COLORREF = COLORREF(0x00FFFFFF);
-    const GRAY: COLORREF = COLORREF(0x00B2A39A); // #9AA3B2 secondary text
-    const DIM: COLORREF = COLORREF(0x0070625A); // #5A6270 dim text
-    const TRACK: COLORREF = COLORREF(0x003A2A23); // #232A3A progress track
-    const BORDER: COLORREF = COLORREF(0x003D2B23); // #232B3D card border
-    const GREEN: COLORREF = COLORREF(0x0084DC3D); // #3DDC84 checkmarks
+    const BLUE_DIM: COLORREF = COLORREF(0x00D6E9FF); // light blue tint
+    const WHITE: COLORREF = COLORREF(0x00231D1A); // #1A1D23 dark text
+    const GRAY: COLORREF = COLORREF(0x0070625A); // #5A6270 secondary text
+    const DIM: COLORREF = COLORREF(0x00A8AEB8); // #B8AEA8 dim text
+    const TRACK: COLORREF = COLORREF(0x00F0EBE8); // #E8EBF0 progress track
+    const BORDER: COLORREF = COLORREF(0x00E8E4E1); // #E1E4E8 card border
+    const GREEN: COLORREF = COLORREF(0x0028A745); // #28A745 checkmarks
+    const PURE_WHITE: COLORREF = COLORREF(0x00FFFFFF); // actual white (on colored bg)
 
     // Setup sidebar steps: (title, subtitle).
     const STEPS: &[(&str, &str)] = &[
@@ -782,12 +784,12 @@ mod imp {
             let bg = if is_close {
                 COLORREF(0x001C2BC4) // soft red
             } else {
-                COLORREF(0x003D2B23) // card border tone
+                COLORREF(0x00EBE6E0) // light hover
             };
             rr_fill(hdc, rc.left, rc.top, w, h, 12, bg);
         }
         // Glyphs drawn with lines (no font-coverage risk).
-        let fg = if hover && is_close { WHITE } else { GRAY };
+        let fg = if hover && is_close { PURE_WHITE } else { GRAY };
         let pen = CreatePen(PS_SOLID, 2, fg);
         if pen.is_invalid() {
             return;
@@ -918,7 +920,7 @@ mod imp {
         let px = cx - pw / 2;
         let py = 312;
         rr_outline(hdc, px, py, pw, ph, ph, BLUE_DIM);
-        text_center(hdc, s.f_tiny, BLUE_LIGHT, &ver, cx, py, pw, ph);
+        text_center(hdc, s.f_tiny, BLUE, &ver, cx, py, pw, ph);
 
         // Steps.
         let states = step_states(s.percent, s.finished);
@@ -973,7 +975,7 @@ mod imp {
                     let _ = SelectObject(hdc, old);
                     let _ = DeleteObject(brush);
                 }
-                text_center(hdc, s.f_small, WHITE, "✓", x, cy - 11, 40, 22);
+                text_center(hdc, s.f_small, PURE_WHITE, "✓", x, cy - 11, 40, 22);
             }
             StepState::Active => {
                 // Blue ring + white number.
