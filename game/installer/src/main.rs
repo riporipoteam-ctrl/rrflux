@@ -945,21 +945,33 @@ pub(crate) async fn apply_logo_bundle(
 
     // Apply each of the 5 patched logo bundles.
     for (idx, (filename, expected_md5, expected_size)) in LOGO_BUNDLES.iter().enumerate() {
-        let target = aa_dir.join(filename);
+        // v1.0.21: The game stores decompressed .bundle files, not .gz.
+        // Strip .gz from the filename to find the actual target.
+        let target_name = filename.strip_suffix(".gz").unwrap_or(filename);
+        let target = aa_dir.join(target_name);
 
         if !target.exists() {
-            println!("[logo] target {} not found, skipping.", filename);
+            println!("[logo] target {} not found, skipping.", target_name);
             continue;
         }
 
         // Idempotency: if the installed bundle already has our patched hash, skip.
+        // v1.0.21: Compare against the DECOMPRESSED hash (the .bundle in the game dir),
+        // not the .gz hash from LOGO_BUNDLES.
         // Fast path: check file size first to avoid hashing large bundles on every launch.
         let mut needs_patch = true;
+        // Decompressed bundle hashes (must match the hardcoded check below after download).
+        let decompressed_hash = if filename.contains("6d3223da") {
+            "1a8cdcfb9e56ef380db629469581829a" // v3 blue logo
+        } else {
+            expected_md5 // fallback for non-gzipped entries
+        };
+        let decompressed_size: u64 = 19_822_299;
         if let Ok(meta) = std::fs::metadata(&target) {
-            if meta.len() == *expected_size {
+            if meta.len() == decompressed_size {
                 if let Ok(h) = md5_of_file(&target) {
-                    if h.eq_ignore_ascii_case(expected_md5) {
-                        println!("[logo] {} already patched, skipping.", filename);
+                    if h.eq_ignore_ascii_case(decompressed_hash) {
+                        println!("[logo] {} already patched, skipping.", target_name);
                         needs_patch = false;
                     }
                 }
