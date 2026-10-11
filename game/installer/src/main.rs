@@ -453,7 +453,99 @@ pub(crate) fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Resu
     let f = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
     let n = archive.len();
-    archive.extract(dest_dir).map_err(|e| e.to_string())?;
+    println!("[{label}] {n} entries to extract");
+
+    // v1.0.13: Parallel extraction with progress. The old single-threaded
+    // archive.extract() was slow and showed no progress, looking "stuck".
+    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let completed = Arc::new(AtomicUsize::new(0));
+    let errors = Arc::new(Mutex::new(Vec::new()));
+
+    // Get all file entries first (ZipArchive is not Sync, so we extract
+    // the metadata then process in parallel)
+    let mut entries = Vec::new();
+    for i in 0..n {
+        if let Ok(file) = archive.by_index(i) {
+            let name = file.name().to_string();
+            let is_dir = file.is_dir();
+            entries.push((i, name, is_dir));
+        }
+    }
+    drop(archive);
+
+    // Extract in parallel using rayon-like thread pool (std only)
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(8);
+    let chunk_size = (entries.len() + num_threads - 1) / num_threads;
+
+    std::thread::scope(|s| {
+        for chunk in entries.chunks(chunk_size) {
+            let chunk = chunk.to_vec();
+            let zip_path = zip_path.to_path_buf();
+            let dest_dir = dest_dir.to_path_buf();
+            let completed = completed.clone();
+            let errors = errors.clone();
+            let label = label.to_string();
+
+            s.spawn(move || {
+                // Each thread opens its own archive handle
+                let f = match std::fs::File::open(&zip_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        errors.lock().unwrap().push(e.to_string());
+                        return;
+                    }
+                };
+                let mut archive = match zip::ZipArchive::new(f) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        errors.lock().unwrap().push(e.to_string());
+                        return;
+                    }
+                };
+                for (i, name, is_dir) in chunk {
+                    if is_dir {
+                        let _ = std::fs::create_dir_all(dest_dir.join(&name));
+                    } else {
+                        match archive.by_index(i) {
+                            Ok(mut file) => {
+                                let out_path = dest_dir.join(&name);
+                                if let Some(parent) = out_path.parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
+                                match std::fs::File::create(&out_path) {
+                                    Ok(mut out) => {
+                                        if std::io::copy(&mut file, &mut out).is_err() {
+                                            errors.lock().unwrap().push(format!("copy failed: {}", name));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        errors.lock().unwrap().push(format!("create {}: {}", name, e));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                errors.lock().unwrap().push(format!("entry {}: {}", name, e));
+                            }
+                        }
+                    }
+                    let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                    if done % 500 == 0 || done == n {
+                        println!("[{label}] extracted {done}/{n}");
+                    }
+                }
+            });
+        }
+    });
+
+    let errs = errors.lock().unwrap();
+    if !errs.is_empty() {
+        return Err(format!("extraction errors: {}", errs.join("; ")));
+    }
     println!("[{label}] extracted {n} entries.");
     Ok(())
 }
