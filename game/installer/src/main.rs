@@ -86,9 +86,9 @@ const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
     // (contains Rec Room face + graduation photo, not the logo).
     ("94e46740de5686a7dc4491ef7d58c517.bundle", "5647509ee0fb46807927603931491225", 986_601),
     ("6d3223da354de646ab79d5660dcac9d2.bundle.gz", "c5d71893019bbfc5804eb6ea5b92e4f9", 4_274_707),
-    ("91aca73acb86d6607f0efa1f803348be.bundle", "a5956402fb8657202e52320a068f2a56", 62_928_907),
+    ("91aca73acb86d6607f0efa1f803348be.bundle", "e979b0de4eba8fde090b6186bc85b7f4", 62_928_907),
 ];
-const LOGO_BUNDLE_BASE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-patch-v3/";
+const LOGO_BUNDLE_BASE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-patch-v4/";
 
 /// Goldberg Steam emulator (gbe_fork) release — pinned. This is the exact
 /// archive our cloud test runs use to make the 2023 client boot with no
