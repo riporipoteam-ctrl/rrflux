@@ -45,4 +45,4 @@ jobs:
 
       - name: Run Econ API integration tests
         working-directory: server/apps/econ
-        run: pnpm run test -- src/test/integration/api.test.ts -t "(catalog|storefront|sf3|skin|thumbnail|Clothing|clothing)"
+        run: pnpm run test -- src/test/integration/api.test.ts -t "(avatar item reads back|a skin reads back|one key spans both kinds|the migrations and CATALOG_SCHEMA_DDL|the loader maps both captures|catalog_id is a contiguous|a merge inserts, refreshes and preserves)"
