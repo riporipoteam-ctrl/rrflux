@@ -1103,21 +1103,55 @@ mod imp {
         round_rect_path(hdc, &shadow, 20, if st.theme == Theme::Light { COLORREF(0x00D8D0C8) } else { COLORREF(0x00000000) })?;
         round_rect_path(hdc, card, 20, p.bg_card)?;
 
-        // Banner (gradient).
+        // Banner (v1.0.9): screenshot background.
         let banner = RECT {
             left: card.left + 2,
             top: card.top + 2,
             right: card.right - 2,
             bottom: card.top + 190,
         };
-        // Clip banner to rounded top: approximate with gradient + logo.
-        fill_gradient(hdc, &banner, p.banner_top, p.banner_bot)?;
+        let banner_w = banner.right - banner.left;
+        let banner_h = banner.bottom - banner.top;
+        // Draw screenshot background (use first carousel image).
+        if !st.carousel_bitmaps.is_empty() {
+            let hbmp = st.carousel_bitmaps[0];
+            let mem_dc = CreateCompatibleDC(hdc);
+            if !mem_dc.is_invalid() {
+                let old = SelectObject(mem_dc, hbmp);
+                // Stretch the 640x360 screenshot to fill the banner.
+                StretchBlt(
+                    hdc,
+                    banner.left,
+                    banner.top,
+                    banner_w,
+                    banner_h,
+                    mem_dc,
+                    0,
+                    0,
+                    640,
+                    360,
+                    SRCCOPY,
+                );
+                SelectObject(mem_dc, old);
+                DeleteDC(mem_dc);
+            }
+        } else {
+            fill_gradient(hdc, &banner, p.banner_top, p.banner_bot)?;
+        }
+        // Note: text drawn below uses shadow for readability on the screenshot.
         // Big logo on banner (v1.0.5: real logo bitmap, not drawn approximation).
+        // v1.0.9: use AlphaBlend for transparency.
         if !st.logo_bitmap.is_invalid() {
             let mem_dc = CreateCompatibleDC(hdc);
             if !mem_dc.is_invalid() {
                 let old = SelectObject(mem_dc, st.logo_bitmap);
-                BitBlt(
+                let bf = BLENDFUNCTION {
+                    BlendOp: AC_SRC_OVER as u8,
+                    BlendFlags: 0,
+                    SourceConstantAlpha: 255,
+                    AlphaFormat: AC_SRC_ALPHA as u8,
+                };
+                AlphaBlend(
                     hdc,
                     banner.left + 36,
                     banner.top + 44,
@@ -1126,7 +1160,9 @@ mod imp {
                     mem_dc,
                     0,
                     0,
-                    SRCCOPY,
+                    128,
+                    128,
+                    bf,
                 );
                 SelectObject(mem_dc, old);
                 DeleteDC(mem_dc);
