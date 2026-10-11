@@ -236,6 +236,12 @@ fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
                 update_version: version,
             });
         }
+        // v1.0.5: tell the UI the check failed so it can warn the user.
+        crate::updater::UpdateDecision::CheckFailed => {
+            let _ = msg_tx.send(LibMsg::CheckFailed(
+                "Couldn't reach GitHub to check for updates. Check your connection.".to_string(),
+            ));
+        }
         _ => {
             let _ = msg_tx.send(LibMsg::Ready {
                 update_available: false,
