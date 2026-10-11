@@ -142,11 +142,6 @@ public class Plugin : BasePlugin
         // (precise, minimal — no broad method scanning).
         Patches.NametagBadgePatch.Apply();
 
-        // Chat bubble fix: shows bubbles above avatars when messages arrive.
-        Patches.ChatBubblePatch.Apply();
-
-        // Run in background: prevents freeze when minimized during loading.
-        Patches.RunInBackgroundPatch.Apply();
 
         // Chat bubble fix: shows bubbles above avatars when messages arrive.
         // The stock client fails to map sender ID to avatar due to Photon
