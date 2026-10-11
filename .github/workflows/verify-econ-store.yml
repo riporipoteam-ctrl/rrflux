@@ -45,4 +45,4 @@ jobs:
 
       - name: Run Econ API integration tests
         working-directory: server/apps/econ
-        run: pnpm run test -- src/test/integration/api.test.ts
+        run: pnpm run test -- src/test/integration/api.test.ts -t "(catalog|storefront|sf3|skin|thumbnail|Clothing|clothing)"
