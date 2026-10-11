@@ -2305,6 +2305,7 @@ export async function getSubRoom(
 	roomId: number,
 	subRoomId: number
 ): Promise<SubRoom | null> {
+	await repairUnsafeSubRoomIds(db, [roomId])
 	const row = await db
 		.prepare(`SELECT ${SUBROOM_COLUMNS} FROM subroom WHERE room_id = ?1 AND sub_room_id = ?2`)
 		.bind(roomId, subRoomId)
@@ -2315,6 +2316,7 @@ export async function getSubRoom(
 
 /** All of a room's subrooms, ordered by SubRoomId. */
 export async function getSubRooms(db: D1Database, roomId: number): Promise<SubRoom[]> {
+	await repairUnsafeSubRoomIds(db, [roomId])
 	const { results } = await db
 		.prepare(`SELECT ${SUBROOM_COLUMNS} FROM subroom WHERE room_id = ?1 ORDER BY sub_room_id`)
 		.bind(roomId)
@@ -2512,8 +2514,8 @@ async function copySubRoomPermissions(
 }
 
 /**
- * Insert a subroom for a room, minting a fresh globally-unique SubRoomId from the
- * table's autoincrement sequence. Returns the created subroom (with its new id).
+ * Insert a subroom for a room, minting a fresh globally-unique SubRoomId that stays
+ * within JavaScript's exact integer range. Returns the created subroom with its new id.
  */
 export async function insertSubRoom(
 	db: D1Database,
