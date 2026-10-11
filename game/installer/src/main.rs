@@ -85,7 +85,7 @@ const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
     // v1.0.2: 94e46740de5686a7dc4491ef7d58c517.bundle was the WRONG file
     // (contains Rec Room face + graduation photo, not the logo).
     ("94e46740de5686a7dc4491ef7d58c517.bundle", "5647509ee0fb46807927603931491225", 986_601),
-    ("6d3223da354de646ab79d5660dcac9d2.bundle.gz", "0e5d80965cd1b85f19d301fbd93fa35d54a12748a2262cf9553d5b1b3ebf79f9", 4_274_707),
+    ("6d3223da354de646ab79d5660dcac9d2.bundle.gz", "c5d71893019bbfc5804eb6ea5b92e4f9", 4_274_707),
     ("91aca73acb86d6607f0efa1f803348be.bundle", "c82afb3cf4106e2ff1e52770adce8b8a", 62_928_907),
 ];
 const LOGO_BUNDLE_BASE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-patch-v3/";
