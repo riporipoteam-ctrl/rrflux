@@ -1602,6 +1602,34 @@ describe('auth-gated endpoints', () => {
 		})
 	})
 
+	test('POST /matchmake/dorm repairs an old ^-prefixed personal dorm name', async () => {
+		await env.DB.prepare('INSERT OR REPLACE INTO account (data) VALUES (?1)')
+			.bind(JSON.stringify({ accountId: 9876, username: 'PrefixTest' }))
+			.run()
+
+		const headers = await bearer('9876')
+		const first = (await (
+			await exports.default.fetch(`${ORIGIN}/matchmake/dorm`, { method: 'POST', headers })
+		).json()) as { roomInstance: { roomId: number } }
+		// Recreate the bad state left by an older server bundle in the shared room row.
+		await env.DB.prepare("UPDATE room SET data = json_set(data, '$.Name', ?1) WHERE room_id = ?2")
+			.bind("^@PrefixTest's Dorm", first.roomInstance.roomId)
+			.run()
+
+		const res = await exports.default.fetch(`${ORIGIN}/matchmake/dorm`, { method: 'POST', headers })
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			errorCode: number
+			roomInstance: { name: string; location: string; roomId: number }
+		}
+		expect(body.errorCode).toBe(0)
+		expect(body.roomInstance).toMatchObject({
+			name: "@PrefixTest's Dorm",
+			location: '76d98498-60a1-430c-ab76-b54a29b7a163',
+			roomId: first.roomInstance.roomId,
+		})
+	})
+
 	test('POST /matchmake/dorm gives each client build its own dorm instance', async () => {
 		const dorm = async (version: string) =>
 			(await (
