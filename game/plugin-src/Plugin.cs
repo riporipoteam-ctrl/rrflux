@@ -143,10 +143,9 @@ public class Plugin : BasePlugin
         Patches.NametagBadgePatch.Apply();
 
 
-        // Chat bubble fix: shows bubbles above avatars when messages arrive.
-        // The stock client fails to map sender ID to avatar due to Photon
-        // UserId not being set. This patch manually triggers bubbles.
-        Patches.ChatBubblePatch.Apply();
+        // The old broad-reflection ChatBubblePatch was removed because it was implicated
+        // in the 18% load hang. Keep it disabled until a narrow hook can be verified against
+        // the exact client method signature; never re-enable the old startup-time scan.
 
         // StoreCrashGuardPatch REMOVED 2026-09-25: the user explicitly rejected
         // broad exception suppression. The Store blank page needs a real root-cause
