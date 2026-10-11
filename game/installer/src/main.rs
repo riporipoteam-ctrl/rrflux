@@ -78,13 +78,14 @@ const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
     // (filename, md5, size)
     // Note: 063b6b6653aa642616fd21d3d4701899.bundle and 2b731967c40860818dbeadf308b851f5.bundle
     // were removed — their URLs 404 on the mirror, causing slow startup waits.
-    // v1.0.15: 6d3223da354de646ab79d5660dcac9d2.bundle FIXED — the RecRoomLogo
-    // texture (256x256) now has the correct transparent blue Flux Rec logo.
+    // v1.0.16: 6d3223da354de646ab79d5660dcac9d2.bundle is gzipped on HF
+    // (4.1MB vs 19MB) — download the .gz, decompress, verify.
+    // The RecRoomLogo texture (256x256) now has the correct transparent blue Flux Rec logo.
     // The old MD5 (2a94ec3a...) had the wrong circular logo.
     // v1.0.2: 94e46740de5686a7dc4491ef7d58c517.bundle was the WRONG file
     // (contains Rec Room face + graduation photo, not the logo).
     ("94e46740de5686a7dc4491ef7d58c517.bundle", "5647509ee0fb46807927603931491225", 986_601),
-    ("6d3223da354de646ab79d5660dcac9d2.bundle", "3ac82c0bb9b12aefcfce4d6a7262cd6e", 19_822_299),
+    ("6d3223da354de646ab79d5660dcac9d2.bundle.gz", "5bd191829da0d46bc324d8d5e56efeff", 4_271_876),
     ("91aca73acb86d6607f0efa1f803348be.bundle", "c82afb3cf4106e2ff1e52770adce8b8a", 62_928_907),
 ];
 const LOGO_BUNDLE_BASE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-patch-v2/";
@@ -989,6 +990,27 @@ pub(crate) async fn apply_logo_bundle(
             return Err(format!("logo bundle {} failed verification", filename));
         }
 
+        // v1.0.16: If this is a gzipped bundle, decompress it now.
+        let bundle_path = if filename.ends_with(".gz") {
+            println!("[logo] decompressing {}...", filename);
+            let gz_data = std::fs::read(&tmp_path).map_err(|e| e.to_string())?;
+            let mut decoder = flate2::read::GzDecoder::new(&gz_data[..]);
+            let mut decompressed = Vec::new();
+            std::io::copy(&mut decoder, &mut decompressed).map_err(|e| e.to_string())?;
+            let out_path = dir.join(format!("logo-patch-{}.bundle", idx));
+            std::fs::write(&out_path, &decompressed).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(&tmp_path);
+            // Verify decompressed MD5
+            let decompressed_md5 = "3ac82c0bb9b12aefcfce4d6a7262cd6e";
+            if !file_ok(&out_path, Some(decompressed_md5), Some(19_822_299)) {
+                let _ = std::fs::remove_file(&out_path);
+                return Err(format!("logo bundle {} decompressed verification failed", filename));
+            }
+            out_path
+        } else {
+            tmp_path
+        };
+
         // Back up the stock bundle once — never overwrite an existing backup.
         let backup_path = target.with_extension("bundle.stock");
         if !backup_path.exists() {
@@ -1001,8 +1023,8 @@ pub(crate) async fn apply_logo_bundle(
         if target.exists() {
             std::fs::remove_file(&target).map_err(|e| e.to_string())?;
         }
-        if let Err(e) = std::fs::rename(&tmp_path, &target) {
-            let _ = std::fs::remove_file(&tmp_path);
+        if let Err(e) = std::fs::rename(&bundle_path, &target) {
+            let _ = std::fs::remove_file(&bundle_path);
             if backup_path.exists() {
                 let _ = std::fs::copy(&backup_path, &target);
             }
