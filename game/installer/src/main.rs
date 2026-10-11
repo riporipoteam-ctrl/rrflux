@@ -268,25 +268,37 @@ pub(crate) async fn download(
         println!("[{label}] existing file failed verification, re-downloading.");
         std::fs::remove_file(dest).map_err(|e| e.to_string())?;
     }
-    // Fast path: parallel segmented download (16 Range segments) for anything
-    // not known-small. Any failure falls through to the classic single
-    // stream below — speed can never break a download.
+    // Fast path: parallel segmented download (64 Range segments) for anything
+    // not known-small. v1.0.12: retry segmented up to 3 times (it resumes from
+    // kept segments) before falling back to single-stream. Any failure falls
+    // through to the classic single stream below — speed can never break a download.
     if expected_size.map(|s| s >= segmented::SEGMENT_MIN_SIZE).unwrap_or(true) {
-        match segmented::download_segmented(
-            client,
-            url,
-            dest,
-            expected_md5,
-            expected_size,
-            label,
-            progress,
-        )
-        .await
-        {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                eprintln!("[{label}] segmented download failed ({e}); single-stream fallback.");
+        for attempt in 1..=3 {
+            match segmented::download_segmented(
+                client,
+                url,
+                dest,
+                expected_md5,
+                expected_size,
+                label,
+                progress,
+            )
+            .await
+            {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    eprintln!(
+                        "[{label}] segmented download attempt {attempt}/3 failed ({e}); {}",
+                        if attempt < 3 { "retrying (resumes from kept segments)." } else { "single-stream fallback." }
+                    );
+                    if attempt < 3 {
+                        // Brief pause before retry
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        continue;
+                    }
+                }
             }
+            break;
         }
     }
     let part: PathBuf = {
