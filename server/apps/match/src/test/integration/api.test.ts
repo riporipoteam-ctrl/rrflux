@@ -1653,7 +1653,12 @@ describe('auth-gated endpoints', () => {
 			'INSERT INTO subroom_save (sub_room_data_save_id, sub_room_id, data) VALUES (?1, ?2, ?3)'
 		).bind(saveId, roundedSubRoomId, JSON.stringify(save)).run()
 
-		const room = await getRoomById(env.DB, roomId)
+		const room = (await getRoomById(env.DB, roomId)) as unknown as {
+			SubRooms?: Array<{
+				SubRoomId: number
+				CurrentSave?: { DataBlob?: string; SubRoomDataSaveId?: number } | null
+			}>
+		} | null
 		const sub = room?.SubRooms?.[0]
 		expect(sub).toBeDefined()
 		expect(Number.isSafeInteger(sub!.SubRoomId)).toBe(true)
