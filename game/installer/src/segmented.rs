@@ -334,6 +334,16 @@ pub async fn download_segmented(
             PathBuf::from(p)
         })
         .collect();
+    // v1.0.14: Ensure parent dir exists (os error 3 fix). The dest's parent
+    // should exist, but be explicit — a missing dir gives the cryptic
+    // "system cannot find the path specified" error.
+    if let Some(parent) = dest.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!("create download dir {}: {e}", parent.display())
+            })?;
+        }
+    }
     // Bytes already on disk from an earlier interrupted run count from the start.
     let initial: u64 = seg_paths
         .iter()
