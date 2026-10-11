@@ -349,36 +349,33 @@ mod imp {
 
     /// Build a premultiplied-alpha 32-bit DIB from the embedded logo BMP.
     /// Returns (bitmap, width, height); bitmap is invalid on any failure.
+    /// Build a premultiplied-alpha DIB from the approved blue Flux Rec mark.
+    /// The generated mark is the single source of truth; the old multicolour BMP is ignored.
     unsafe fn create_logo_dib(hdc: HDC) -> (HBITMAP, i32, i32) {
-        let bytes = crate::assets::LOGO_BMP_BYTES;
-        if bytes.len() < 54 {
-            return (HBITMAP::default(), 0, 0);
-        }
-        let off = u32::from_le_bytes([bytes[10], bytes[11], bytes[12], bytes[13]]) as usize;
-        let w = i32::from_le_bytes([bytes[18], bytes[19], bytes[20], bytes[21]]);
-        let h = i32::from_le_bytes([bytes[22], bytes[23], bytes[24], bytes[25]]);
-        let bpp = u16::from_le_bytes([bytes[28], bytes[29]]);
-        if w <= 0 || h == 0 || bpp != 32 || bytes.len() < off {
-            return (HBITMAP::default(), 0, 0);
-        }
-        let ha = h.abs() as usize;
-        let row_bytes = w as usize * 4;
-        if bytes.len() < off + ha * row_bytes {
-            return (HBITMAP::default(), 0, 0);
-        }
-
-        let mut bmi = BITMAPINFO::default();
-        bmi.bmiHeader.biSize = 40;
-        bmi.bmiHeader.biWidth = w;
-        bmi.bmiHeader.biHeight = h;
-        bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 32;
-        bmi.bmiHeader.biCompression = BI_RGB.0;
+        let width = 256i32;
+        let height = 256i32;
+        let logo = crate::assets::fluxrec_logo_rgba(width as u32, height as u32);
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height, // top-down: source and DIB rows have the same order
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0 as u32,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [RGBQUAD::default()],
+        };
 
         let mut bits: *mut c_void = std::ptr::null_mut();
         let hbmp = match CreateDIBSection(
             hdc,
-            &bmi as *const BITMAPINFO,
+            &bmi,
             DIB_RGB_COLORS,
             &mut bits,
             HANDLE(std::ptr::null_mut()),
@@ -390,39 +387,21 @@ mod imp {
         if hbmp.is_invalid() || bits.is_null() {
             return (HBITMAP::default(), 0, 0);
         }
-        // Copy rows and premultiply. Both the BMP file (biHeight > 0) and the DIB
-        // section (biHeight = h > 0) are bottom-up, so rows copy directly
-        // without flipping. (The old ha-1-row flip drew the logo upside down.)
+
         let dst = bits as *mut u8;
-        for row in 0..ha {
-            let src_row = row;
-            let sp = bytes[off + src_row * row_bytes..].as_ptr();
-            let dp = dst.add(row * row_bytes);
-            for i in 0..w as usize {
-                let b = *sp.add(i * 4);
-                let g = *sp.add(i * 4 + 1);
-                let r = *sp.add(i * 4 + 2);
-                let a = *sp.add(i * 4 + 3);
-                if a == 0 {
-                    *dp.add(i * 4) = 0;
-                    *dp.add(i * 4 + 1) = 0;
-                    *dp.add(i * 4 + 2) = 0;
-                    *dp.add(i * 4 + 3) = 0;
-                } else if a < 255 {
-                    let aa = a as u32;
-                    *dp.add(i * 4) = ((b as u32 * aa) / 255) as u8;
-                    *dp.add(i * 4 + 1) = ((g as u32 * aa) / 255) as u8;
-                    *dp.add(i * 4 + 2) = ((r as u32 * aa) / 255) as u8;
-                    *dp.add(i * 4 + 3) = a;
-                } else {
-                    *dp.add(i * 4) = b;
-                    *dp.add(i * 4 + 1) = g;
-                    *dp.add(i * 4 + 2) = r;
-                    *dp.add(i * 4 + 3) = a;
-                }
+        for y in 0..height as u32 {
+            for x in 0..width as u32 {
+                let pixel = logo.get_pixel(x, y).0;
+                let a = pixel[3] as u32;
+                let offset = ((y * width as u32 + x) * 4) as usize;
+                // AlphaBlend with AC_SRC_ALPHA requires premultiplied BGRA.
+                *dst.add(offset) = ((pixel[2] as u32 * a) / 255) as u8;
+                *dst.add(offset + 1) = ((pixel[1] as u32 * a) / 255) as u8;
+                *dst.add(offset + 2) = ((pixel[0] as u32 * a) / 255) as u8;
+                *dst.add(offset + 3) = a as u8;
             }
         }
-        (hbmp, w, ha as i32)
+        (hbmp, width, height)
     }
 
     fn loword(v: isize) -> i32 {
