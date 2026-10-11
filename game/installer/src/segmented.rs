@@ -25,7 +25,7 @@ use tokio::io::AsyncWriteExt;
 /// 32: doubles the connections vs 16 to defeat per-connection throttling
 /// on slow mirrors (archive.recagain.site throttles ~2-3 MB/s per conn).
 /// The file is ~3.8GB so 32 x ~120MB segments stay efficient.
-pub const SEGMENTS: usize = 32;
+pub const SEGMENTS: usize = 64;
 /// Files smaller than this just use a single stream (segments add nothing).
 pub const SEGMENT_MIN_SIZE: u64 = 8 * 1024 * 1024;
 /// Per-segment attempts before the whole download fails.
