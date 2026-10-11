@@ -1443,18 +1443,17 @@ fn finish_live_dir(dir: &Path, ns_host: &str, progress: &progress::Progress) {
     if let Err(e) = create_shortcuts(dir) {
         eprintln!("[shortcut] WARNING: shortcut step failed ({}); continuing.", e);
     }
-    // v1.0.3: Patch the game exe's icon to the blue Flux Rec logo so the
-    // taskbar shows our logo instead of the orange Rec Room one. Fail-soft.
-    {
-        const ICON_BYTES: &[u8] = include_bytes!("../assets/fluxrec.ico");
-        if let Some(exe) = find_game_exe(dir) {
-            match icon_patch::patch_exe_icon(&exe, ICON_BYTES) {
-                Ok(true) => println!("[icon] patched game exe icon to Flux Rec logo."),
-                Ok(false) => println!("[icon] icon patch skipped."),
-                Err(e) => eprintln!("[icon] WARNING: icon patch failed ({}); continuing.", e),
-            }
-        }
-    }
+    // v1.0.6 EMERGENCY: icon patch DISABLED (was corrupting the game exe).
+    // {
+    //     const ICON_BYTES: &[u8] = include_bytes!("../assets/fluxrec.ico");
+    //     if let Some(exe) = find_game_exe(dir) {
+    //         match icon_patch::patch_exe_icon(&exe, ICON_BYTES) {
+    //             Ok(true) => println!("[icon] patched game exe icon to Flux Rec logo."),
+    //             Ok(false) => println!("[icon] icon patch skipped."),
+    //             Err(e) => eprintln!("[icon] WARNING: icon patch failed ({}); continuing.", e),
+    //         }
+    //     }
+    // }
     // Defender exclusion (defender.rs, 2026-09-24): Windows Security
     // quarantined a game file on Armin's PC, hanging the game at
     // "Connecting to server...". Exclude the game dir so it can't happen
