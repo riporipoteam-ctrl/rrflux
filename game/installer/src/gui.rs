@@ -718,7 +718,8 @@ mod imp {
         let fw = text_width(hdc, "FLUX ");
         let rw = text_width(hdc, "REC");
         let sx = cx - (fw + rw) / 2;
-        text_at(hdc, s.f_word, WHITE, "FLUX ", sx, y);
+        // Match the approved logo lockup: both words use the same Flux blue.
+        text_at(hdc, s.f_word, BLUE, "FLUX ", sx, y);
         text_at(hdc, s.f_word, BLUE, "REC", sx + fw, y);
     }
 
