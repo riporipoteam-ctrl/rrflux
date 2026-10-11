@@ -2152,34 +2152,47 @@ async function repairUnsafeSubRoomIds(db: D1Database, roomIds: number[]): Promis
 	const safeRoomIds = [...new Set(roomIds.filter((id) => Number.isSafeInteger(id) && id > 0))]
 	if (safeRoomIds.length === 0) return
 
-	const placeholders = safeRoomIds.map((_, i) => `?${i + 1}`).join(', ')
-	const { results } = await db
-		.prepare(
-			`SELECT CAST(s.sub_room_id AS TEXT) AS old_id, s.room_id,
-			        s.current_save_id, s.staged_save_id,
-			        json_extract(r.data, '$.IsDorm') AS is_dorm
-			 FROM subroom s JOIN room r ON r.room_id = s.room_id
-			 WHERE (s.sub_room_id > 9007199254740991 OR s.sub_room_id < -9007199254740991)
-			   AND s.room_id IN (${placeholders})
-			 ORDER BY s.sub_room_id`
-		)
-		.bind(...safeRoomIds)
-		.all<{
-			old_id: string
-			room_id: number
-			current_save_id: number | null
-			staged_save_id: number | null
-			is_dorm: number | boolean | null
-		}>()
+	// Cap the IN list below D1's bound-parameter limit. Room feeds can hydrate
+	// hundreds of rooms at once, and this repair must not break their pagination.
+	const unsafeRows: Array<{
+		old_id: string
+		room_id: number
+		current_save_id: number | null
+		staged_save_id: number | null
+		is_dorm: number | boolean | null
+	}> = []
+	for (let offset = 0; offset < safeRoomIds.length; offset += 80) {
+		const chunk = safeRoomIds.slice(offset, offset + 80)
+		const placeholders = chunk.map((_, i) => `?${i + 1}`).join(', ')
+		const { results } = await db
+			.prepare(
+				`SELECT CAST(s.sub_room_id AS TEXT) AS old_id, s.room_id,
+				        s.current_save_id, s.staged_save_id,
+				        json_extract(r.data, '$.IsDorm') AS is_dorm
+				 FROM subroom s JOIN room r ON r.room_id = s.room_id
+				 WHERE (s.sub_room_id > 9007199254740991 OR s.sub_room_id < -9007199254740991)
+				   AND s.room_id IN (${placeholders})
+				 ORDER BY s.sub_room_id`
+			)
+			.bind(...chunk)
+			.all<{
+				old_id: string
+				room_id: number
+				current_save_id: number | null
+				staged_save_id: number | null
+				is_dorm: number | boolean | null
+			}>()
+		unsafeRows.push(...results)
+	}
 
-	if (results.length === 0) return
+	if (unsafeRows.length === 0) return
 
 	const { results: availableTables } = await db
 		.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('room_instance', 'presence')`)
 		.all<{ name: string }>()
 	const tables = new Set(availableTables.map((row) => row.name))
 
-	for (const row of results) {
+	for (const row of unsafeRows) {
 		// Several distinct unsafe integers can collapse to the same JS number. Never merge
 		// their saves automatically: stop and preserve data for a manual repair instead.
 		const collision = await db
