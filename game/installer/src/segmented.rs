@@ -29,7 +29,7 @@ pub const SEGMENTS: usize = 64;
 /// Files smaller than this just use a single stream (segments add nothing).
 pub const SEGMENT_MIN_SIZE: u64 = 8 * 1024 * 1024;
 /// Per-segment attempts before the whole download fails.
-const SEGMENT_ATTEMPTS: u32 = 10;
+const SEGMENT_ATTEMPTS: u32 = 5;
 /// No data for this long -> the segment is stalled, abort and retry.
 /// 30s: fail fast on dead connections so a retry can resume quickly.
 const STALL_SECS: u64 = 30;
@@ -334,16 +334,6 @@ pub async fn download_segmented(
             PathBuf::from(p)
         })
         .collect();
-    // v1.0.14: Ensure parent dir exists (os error 3 fix). The dest's parent
-    // should exist, but be explicit — a missing dir gives the cryptic
-    // "system cannot find the path specified" error.
-    if let Some(parent) = dest.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                format!("create download dir {}: {e}", parent.display())
-            })?;
-        }
-    }
     // Bytes already on disk from an earlier interrupted run count from the start.
     let initial: u64 = seg_paths
         .iter()
@@ -424,11 +414,9 @@ pub async fn download_segmented(
         p.set_stage(stage);
     }
     if let Some(e) = failed {
-        // v1.0.12: DON'T delete successful segments! Keep them for resume.
-        // The next attempt will skip completed segments and only retry failed ones.
-        // Deleting everything caused the "flickering" — progress would jump
-        // back to 0 and restart, over and over.
-        eprintln!("[{label}] segmented download had failures, keeping {} segments for resume: {}", seg_paths.len(), e);
+        for p in &seg_paths {
+            let _ = std::fs::remove_file(p);
+        }
         return Err(e);
     }
 

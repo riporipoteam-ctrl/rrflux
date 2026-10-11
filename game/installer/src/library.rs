@@ -334,7 +334,26 @@ fn smart_repair(
     Ok(true)
 }
 
-/// Count files in a directory (recursive, fast).
+/// v1.0.11: Download a single missing game file from the HF mirror.
+/// The HF dataset has 6,358 individual game files — no need to re-download
+/// the 3.8GB zip for one missing file.
+async fn restore_missing_file(
+    client: &reqwest::Client,
+    dir: &Path,
+    relative_path: &str,
+    progress: &crate::progress::Progress,
+) -> Result<(), String> {
+    let url = format!(
+        "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/{}",
+        relative_path
+    );
+    let dest = dir.join(relative_path);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    println!("[restore] downloading missing file: {}", relative_path);
+    crate::download(client, &url, &dest, None, None, relative_path, None).await
+}
 fn count_files(dir: &Path) -> usize {
     let mut count = 0;
     if let Ok(entries) = std::fs::read_dir(dir) {
