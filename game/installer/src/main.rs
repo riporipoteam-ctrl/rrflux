@@ -45,19 +45,16 @@ mod bypass;
 mod defender; // AV hardening (2026-09-24): Defender exclusions, quarantine self-heal, Unblock-File
 // v0.3.0: this module now manages 2025Patch (native DLL injection) instead
 // of BepInEx. Same public interface (verify/repair/sync) for launcher+defender.
-pub(crate) mod bepinex;
+mod bepinex;
 mod transaction; // v0.2.0: transactional staging, atomic swap, rollback
 mod guide; // one-time guided Windows Security exclusion setup (2026-09-25)
-pub(crate) mod gui;
-pub(crate) mod gui_library; // v1.0.0: Ripo Team Launcher library UI
-pub(crate) mod icon_patch; // v1.0.3: patch game exe icon to blue Flux Rec logo
-pub(crate) mod launcher;
-pub(crate) mod library; // v1.0.0: library flow (play/settings/uninstall)
+mod gui;
+mod launcher;
 mod patches; // Flux Rec client patches: welcome text, YouTube IDs (2026-09-24)
-pub(crate) mod progress;
+mod progress;
 mod segmented;
-pub(crate) mod stealth;
-pub(crate) mod updater;
+mod stealth;
+mod updater;
 mod vcredist;
 
 /// Client mirrors, fastest first. All serve the byte-identical client.zip
@@ -78,14 +75,12 @@ const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
     // (filename, md5, size)
     // Note: 063b6b6653aa642616fd21d3d4701899.bundle and 2b731967c40860818dbeadf308b851f5.bundle
     // were removed — their URLs 404 on the mirror, causing slow startup waits.
-    // v1.0.15: 6d3223da354de646ab79d5660dcac9d2.bundle FIXED — the RecRoomLogo
-    // texture (256x256) now has the correct transparent blue Flux Rec logo.
-    // The old MD5 (2a94ec3a...) had the wrong circular logo.
-    // v1.0.2: 94e46740de5686a7dc4491ef7d58c517.bundle was the WRONG file
-    // (contains Rec Room face + graduation photo, not the logo).
-    ("94e46740de5686a7dc4491ef7d58c517.bundle", "5647509ee0fb46807927603931491225", 986_601),
-    ("6d3223da354de646ab79d5660dcac9d2.bundle", "3ac82c0bb9b12aefcfce4d6a7262cd6e", 19_822_299),
+    // Note: 94e46740de5686a7dc4491ef7d58c517.bundle removed 2026-10-10 — it contained
+    // the wrong circular "Flux Rec" logo. Will re-add once the fixed bundle (blue geometric
+    // logo) is uploaded to the mirror.
+    ("6d3223da354de646ab79d5660dcac9d2.bundle", "2a94ec3a870aca582cb7d2666fc2f81a", 19_822_299),
     ("91aca73acb86d6607f0efa1f803348be.bundle", "c82afb3cf4106e2ff1e52770adce8b8a", 62_928_907),
+];
 ];
 const LOGO_BUNDLE_BASE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-patch-v2/";
 
@@ -128,7 +123,7 @@ const MAX_ATTEMPTS: u32 = 5;
 /// very slow to first byte; without this the request hangs indefinitely.
 const FIRST_BYTE_TIMEOUT_SECS: u64 = 180;
 
-pub(crate) fn default_install_dir() -> PathBuf {
+fn default_install_dir() -> PathBuf {
     let drive = std::env::var("SYSTEMDRIVE").unwrap_or_else(|_| "C:".to_string());
     PathBuf::from(format!("{drive}\\Games\\FluxRec"))
 }
@@ -269,37 +264,25 @@ pub(crate) async fn download(
         println!("[{label}] existing file failed verification, re-downloading.");
         std::fs::remove_file(dest).map_err(|e| e.to_string())?;
     }
-    // Fast path: parallel segmented download (64 Range segments) for anything
-    // not known-small. v1.0.12: retry segmented up to 3 times (it resumes from
-    // kept segments) before falling back to single-stream. Any failure falls
-    // through to the classic single stream below — speed can never break a download.
+    // Fast path: parallel segmented download (16 Range segments) for anything
+    // not known-small. Any failure falls through to the classic single
+    // stream below — speed can never break a download.
     if expected_size.map(|s| s >= segmented::SEGMENT_MIN_SIZE).unwrap_or(true) {
-        for attempt in 1..=3 {
-            match segmented::download_segmented(
-                client,
-                url,
-                dest,
-                expected_md5,
-                expected_size,
-                label,
-                progress,
-            )
-            .await
-            {
-                Ok(()) => return Ok(()),
-                Err(e) => {
-                    eprintln!(
-                        "[{label}] segmented download attempt {attempt}/3 failed ({e}); {}",
-                        if attempt < 3 { "retrying (resumes from kept segments)." } else { "single-stream fallback." }
-                    );
-                    if attempt < 3 {
-                        // Brief pause before retry
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        continue;
-                    }
-                }
+        match segmented::download_segmented(
+            client,
+            url,
+            dest,
+            expected_md5,
+            expected_size,
+            label,
+            progress,
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("[{label}] segmented download failed ({e}); single-stream fallback.");
             }
-            break;
         }
     }
     let part: PathBuf = {
@@ -454,99 +437,7 @@ pub(crate) fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Resu
     let f = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
     let n = archive.len();
-    println!("[{label}] {n} entries to extract");
-
-    // v1.0.13: Parallel extraction with progress. The old single-threaded
-    // archive.extract() was slow and showed no progress, looking "stuck".
-    use std::sync::{Arc, Mutex};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    let completed = Arc::new(AtomicUsize::new(0));
-    let errors = Arc::new(Mutex::new(Vec::new()));
-
-    // Get all file entries first (ZipArchive is not Sync, so we extract
-    // the metadata then process in parallel)
-    let mut entries = Vec::new();
-    for i in 0..n {
-        if let Ok(file) = archive.by_index(i) {
-            let name = file.name().to_string();
-            let is_dir = file.is_dir();
-            entries.push((i, name, is_dir));
-        }
-    }
-    drop(archive);
-
-    // Extract in parallel using rayon-like thread pool (std only)
-    let num_threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .min(8);
-    let chunk_size = (entries.len() + num_threads - 1) / num_threads;
-
-    std::thread::scope(|s| {
-        for chunk in entries.chunks(chunk_size) {
-            let chunk = chunk.to_vec();
-            let zip_path = zip_path.to_path_buf();
-            let dest_dir = dest_dir.to_path_buf();
-            let completed = completed.clone();
-            let errors = errors.clone();
-            let label = label.to_string();
-
-            s.spawn(move || {
-                // Each thread opens its own archive handle
-                let f = match std::fs::File::open(&zip_path) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        errors.lock().unwrap().push(e.to_string());
-                        return;
-                    }
-                };
-                let mut archive = match zip::ZipArchive::new(f) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        errors.lock().unwrap().push(e.to_string());
-                        return;
-                    }
-                };
-                for (i, name, is_dir) in chunk {
-                    if is_dir {
-                        let _ = std::fs::create_dir_all(dest_dir.join(&name));
-                    } else {
-                        match archive.by_index(i) {
-                            Ok(mut file) => {
-                                let out_path = dest_dir.join(&name);
-                                if let Some(parent) = out_path.parent() {
-                                    let _ = std::fs::create_dir_all(parent);
-                                }
-                                match std::fs::File::create(&out_path) {
-                                    Ok(mut out) => {
-                                        if std::io::copy(&mut file, &mut out).is_err() {
-                                            errors.lock().unwrap().push(format!("copy failed: {}", name));
-                                        }
-                                    }
-                                    Err(e) => {
-                                        errors.lock().unwrap().push(format!("create {}: {}", name, e));
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                errors.lock().unwrap().push(format!("entry {}: {}", name, e));
-                            }
-                        }
-                    }
-                    let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                    if done % 500 == 0 || done == n {
-                        println!("[{label}] extracted {done}/{n}");
-                    }
-                }
-            });
-        }
-    });
-
-    let errs = errors.lock().unwrap();
-    if !errs.is_empty() {
-        return Err(format!("extraction errors: {}", errs.join("; ")));
-    }
+    archive.extract(dest_dir).map_err(|e| e.to_string())?;
     println!("[{label}] extracted {n} entries.");
     Ok(())
 }
@@ -794,8 +685,7 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
     // setup binary. The shortcuts point at it with `--play`, so every
     // launch goes through the update check + pretty window first.
     // Fail-soft: if the copy fails we fall back to the old direct target.
-    // v1.0.0: the launcher is now "Ripo Team Launcher".
-    let launcher_exe = dir.join("RipoTeamLauncher.exe");
+    let launcher_exe = dir.join("FluxRecLauncher.exe");
     let launcher_ok = match std::env::current_exe() {
         Ok(me) => {
             // remove-first: Windows cannot overwrite a running exe, and the
@@ -1013,7 +903,7 @@ pub(crate) async fn apply_logo_bundle(
     Ok(())
 }
 
-pub(crate) async fn run_install(
+async fn run_install(
     dir: &Path,
     ns_host: &str,
     photon_rt: &str,
@@ -1396,14 +1286,16 @@ async fn apply_common_components(
     // v0.3.0: 2025 client uses 2025Patch (native DLL injection) instead of BepInEx.
     // The patch files (2025Patch.dll, Injector.exe, 2025patch.ini) go next to
     // Recroom_Release.exe. The injector launches the game with the patch.
-    // v1.0.1: files are embedded — no download needed.
     progress.set_stage("Installing 2025Patch…");
+    let patch_zip = fetch_patch2025_zip(client, progress).await?;
     install_patch2025(
         target,
-        std::path::Path::new(""),
+        &patch_zip,
         ns_host,
         progress,
     )?;
+    // Clean up the temp patch zip.
+    let _ = std::fs::remove_file(&patch_zip);
 
     // 6. Configuration lives in 2025patch.ini (written by install_patch2025).
     progress.set_stage("Writing configuration…");
@@ -1437,24 +1329,27 @@ pub(crate) async fn fetch_patch2025_zip(
     Ok(dest)
 }
 
-/// Install 2025Patch: write DLL, injector, and configured 2025patch.ini.
-/// v1.0.1: files are embedded in the binary (no GitHub download).
+/// Install 2025Patch: extract DLL, injector, and write configured 2025patch.ini.
 pub(crate) fn install_patch2025(
     target: &std::path::Path,
-    _patch_zip: &std::path::Path,
+    patch_zip: &std::path::Path,
     ns_host: &str,
     _progress: &progress::Progress,
 ) -> Result<(), String> {
-    // v1.0.1: Use embedded files instead of downloading from GitHub.
-    // The GitHub download was failing on some networks ("error sending
-    // request"), breaking installs. The files are small (67KB + 39KB),
-    // so embedding them is reliable and fast.
-    // so embedding them is reliable and fast.
-    const PATCH_DLL: &[u8] = include_bytes!("../assets/2025Patch.dll");
-    const INJECTOR_EXE: &[u8] = include_bytes!("../assets/Injector.exe");
-
-    // Write 2025Patch.dll and Injector.exe next to Recroom_Release.exe
-    for (name, bytes) in [("2025Patch.dll", PATCH_DLL), ("Injector.exe", INJECTOR_EXE)] {
+    use std::io::Read;
+    
+    let file = std::fs::File::open(patch_zip)
+        .map_err(|e| format!("open patch zip: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("read patch zip: {}", e))?;
+    
+    // Extract 2025Patch.dll and Injector.exe next to Recroom_Release.exe
+    for name in ["2025Patch.dll", "Injector.exe"] {
+        let mut entry = archive.by_name(name)
+            .map_err(|e| format!("patch zip missing {}: {}", name, e))?;
+        let mut buf = Vec::new();
+        entry.read_to_end(&mut buf)
+            .map_err(|e| format!("read {}: {}", name, e))?;
         let dest = target.join(name);
         // Clear readonly (from v0.6.16 protection) before overwriting
         #[cfg(windows)]
@@ -1467,9 +1362,9 @@ pub(crate) fn install_patch2025(
                 }
             }
         }
-        std::fs::write(&dest, bytes)
+        std::fs::write(&dest, &buf)
             .map_err(|e| format!("write {}: {}", name, e))?;
-        println!("[patch2025] installed {} ({} bytes, embedded)", name, bytes.len());
+        println!("[patch2025] installed {}", name);
     }
     
     // Write configured 2025patch.ini with Flux Rec backend
@@ -1548,17 +1443,6 @@ fn finish_live_dir(dir: &Path, ns_host: &str, progress: &progress::Progress) {
     if let Err(e) = create_shortcuts(dir) {
         eprintln!("[shortcut] WARNING: shortcut step failed ({}); continuing.", e);
     }
-    // v1.0.6 EMERGENCY: icon patch DISABLED (was corrupting the game exe).
-    // {
-    //     const ICON_BYTES: &[u8] = include_bytes!("../assets/fluxrec.ico");
-    //     if let Some(exe) = find_game_exe(dir) {
-    //         match icon_patch::patch_exe_icon(&exe, ICON_BYTES) {
-    //             Ok(true) => println!("[icon] patched game exe icon to Flux Rec logo."),
-    //             Ok(false) => println!("[icon] icon patch skipped."),
-    //             Err(e) => eprintln!("[icon] WARNING: icon patch failed ({}); continuing.", e),
-    //         }
-    //     }
-    // }
     // Defender exclusion (defender.rs, 2026-09-24): Windows Security
     // quarantined a game file on Armin's PC, hanging the game at
     // "Connecting to server...". Exclude the game dir so it can't happen
@@ -1882,9 +1766,8 @@ fn main() {
 
     // Launcher mode (the desktop shortcut target): update check, then game.
     // Never returns.
-    // v1.0.0: --play now opens the Ripo Team Launcher library UI.
     if play_mode {
-        library::run_library(&dir, &ns_host, &photon_rt, &photon_voice, &photon_chat);
+        launcher::run_launcher(&dir, &ns_host, &photon_rt, &photon_voice, &photon_chat);
     }
 
     // Install mode needs administrator rights: the VC++ runtime silent
