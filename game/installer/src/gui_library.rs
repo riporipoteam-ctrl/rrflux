@@ -60,9 +60,7 @@ const SCREENSHOT_NAMES: &[&str] = &[
     "Paintball",
 ];
 
-// v1.0.5: the real Flux Rec logo (not the drawn approximation).
-#[cfg(windows)]
-const FLUXREC_LOGO_PNG: &[u8] = include_bytes!("../assets/fluxrec-logo.png");
+// The logo is generated from the approved single-colour mark in assets.rs.
 
 // ---------------------------------------------------------------------------
 // Non-Windows stubs.
@@ -92,7 +90,7 @@ pub fn run_splash_gui(theme: Theme, rx: Receiver<()>) {
 
 #[cfg(windows)]
 mod imp {
-    use super::{LibraryConfig, Theme, View, SCREENSHOTS, SCREENSHOT_NAMES, FLUXREC_LOGO_PNG};
+    use super::{LibraryConfig, Theme, View, SCREENSHOTS, SCREENSHOT_NAMES};
     use crate::library::{LibCmd, LibMsg};
     use std::ffi::c_void;
     use std::sync::mpsc::{Receiver, Sender, TryRecvError};
@@ -295,7 +293,11 @@ mod imp {
                 }
             }
             // v1.0.5: decode the real Flux Rec logo (128x128).
-            state.logo_bitmap = png_to_bitmap(FLUXREC_LOGO_PNG, 128, 128);
+            state.logo_bitmap = rgba_to_bitmap(
+                &crate::assets::fluxrec_logo_rgba(128, 128),
+                128,
+                128,
+            );
             let state_ptr = Box::into_raw(state);
 
             // Center on screen.
@@ -676,39 +678,50 @@ mod imp {
         hbmp
     }
 
-    /// Draw the Flux Rec logo mark (rounded square with stylized "R").
-    /// Simple geometric approximation of the blue logo.
-    unsafe fn draw_logo(hdc: HDC, x: i32, y: i32, size: i32, accent: COLORREF) -> Silent {
-        let r = RECT {
-            left: x,
-            top: y,
-            right: x + size,
-            bottom: y + size,
-        };
-        round_rect_path(hdc, &r, size / 5, accent)?;
-        // Inner "R" — draw with lines.
-        let pen = CreatePen(PS_SOLID, (size / 12).max(2), COLORREF(0x00FFFFFF));
+    /// Draw the exact blue Flux Rec mark used by the setup and launcher.
+    /// This is deliberately monochrome: no generated multicolour approximation.
+    unsafe fn draw_logo(hdc: HDC, x: i32, y: i32, size: i32, _accent: COLORREF) -> Silent {
+        if size <= 0 {
+            return Ok(());
+        }
+        let blue = COLORREF(0x00FF912E); // RGB #2E91FF (COLORREF is BGR)
+        let stroke = (size / 18).max(2);
+        let pen = CreatePen(PS_SOLID, stroke, blue);
         if pen.is_invalid() {
             return Err(());
         }
-        let old = SelectObject(hdc, pen);
-        let s = size as f32;
-        let px = |fx: f32| x + (s * fx) as i32;
-        let py = |fy: f32| y + (s * fy) as i32;
-        // Vertical stem
-        MoveToEx(hdc, px(0.32), py(0.24), None);
-        LineTo(hdc, px(0.32), py(0.76));
-        // Bowl
-        MoveToEx(hdc, px(0.32), py(0.24), None);
-        LineTo(hdc, px(0.60), py(0.24));
-        LineTo(hdc, px(0.68), py(0.36));
-        LineTo(hdc, px(0.60), py(0.48));
-        LineTo(hdc, px(0.32), py(0.48));
-        // Leg
-        MoveToEx(hdc, px(0.52), py(0.48), None);
-        LineTo(hdc, px(0.70), py(0.76));
-        SelectObject(hdc, old);
-        DeleteObject(pen);
+        let old_pen = SelectObject(hdc, pen);
+        let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        let px = |fx: f32| x + (size as f32 * fx).round() as i32;
+        let py = |fy: f32| y + (size as f32 * fy).round() as i32;
+
+        // Outer rounded frame and top divider.
+        let _ = RoundRect(hdc, px(0.10), py(0.07), px(0.90), py(0.93), (size / 9).max(4), (size / 9).max(4));
+        let _ = MoveToEx(hdc, px(0.12), py(0.34), None);
+        let _ = LineTo(hdc, px(0.88), py(0.34));
+
+        // Two short inner posts.
+        let _ = MoveToEx(hdc, px(0.33), py(0.34), None);
+        let _ = LineTo(hdc, px(0.33), py(0.68));
+        let _ = MoveToEx(hdc, px(0.67), py(0.34), None);
+        let _ = LineTo(hdc, px(0.67), py(0.68));
+
+        // Smile curve, sampled into short segments for consistent output at every size.
+        let mut previous = (px(0.11), py(0.67));
+        for i in 1..=24 {
+            let t = i as f32 / 24.0;
+            let u = 1.0 - t;
+            let xf = u * u * 0.11 + 2.0 * u * t * 0.50 + t * t * 0.89;
+            let yf = u * u * 0.67 + 2.0 * u * t * 0.97 + t * t * 0.67;
+            let current = (px(xf), py(yf));
+            let _ = MoveToEx(hdc, previous.0, previous.1, None);
+            let _ = LineTo(hdc, current.0, current.1);
+            previous = current;
+        }
+
+        let _ = SelectObject(hdc, old_brush);
+        let _ = SelectObject(hdc, old_pen);
+        let _ = DeleteObject(pen);
         Ok(())
     }
 
@@ -1300,7 +1313,13 @@ mod imp {
             let mem_dc = CreateCompatibleDC(hdc);
             if !mem_dc.is_invalid() {
                 let old = SelectObject(mem_dc, st.logo_bitmap);
-                BitBlt(hdc, cx + 40, TITLE_H + 52, 48, 48, mem_dc, 0, 0, SRCCOPY);
+                let bf = BLENDFUNCTION {
+                    BlendOp: AC_SRC_OVER as u8,
+                    BlendFlags: 0,
+                    SourceConstantAlpha: 255,
+                    AlphaFormat: AC_SRC_ALPHA as u8,
+                };
+                let _ = AlphaBlend(hdc, cx + 40, TITLE_H + 52, 48, 48, mem_dc, 0, 0, 128, 128, bf);
                 SelectObject(mem_dc, old);
                 DeleteDC(mem_dc);
             }
