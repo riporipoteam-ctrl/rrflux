@@ -29,7 +29,7 @@ pub const SEGMENTS: usize = 64;
 /// Files smaller than this just use a single stream (segments add nothing).
 pub const SEGMENT_MIN_SIZE: u64 = 8 * 1024 * 1024;
 /// Per-segment attempts before the whole download fails.
-const SEGMENT_ATTEMPTS: u32 = 10;
+const SEGMENT_ATTEMPTS: u32 = 5;
 /// No data for this long -> the segment is stalled, abort and retry.
 /// 30s: fail fast on dead connections so a retry can resume quickly.
 const STALL_SECS: u64 = 30;
@@ -414,11 +414,9 @@ pub async fn download_segmented(
         p.set_stage(stage);
     }
     if let Some(e) = failed {
-        // v1.0.12: DON'T delete successful segments! Keep them for resume.
-        // The next attempt will skip completed segments and only retry failed ones.
-        // Deleting everything caused the "flickering" — progress would jump
-        // back to 0 and restart, over and over.
-        eprintln!("[{label}] segmented download had failures, keeping {} segments for resume: {}", seg_paths.len(), e);
+        for p in &seg_paths {
+            let _ = std::fs::remove_file(p);
+        }
         return Err(e);
     }
 
