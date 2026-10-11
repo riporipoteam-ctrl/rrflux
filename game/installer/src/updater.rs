@@ -106,16 +106,6 @@ pub async fn check_for_updates(install_dir: &Path, progress: &Progress) -> Updat
 }
 
 async fn check_inner(client: &reqwest::Client) -> UpdateDecision {
-    // Try the GitHub API first.
-    if let Some(decision) = check_via_api(client).await {
-        return decision;
-    }
-    // v1.0.7: Fallback — if api.github.com is blocked but github.com works,
-    // scrape the releases HTML page for the latest installer tag.
-    check_via_html(client).await
-}
-
-async fn check_via_api(client: &reqwest::Client) -> Option<UpdateDecision> {
     let resp = match client
         .get(RELEASES_URL)
         .header("Accept", "application/vnd.github+json")
@@ -123,69 +113,22 @@ async fn check_via_api(client: &reqwest::Client) -> Option<UpdateDecision> {
         .await
     {
         Ok(r) => r,
-        Err(_) => return None, // Try HTML fallback
-    };
-    if !resp.status().is_success() {
-        return None; // Try HTML fallback
-    }
-    let text = match resp.text().await {
-        Ok(t) => t,
-        Err(_) => return None,
-    };
-    let releases: Vec<serde_json::Value> = match serde_json::from_str(&text) {
-        Ok(v) => v,
-        Err(_) => return None,
-    };
-    Some(find_update(&releases, current_version()))
-}
-
-/// v1.0.7: Fallback when api.github.com is unreachable. Fetches the releases
-/// HTML page from github.com and extracts the latest recflare-installer-v* tag.
-async fn check_via_html(client: &reqwest::Client) -> UpdateDecision {
-    const HTML_URL: &str = "https://github.com/riporipoteam-ctrl/rrflux/releases";
-    let resp = match client.get(HTML_URL).send().await {
-        Ok(r) => r,
+        // v1.0.5: network error -> CheckFailed (not silent UpToDate).
         Err(_) => return UpdateDecision::CheckFailed,
     };
     if !resp.status().is_success() {
         return UpdateDecision::CheckFailed;
     }
-    let html = match resp.text().await {
+    let text = match resp.text().await {
         Ok(t) => t,
         Err(_) => return UpdateDecision::CheckFailed,
     };
-    // Find all recflare-installer-vX.Y.Z tags in the HTML.
-    // The HTML contains href="/riporipoteam-ctrl/rrflux/releases/tag/recflare-installer-vX.Y.Z"
-    let mut best: Option<((u64, u64, u64), String)> = None;
-    for part in html.split("recflare-installer-v") {
-        // part starts with "X.Y.Z..." — extract version
-        let ver_str: String = part.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
-        if ver_str.is_empty() {
-            continue;
-        }
-        if let Some(ver) = parse_version(&format!("recflare-installer-v{}", ver_str)) {
-            let tag = format!("recflare-installer-v{}", ver_str);
-            if best.as_ref().map_or(true, |(bv, _)| ver > *bv) {
-                best = Some((ver, tag));
-            }
-        }
-    }
-    let current = current_version();
-    if let Some((ver, tag)) = best {
-        if ver > current {
-            let download_url = format!(
-                "https://github.com/riporipoteam-ctrl/rrflux/releases/download/{}/{}",
-                tag, SETUP_ASSET_NAME
-            );
-            return UpdateDecision::Available {
-                version: tag.trim_start_matches("recflare-installer-v").to_string(),
-                download_url,
-            };
-        }
-    }
-    // No newer version found via HTML — but we can't be sure the check
-    // succeeded, so return CheckFailed to be honest.
-    UpdateDecision::CheckFailed
+    // A non-array body (e.g. an API error object) parses as Err here.
+    let releases: Vec<serde_json::Value> = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return UpdateDecision::CheckFailed,
+    };
+    find_update(&releases, current_version())
 }
 
 /// Pure update decision over a releases list (newest first, as the GitHub
