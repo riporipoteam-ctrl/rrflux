@@ -1,4 +1,4 @@
-// Flux Rec Setup & Launcher — modern dark-mode UI v0.6.14.
+// Flux Rec Setup & Launcher — light, branded progress UI v1.0.26.
 //
 // Full redesign:
 // - Borderless window, rounded corners, drop shadow, custom title bar
@@ -515,14 +515,29 @@ mod imp {
             WM_LBUTTONDOWN => {
                 let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut GuiState;
                 if !ptr.is_null() {
-                    let s = &*ptr;
                     let pt = POINT {
                         x: loword(lparam.0),
                         y: hiword(lparam.0),
                     };
-                    let (min_r, close_r) = title_buttons(s);
+                    let (min_r, close_r, mode) = {
+                        let state = &*ptr;
+                        let (min_r, close_r) = title_buttons(state);
+                        (min_r, close_r, state.mode)
+                    };
                     if pt_in(pt, close_r) {
-                        let _ = DestroyWindow(hwnd);
+                        let (title, body) = match mode {
+                            GuiMode::Setup => (
+                                w!("Flux Rec Setup"),
+                                w!("Close this window? Setup will continue in the background."),
+                            ),
+                            GuiMode::Launcher => (
+                                w!("Flux Rec"),
+                                w!("Close this window? Flux Rec will continue starting in the background."),
+                            ),
+                        };
+                        if MessageBoxW(hwnd, body, title, MB_YESNO | MB_ICONINFORMATION) == IDYES {
+                            let _ = DestroyWindow(hwnd);
+                        }
                     } else if pt_in(pt, min_r) {
                         let _ = ShowWindow(hwnd, SW_MINIMIZE);
                     }

@@ -1,4 +1,4 @@
-//! Ripo Team Launcher v1.0.0 — game library UI.
+//! Ripo Team Launcher v1.0.26 — game library UI.
 //!
 //! A game-library style launcher (inspired by Steam/EGS):
 //! - Sidebar with Ripo Team branding, Library/Settings nav.
@@ -15,6 +15,24 @@
 //! * No `unwrap`/`expect`/`println` anywhere.
 
 use std::sync::mpsc::{Receiver, Sender};
+use std::path::PathBuf;
+
+#[cfg(any(windows, test))]
+fn premultiply_channel(channel: u8, alpha: u8) -> u8 {
+    ((channel as u16 * alpha as u16 + 127) / 255) as u8
+}
+
+#[cfg(test)]
+mod alpha_tests {
+    use super::premultiply_channel;
+
+    #[test]
+    fn premultiplication_obeys_alpha_blend_contract() {
+        assert_eq!(premultiply_channel(200, 255), 200);
+        assert_eq!(premultiply_channel(200, 128), 100);
+        assert_eq!(premultiply_channel(200, 0), 0);
+    }
+}
 
 /// UI theme. Default is Light (Armin's order).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -27,6 +45,7 @@ pub enum Theme {
 pub struct LibraryConfig {
     pub theme: Theme,
     pub version: String,
+    pub install_dir: PathBuf,
     pub cmd_tx: Sender<crate::library::LibCmd>,
 }
 
@@ -92,11 +111,11 @@ pub fn run_splash_gui(theme: Theme, rx: Receiver<()>) {
 
 #[cfg(windows)]
 mod imp {
-    use super::{LibraryConfig, Theme, View, SCREENSHOTS, SCREENSHOT_NAMES, FLUXREC_LOGO_PNG};
+    use super::{premultiply_channel, LibraryConfig, Theme, View, SCREENSHOTS, SCREENSHOT_NAMES, FLUXREC_LOGO_PNG};
     use crate::library::{LibCmd, LibMsg};
     use std::ffi::c_void;
     use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-    use windows::core::{w, PCWSTR};
+    use windows::core::w;
     use windows::Win32::Foundation::*;
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::System::LibraryLoader::*;
@@ -200,8 +219,10 @@ mod imp {
         cmd_tx: Sender<LibCmd>,
         // Library state
         ready: bool,
+        install_required: bool,
         update_available: bool,
         update_version: String,
+        install_dir: String,
         players: Option<u32>,
         checking: bool,
         // Progress (Working view)
@@ -266,9 +287,11 @@ mod imp {
             let mut state = Box::new(State {
                 theme: config.theme,
                 version: config.version,
+                install_dir: config.install_dir.to_string_lossy().into_owned(),
                 view: View::Library,
                 cmd_tx: config.cmd_tx,
                 ready: false,
+                install_required: false,
                 update_available: false,
                 update_version: String::new(),
                 players: None,
@@ -342,12 +365,21 @@ mod imp {
                                 LibMsg::Ready { update_available, update_version } => {
                                     st.ready = true;
                                     st.checking = false;
+                                    st.install_required = false;
                                     st.update_available = update_available;
                                     st.update_version = update_version;
                                     st.check_error.clear();
                                 }
                                 LibMsg::Checking => {
                                     st.checking = true;
+                                    st.check_error.clear();
+                                }
+                                LibMsg::InstallRequired => {
+                                    st.install_required = true;
+                                    st.ready = true;
+                                    st.checking = false;
+                                    st.update_available = false;
+                                    st.update_version.clear();
                                     st.check_error.clear();
                                 }
                                 LibMsg::CheckFailed(e) => {
@@ -364,9 +396,7 @@ mod imp {
                                     if !stage.is_empty() {
                                         st.stage = stage;
                                     }
-                                    if !detail.is_empty() {
-                                        st.detail = detail;
-                                    }
+                                    st.detail = detail;
                                 }
                                 LibMsg::CloseGui => {
                                     KillTimer(hwnd, TIMER_ID);
@@ -422,6 +452,7 @@ mod imp {
             let st = Box::new(SplashState {
                 theme,
                 t: 0,
+                logo_bitmap: png_to_bitmap(FLUXREC_LOGO_PNG, 128, 128),
             });
             let ptr = Box::into_raw(st);
 
@@ -442,7 +473,10 @@ mod imp {
                 Some(ptr as *const c_void),
             )
             .map_err(|_| {
-                let _ = Box::from_raw(ptr);
+                let failed_state = Box::from_raw(ptr);
+                if !failed_state.logo_bitmap.is_invalid() {
+                    let _ = DeleteObject(failed_state.logo_bitmap);
+                }
             })?;
 
             let rgn = CreateRoundRectRgn(0, 0, SPLASH_W + 1, SPLASH_H + 1, 24, 24);
@@ -486,6 +520,7 @@ mod imp {
     struct SplashState {
         theme: Theme,
         t: u32,
+        logo_bitmap: HBITMAP,
     }
 
     // ------------------------------------------------------------------
@@ -546,6 +581,51 @@ mod imp {
         Ok(())
     }
 
+    unsafe fn draw_text_ellipsis(
+        hdc: HDC,
+        text: &str,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        color: COLORREF,
+        size: i32,
+    ) -> Silent {
+        let mut wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let font = CreateFontW(
+            -size,
+            0,
+            0,
+            0,
+            FW_NORMAL.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET.0 as u32,
+            OUT_DEFAULT_PRECIS.0 as u32,
+            CLIP_DEFAULT_PRECIS.0 as u32,
+            CLEARTYPE_QUALITY.0 as u32,
+            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+            w!("Segoe UI"),
+        );
+        if font.is_invalid() {
+            return Err(());
+        }
+        let old = SelectObject(hdc, font);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, color);
+        let mut r = RECT {
+            left: x,
+            top: y,
+            right: x + w,
+            bottom: y + h,
+        };
+        DrawTextW(hdc, &mut wide, &mut r, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_LEFT);
+        SelectObject(hdc, old);
+        let _ = DeleteObject(font);
+        Ok(())
+    }
+
     /// Vertical gradient fill.
     unsafe fn fill_gradient(hdc: HDC, r: &RECT, top: COLORREF, bot: COLORREF) -> Silent {
         let h = (r.bottom - r.top).max(1);
@@ -592,6 +672,41 @@ mod imp {
         SelectObject(hdc, old_p);
         DeleteObject(br);
         DeleteObject(pen);
+        Ok(())
+    }
+
+    unsafe fn round_rect_outline(hdc: HDC, r: &RECT, rad: i32, color: COLORREF) -> Silent {
+        let pen = CreatePen(PS_SOLID, 1, color);
+        if pen.is_invalid() {
+            return Err(());
+        }
+        let old_pen = SelectObject(hdc, pen);
+        let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        let _ = RoundRect(hdc, r.left, r.top, r.right, r.bottom, rad, rad);
+        SelectObject(hdc, old_pen);
+        SelectObject(hdc, old_brush);
+        let _ = DeleteObject(pen);
+        Ok(())
+    }
+
+    unsafe fn draw_logo_bitmap(hdc: HDC, bitmap: HBITMAP, x: i32, y: i32, size: i32) -> Silent {
+        if bitmap.is_invalid() || size <= 0 {
+            return Err(());
+        }
+        let mem_dc = CreateCompatibleDC(hdc);
+        if mem_dc.is_invalid() {
+            return Err(());
+        }
+        let old = SelectObject(mem_dc, bitmap);
+        let blend = BLENDFUNCTION {
+            BlendOp: AC_SRC_OVER as u8,
+            BlendFlags: 0,
+            SourceConstantAlpha: 255,
+            AlphaFormat: AC_SRC_ALPHA as u8,
+        };
+        let _ = AlphaBlend(hdc, x, y, size, size, mem_dc, 0, 0, 128, 128, blend);
+        SelectObject(mem_dc, old);
+        let _ = DeleteDC(mem_dc);
         Ok(())
     }
 
@@ -664,14 +779,15 @@ mod imp {
             let _ = DeleteObject(hbmp);
             return HBITMAP(std::ptr::null_mut());
         }
-        // Copy pixels (RGBA -> BGRA).
+        // AlphaBlend expects premultiplied BGRA, not straight-alpha RGBA.
         let dst = std::slice::from_raw_parts_mut(bits as *mut u8, (w * h * 4) as usize);
         let src = scaled.as_raw();
         for i in 0..(w * h) as usize {
-            dst[i * 4] = src[i * 4 + 2];     // B
-            dst[i * 4 + 1] = src[i * 4 + 1]; // G
-            dst[i * 4 + 2] = src[i * 4];     // R
-            dst[i * 4 + 3] = src[i * 4 + 3]; // A
+            let alpha = src[i * 4 + 3];
+            dst[i * 4] = premultiply_channel(src[i * 4 + 2], alpha); // B
+            dst[i * 4 + 1] = premultiply_channel(src[i * 4 + 1], alpha); // G
+            dst[i * 4 + 2] = premultiply_channel(src[i * 4], alpha); // R
+            dst[i * 4 + 3] = alpha;
         }
         hbmp
     }
@@ -718,6 +834,12 @@ mod imp {
     fn compute_rects() -> Rects {
         let content_x = SIDEBAR_W;
         let content_w = WIN_W - SIDEBAR_W;
+        let card_right = content_x + content_w - 40;
+        let action_right = card_right - 36;
+        let play_left = action_right - 176;
+        let details_right = play_left - 12;
+        let details_left = details_right - 104;
+        let uninstall_right = details_left - 12;
         Rects {
             nav_library: RECT {
                 left: 16,
@@ -735,26 +857,26 @@ mod imp {
             card: RECT {
                 left: content_x + 40,
                 top: TITLE_H + 60,
-                right: content_x + content_w - 40,
-                bottom: TITLE_H + 480,
+                right: card_right,
+                bottom: TITLE_H + 500,
             },
             play: RECT {
-                left: content_x + 40 + 360,
-                top: TITLE_H + 400,
-                right: content_x + 40 + 560,
-                bottom: TITLE_H + 448,
+                left: play_left,
+                top: TITLE_H + 452,
+                right: action_right,
+                bottom: TITLE_H + 500,
             },
             uninstall: RECT {
-                left: content_x + 40 + 580,
-                top: TITLE_H + 408,
-                right: content_x + 40 + 680,
-                bottom: TITLE_H + 440,
+                left: uninstall_right - 82,
+                top: TITLE_H + 452,
+                right: uninstall_right,
+                bottom: TITLE_H + 500,
             },
             details: RECT {
-                left: content_x + 40 + 700,
-                top: TITLE_H + 408,
-                right: content_x + 40 + 800,
-                bottom: TITLE_H + 440,
+                left: details_left,
+                top: TITLE_H + 452,
+                right: details_right,
+                bottom: TITLE_H + 500,
             },
             // Settings view
             theme_light: RECT {
@@ -790,27 +912,27 @@ mod imp {
             },
             carousel: RECT {
                 left: content_x + 40,
-                top: TITLE_H + 100,
-                right: content_x + 40 + 640,
-                bottom: TITLE_H + 100 + 360,
+                top: TITLE_H + 112,
+                right: content_x + 40 + 600,
+                bottom: TITLE_H + 112 + 338,
             },
             carousel_prev: RECT {
                 left: content_x + 48,
-                top: TITLE_H + 250,
+                top: TITLE_H + 112 + 149,
                 right: content_x + 88,
-                bottom: TITLE_H + 290,
+                bottom: TITLE_H + 112 + 189,
             },
             carousel_next: RECT {
-                left: content_x + 40 + 640 - 48,
-                top: TITLE_H + 250,
-                right: content_x + 40 + 640 - 8,
-                bottom: TITLE_H + 290,
+                left: content_x + 40 + 600 - 48,
+                top: TITLE_H + 112 + 149,
+                right: content_x + 40 + 600 - 8,
+                bottom: TITLE_H + 112 + 189,
             },
             detail_play: RECT {
-                left: content_x + 40,
+                left: content_x + content_w - 40 - 200,
                 top: TITLE_H + 500,
-                right: content_x + 240,
-                bottom: TITLE_H + 548,
+                right: content_x + content_w - 40,
+                bottom: TITLE_H + 552,
             },
         }
     }
@@ -974,14 +1096,16 @@ mod imp {
         };
         fill_rect(mem, &side_r, p.bg_side)?;
 
-        // Sidebar logo + wordmark (v1.0.10: clean text only, no icon).
-        // The drawn "R"/"RT" badges looked amateur — just use typography.
+        // Brand mark + wordmark.
+        if draw_logo_bitmap(mem, st.logo_bitmap, 24, TITLE_H + 20, 36).is_err() {
+            let _ = draw_logo(mem, 24, TITLE_H + 20, 36, p.accent);
+        }
         draw_text(
             mem,
             "RIPO TEAM",
-            24,
+            72,
             TITLE_H + 24,
-            160,
+            150,
             22,
             p.text,
             15,
@@ -990,10 +1114,10 @@ mod imp {
         )?;
         draw_text(
             mem,
-            "Game Launcher",
-            24,
+            "FLUX REC  /  GAME LIBRARY",
+            72,
             TITLE_H + 46,
-            160,
+            150,
             18,
             p.text_dim,
             12,
@@ -1001,8 +1125,8 @@ mod imp {
             false,
         )?;
         // Nav buttons.
-        draw_nav(mem, &rects.nav_library, "📚  Library", st.view == View::Library, st.hover == Hot::NavLibrary, p)?;
-        draw_nav(mem, &rects.nav_settings, "⚙️  Settings", st.view == View::Settings, st.hover == Hot::NavSettings, p)?;
+        draw_nav(mem, &rects.nav_library, "Library", st.view == View::Library, st.hover == Hot::NavLibrary, p)?;
+        draw_nav(mem, &rects.nav_settings, "Settings", st.view == View::Settings, st.hover == Hot::NavSettings, p)?;
 
         // Version at sidebar bottom.
         draw_text(
@@ -1108,8 +1232,11 @@ mod imp {
             let mem_dc = CreateCompatibleDC(hdc);
             if !mem_dc.is_invalid() {
                 let old = SelectObject(mem_dc, hbmp);
-                // Stretch the 640x360 screenshot to fill the banner.
-                StretchBlt(
+                // Crop the 16:9 screenshot to fill the wide banner without
+                // distorting the artwork.
+                let source_h = ((640 * banner_h) / banner_w).clamp(1, 360);
+                let source_y = (360 - source_h) / 2;
+                let _ = StretchBlt(
                     hdc,
                     banner.left,
                     banner.top,
@@ -1117,9 +1244,9 @@ mod imp {
                     banner_h,
                     mem_dc,
                     0,
-                    0,
+                    source_y,
                     640,
-                    360,
+                    source_h,
                     SRCCOPY,
                 );
                 SelectObject(mem_dc, old);
@@ -1129,37 +1256,22 @@ mod imp {
             fill_gradient(hdc, &banner, p.banner_top, p.banner_bot)?;
         }
         // Note: text drawn below uses shadow for readability on the screenshot.
-        // Big logo on banner (v1.0.5: real logo bitmap, not drawn approximation).
-        // v1.0.9: use AlphaBlend for transparency.
-        if !st.logo_bitmap.is_invalid() {
-            let mem_dc = CreateCompatibleDC(hdc);
-            if !mem_dc.is_invalid() {
-                let old = SelectObject(mem_dc, st.logo_bitmap);
-                let bf = BLENDFUNCTION {
-                    BlendOp: AC_SRC_OVER as u8,
-                    BlendFlags: 0,
-                    SourceConstantAlpha: 255,
-                    AlphaFormat: AC_SRC_ALPHA as u8,
-                };
-                AlphaBlend(
-                    hdc,
-                    banner.left + 36,
-                    banner.top + 44,
-                    96,
-                    96,
-                    mem_dc,
-                    0,
-                    0,
-                    128,
-                    128,
-                    bf,
-                );
-                SelectObject(mem_dc, old);
-                DeleteDC(mem_dc);
-            }
-        } else {
+        // Big logo on banner; fall back to a drawn mark if decoding failed.
+        if draw_logo_bitmap(hdc, st.logo_bitmap, banner.left + 36, banner.top + 44, 96).is_err() {
             draw_logo(hdc, banner.left + 36, banner.top + 44, 96, COLORREF(0x00FFFFFF))?;
         }
+        draw_text(
+            hdc,
+            "FLUX REC",
+            banner.left + 158,
+            banner.top + 58,
+            400,
+            50,
+            COLORREF(0x00140D08),
+            40,
+            true,
+            false,
+        )?;
         draw_text(
             hdc,
             "FLUX REC",
@@ -1170,6 +1282,18 @@ mod imp {
             COLORREF(0x00FFFFFF),
             40,
             true,
+            false,
+        )?;
+        draw_text(
+            hdc,
+            "The private Rec Room revival",
+            banner.left + 158,
+            banner.top + 110,
+            400,
+            24,
+            COLORREF(0x00140D08),
+            15,
+            false,
             false,
         )?;
         draw_text(
@@ -1203,8 +1327,8 @@ mod imp {
         // Stats row.
         let stats_y = card.top + 290;
         let players_txt = match st.players {
-            Some(c) => format!("👥 {} online", c),
-            None => "👥 …".to_string(),
+            Some(c) => format!("{} players online", c),
+            None => "Player count unavailable".to_string(),
         };
         draw_text(hdc, &players_txt, card.left + 36, stats_y, 200, 24, p.text, 14, true, false)?;
         draw_text(
@@ -1220,49 +1344,90 @@ mod imp {
             false,
         )?;
 
-        // Status line.
+        // Status chip: distinguish install, update, offline and ready states.
         let status = if st.checking {
-            "Checking for updates…"
+            "Checking for updates…".to_string()
         } else if !st.check_error.is_empty() {
-            // v1.0.5: show network errors instead of "Ready to play".
-            &st.check_error
+            st.check_error.clone()
+        } else if st.install_required {
+            "Ready to install".to_string()
         } else if st.update_available {
-            &format!("Update {} available", st.update_version)
+            let version = st
+                .update_version
+                .trim_start_matches("recflare-installer-v")
+                .trim_start_matches('v');
+            format!("Update v{version} available")
         } else if st.ready {
-            "Ready to play"
+            "Ready to play — updates are checked when you press Play".to_string()
         } else {
-            "Preparing…"
+            "Preparing your library…".to_string()
         };
-        // (status is a &str borrowed from st; copy to owned to satisfy borrowck)
-        let status_owned = status.to_string();
+        let status_rect = RECT {
+            left: card.left + 36,
+            top: card.top + 348,
+            right: card.right - 36,
+            bottom: card.top + 376,
+        };
+        let highlighted = st.update_available || st.install_required;
+        let status_error = !st.check_error.is_empty();
+        let status_fill = if highlighted {
+            p.accent
+        } else if status_error && st.theme == Theme::Light {
+            COLORREF(0x00E8E2FF)
+        } else {
+            p.bg_hover
+        };
+        let status_text = if highlighted {
+            COLORREF(0x00FFFFFF)
+        } else if status_error && st.theme == Theme::Light {
+            COLORREF(0x002B39C0)
+        } else if status_error {
+            COLORREF(0x005E7BFF)
+        } else {
+            p.text_dim
+        };
+        round_rect_path(
+            hdc,
+            &status_rect,
+            10,
+            status_fill,
+        )?;
         draw_text(
             hdc,
-            &status_owned,
-            card.left + 36,
-            card.top + 348,
-            300,
-            22,
-            if st.update_available { p.accent } else { p.text_dim },
+            &status,
+            status_rect.left + 12,
+            status_rect.top + 2,
+            status_rect.right - status_rect.left - 24,
+            24,
+            status_text,
             13,
-            false,
+            highlighted,
             false,
         )?;
 
         // PLAY button.
         let play = &rects.play;
         let play_hover = st.hover == Hot::Play;
-        let play_label = if st.update_available { "⟳  UPDATE & PLAY" } else { "▶  PLAY" };
+        let play_label = if st.install_required {
+            "INSTALL"
+        } else if st.update_available {
+            "UPDATE & PLAY"
+        } else {
+            "PLAY"
+        };
         let btn_color = if play_hover { p.accent_dark } else { p.accent };
         // Button pulse animation when ready.
         round_rect_path(hdc, play, 16, btn_color)?;
-        draw_text(hdc, play_label, play.left, play.top + 12, play.right - play.left, 28, COLORREF(0x00FFFFFF), 17, true, true)?;
+        draw_text(hdc, play_label, play.left, play.top + 12, play.right - play.left, 28, COLORREF(0x00FFFFFF), 16, true, true)?;
 
-        // Uninstall (subtle text button).
-        let un = &rects.uninstall;
-        if st.hover == Hot::Uninstall {
-            round_rect_path(hdc, un, 10, p.bg_hover)?;
+        // Uninstall is only available after game files exist.
+        if !st.install_required {
+            let un = &rects.uninstall;
+            if st.hover == Hot::Uninstall {
+                round_rect_path(hdc, un, 10, p.bg_hover)?;
+            }
+            draw_text(hdc, "Uninstall", un.left, un.top + 6, un.right - un.left, 22, p.text_dim, 13, false, true)?;
         }
-        draw_text(hdc, "Uninstall", un.left, un.top + 6, un.right - un.left, 22, p.text_dim, 13, false, true)?;
 
         // v1.0.6: Details button (explicit, not just card click).
         let det = &rects.details;
@@ -1270,16 +1435,9 @@ mod imp {
             round_rect_path(hdc, det, 10, p.bg_hover)?;
         } else {
             round_rect_path(hdc, det, 10, p.bg_card)?;
-            // Border
-            let pen = CreatePen(PS_SOLID, 1, p.border);
-            if !pen.is_invalid() {
-                let old = SelectObject(hdc, pen);
-                // Draw border via round rect outline (simplified: just fill)
-                SelectObject(hdc, old);
-                DeleteObject(pen);
-            }
+            round_rect_outline(hdc, det, 10, p.border)?;
         }
-        draw_text(hdc, "Details →", det.left, det.top + 6, det.right - det.left, 22, p.accent, 13, true, true)?;
+        draw_text(hdc, "Details", det.left, det.top + 14, det.right - det.left, 22, p.accent, 13, true, true)?;
 
         Ok(())
     }
@@ -1295,16 +1453,8 @@ mod imp {
         }
         draw_text(hdc, "←  Back", back.left + 8, back.top + 6, 90, 22, p.text_dim, 14, false, false)?;
 
-        // Title + logo (v1.0.5: real logo bitmap).
-        if !st.logo_bitmap.is_invalid() {
-            let mem_dc = CreateCompatibleDC(hdc);
-            if !mem_dc.is_invalid() {
-                let old = SelectObject(mem_dc, st.logo_bitmap);
-                BitBlt(hdc, cx + 40, TITLE_H + 52, 48, 48, mem_dc, 0, 0, SRCCOPY);
-                SelectObject(mem_dc, old);
-                DeleteDC(mem_dc);
-            }
-        } else {
+        // Title + logo. Use the same premultiplied-alpha path as the banner.
+        if draw_logo_bitmap(hdc, st.logo_bitmap, cx + 40, TITLE_H + 52, 48).is_err() {
             draw_logo(hdc, cx + 40, TITLE_H + 52, 48, p.accent)?;
         }
         draw_text(hdc, "Flux Rec", cx + 104, TITLE_H + 52, 400, 36, p.text, 28, true, false)?;
@@ -1330,17 +1480,29 @@ mod imp {
             let mem_dc = CreateCompatibleDC(hdc);
             if !mem_dc.is_invalid() {
                 let old = SelectObject(mem_dc, hbmp);
-                BitBlt(hdc, car.left, car.top, 640, 360, mem_dc, 0, 0, SRCCOPY);
+                let _ = StretchBlt(
+                    hdc,
+                    car.left,
+                    car.top,
+                    car.right - car.left,
+                    car.bottom - car.top,
+                    mem_dc,
+                    0,
+                    0,
+                    640,
+                    360,
+                    SRCCOPY,
+                );
                 SelectObject(mem_dc, old);
                 DeleteDC(mem_dc);
             }
             let name = SCREENSHOT_NAMES.get(idx).copied().unwrap_or("");
-            draw_text(hdc, name, car.left, car.bottom + 8, 640, 22, p.text_dim, 13, false, true)?;
+            draw_text(hdc, name, car.left, car.bottom + 8, car.right - car.left, 22, p.text_dim, 13, false, true)?;
             // Dots.
             let n = st.carousel_bitmaps.len();
             let dot_y = car.bottom + 34;
             let total_w = (n as i32) * 16;
-            let start_x = car.left + (640 - total_w) / 2;
+            let start_x = car.left + ((car.right - car.left) - total_w) / 2;
             for i in 0..n {
                 let c = if i == idx { p.accent } else { p.track };
                 let br = CreateSolidBrush(c);
@@ -1356,7 +1518,7 @@ mod imp {
                 }
             }
         } else {
-            draw_text(hdc, "Screenshots loading…", car.left, car.top + 160, 640, 30, p.text_dim, 14, false, true)?;
+            draw_text(hdc, "Screenshots loading…", car.left, car.top + 150, car.right - car.left, 30, p.text_dim, 14, false, true)?;
         }
 
         // Prev/Next buttons.
@@ -1384,27 +1546,34 @@ mod imp {
         }
 
         // Description.
-        let desc = "Hang out with friends, explore player-created rooms, and play games like paintball, laser tag, and quests — all in the private Flux Rec universe. Your dorm room is your home base. No Steam required. © 2026 Ripo Team.";
-        draw_text(hdc, desc, cx + 40, TITLE_H + 520, 640, 60, p.text_dim, 13, false, false)?;
+        let desc = "Hang out with friends, explore player-created rooms, and play paintball, laser tag, quests and more. No Steam required.";
+        draw_text(hdc, desc, cx + 40, car.bottom + 46, 430, 44, p.text_dim, 13, false, false)?;
 
         // Player count.
         let players_txt = match st.players {
-            Some(c) => format!("👥 {} players online now", c),
-            None => "👥 …".to_string(),
+            Some(c) => format!("{} players online now", c),
+            None => "Player count unavailable".to_string(),
         };
-        draw_text(hdc, &players_txt, cx + 40, TITLE_H + 580, 300, 24, p.text, 14, true, false)?;
+        draw_text(hdc, &players_txt, cx + 40, car.bottom + 108, 430, 24, p.text, 14, true, false)?;
 
         // PLAY button.
         let dp = &rects.detail_play;
         let hover = st.hover == Hot::DetailPlay;
         round_rect_path(hdc, dp, 14, if hover { p.accent_dark } else { p.accent })?;
-        let label = if st.update_available { "⟳  UPDATE & PLAY" } else { "▶  PLAY" };
-        draw_text(hdc, label, dp.left, dp.top + 12, dp.right - dp.left, 26, COLORREF(0x00FFFFFF), 16, true, true)?;
+        let label = if st.install_required {
+            "INSTALL"
+        } else if st.update_available {
+            "UPDATE & PLAY"
+        } else {
+            "PLAY"
+        };
+        draw_text(hdc, label, dp.left, dp.top + 14, dp.right - dp.left, 26, COLORREF(0x00FFFFFF), 15, true, true)?;
 
         Ok(())
     }
 
-    unsafe fn draw_settings_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {        let cx = SIDEBAR_W;
+    unsafe fn draw_settings_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
+        let cx = SIDEBAR_W;
         draw_text(hdc, "Settings", cx + 40, TITLE_H + 16, 300, 30, p.text, 22, true, false)?;
 
         draw_text(hdc, "Appearance", cx + 60, TITLE_H + 80, 300, 26, p.text, 16, true, false)?;
@@ -1435,7 +1604,7 @@ mod imp {
         )?;
         draw_text(
             hdc,
-            "☀️  Light",
+            "Light",
             lr.left,
             lr.top + 10,
             lr.right - lr.left,
@@ -1456,7 +1625,7 @@ mod imp {
         )?;
         draw_text(
             hdc,
-            "🌙  Dark",
+            "Dark",
             dr.left,
             dr.top + 10,
             dr.right - dr.left,
@@ -1469,8 +1638,8 @@ mod imp {
 
         // Install location.
         draw_text(hdc, "Install location", cx + 60, TITLE_H + 220, 300, 26, p.text, 16, true, false)?;
-        let dir = crate::default_install_dir().to_string_lossy().to_string();
-        draw_text(hdc, &dir, cx + 60, TITLE_H + 248, 700, 22, p.text_dim, 13, false, false)?;
+        let dir = st.install_dir.clone();
+        draw_text_ellipsis(hdc, &dir, cx + 60, TITLE_H + 248, 700, 22, p.text_dim, 13)?;
 
         // About.
         draw_text(hdc, "About", cx + 60, TITLE_H + 300, 300, 26, p.text, 16, true, false)?;
@@ -1496,7 +1665,9 @@ mod imp {
         let bx = cx + (content_w - 440) / 2;
         let by = TITLE_H + 200;
 
-        draw_logo(hdc, bx + 188, by - 110, 64, p.accent)?;
+        if draw_logo_bitmap(hdc, st.logo_bitmap, bx + 188, by - 110, 64).is_err() {
+            draw_logo(hdc, bx + 188, by - 110, 64, p.accent)?;
+        }
         draw_text(hdc, "FLUX REC", bx, by - 36, 440, 34, p.text, 24, true, true)?;
 
         if !st.stage.is_empty() {
@@ -1578,7 +1749,9 @@ mod imp {
 
         // Big logo with a subtle pulse.
         let pulse = ((st.t as f32 * 0.06).sin() * 4.0) as i32;
-        draw_logo(mem, SPLASH_W / 2 - 48, 52 + pulse / 2, 96, p.accent)?;
+        if draw_logo_bitmap(mem, st.logo_bitmap, SPLASH_W / 2 - 48, 52 + pulse / 2, 96).is_err() {
+            draw_logo(mem, SPLASH_W / 2 - 48, 52 + pulse / 2, 96, p.accent)?;
+        }
         draw_text(mem, "FLUX REC", 0, 168, SPLASH_W, 40, p.text, 30, true, true)?;
         draw_text(mem, "Launching game…", 0, 208, SPLASH_W, 26, p.text_dim, 15, false, true)?;
 
@@ -1629,17 +1802,25 @@ mod imp {
             WM_TIMER => {
                 let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
                 if !ptr.is_null() {
-                    (*ptr).anim_t = (*ptr).anim_t.wrapping_add(1);
-                    // v1.0.4: auto-advance carousel every ~4s (50ms timer * 80).
-                    if (*ptr).view == View::Detail && !(*ptr).carousel_bitmaps.is_empty() {
-                        (*ptr).carousel_tick += 1;
-                        if (*ptr).carousel_tick >= 80 {
-                            (*ptr).carousel_tick = 0;
-                            (*ptr).carousel_idx =
-                                ((*ptr).carousel_idx + 1) % (*ptr).carousel_bitmaps.len();
+                    let st = &mut *ptr;
+                    let mut repaint = false;
+                    if st.view == View::Working {
+                        st.anim_t = st.anim_t.wrapping_add(1);
+                        repaint = true;
+                    }
+                    // Auto-advance the carousel every ~4s (50ms timer * 80).
+                    if st.view == View::Detail && !st.carousel_bitmaps.is_empty() {
+                        st.anim_t = st.anim_t.wrapping_add(1);
+                        st.carousel_tick += 1;
+                        if st.carousel_tick >= 80 {
+                            st.carousel_tick = 0;
+                            st.carousel_idx = (st.carousel_idx + 1) % st.carousel_bitmaps.len();
+                            repaint = true;
                         }
                     }
-                    let _ = InvalidateRect(hwnd, None, false);
+                    if repaint {
+                        let _ = InvalidateRect(hwnd, None, false);
+                    }
                 }
                 LRESULT(0)
             }
@@ -1781,7 +1962,7 @@ mod imp {
                     let _ = InvalidateRect(hwnd, None, false);
                 }
             }
-            Hot::Uninstall => {
+            Hot::Uninstall if !st.install_required => {
                 // Confirm via a native dialog (simple + reliable).
                 let ans = MessageBoxW(
                     hwnd,
@@ -1793,6 +1974,7 @@ mod imp {
                     let _ = st.cmd_tx.send(LibCmd::Uninstall);
                 }
             }
+            Hot::Uninstall => {}
             Hot::ThemeLight => {
                 if st.theme != Theme::Light {
                     st.theme = Theme::Light;
@@ -1842,6 +2024,11 @@ mod imp {
                 LRESULT(0)
             }
             WM_DESTROY => {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut SplashState;
+                if !ptr.is_null() && !(*ptr).logo_bitmap.is_invalid() {
+                    let _ = DeleteObject((*ptr).logo_bitmap);
+                    (*ptr).logo_bitmap = HBITMAP(std::ptr::null_mut());
+                }
                 PostQuitMessage(0);
                 LRESULT(0)
             }

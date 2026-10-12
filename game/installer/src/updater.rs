@@ -334,6 +334,7 @@ mod tests {
                 assert_eq!(download_url, "https://dl/0.1.11.exe");
             }
             UpdateDecision::UpToDate => panic!("expected an update"),
+            UpdateDecision::CheckFailed => panic!("update check unexpectedly failed"),
         }
     }
 
@@ -377,6 +378,7 @@ mod tests {
                 assert_eq!(version, "recflare-installer-v0.1.11");
             }
             UpdateDecision::UpToDate => panic!("expected an update"),
+            UpdateDecision::CheckFailed => panic!("update check unexpectedly failed"),
         }
     }
 
@@ -391,6 +393,7 @@ mod tests {
                 assert_eq!(version, "recflare-installer-v0.1.11");
             }
             UpdateDecision::UpToDate => panic!("expected an update"),
+            UpdateDecision::CheckFailed => panic!("update check unexpectedly failed"),
         }
     }
 

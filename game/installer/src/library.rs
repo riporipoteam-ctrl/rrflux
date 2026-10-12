@@ -1,4 +1,4 @@
-//! Ripo Team Launcher v1.0.0 — game library flow.
+//! Ripo Team Launcher v1.0.26 — game library flow.
 //!
 //! Replaces the old compact `--play` launcher window with a full game-library
 //! experience: sidebar, game cards, PLAY button, settings (light/dark theme),
@@ -35,6 +35,8 @@ pub enum LibMsg {
     Ready { update_available: bool, update_version: String },
     /// Checks are running (fast path).
     Checking,
+    /// No game executable exists yet; the primary action should say Install.
+    InstallRequired,
     /// Check failed but the game can still launch (fail-soft).
     CheckFailed(String),
     /// Player count for the game card.
@@ -150,6 +152,7 @@ pub fn run_library(
     let gui_config = gui_library::LibraryConfig {
         theme,
         version: version.clone(),
+        install_dir: dir.to_path_buf(),
         cmd_tx: cmd_tx.clone(),
     };
     let gui_thread = std::thread::spawn(move || {
@@ -191,19 +194,20 @@ pub fn run_library(
 fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
     let _ = msg_tx.send(LibMsg::Checking);
 
-    // Player count (independent, fail-soft).
-    if let Some(count) = fetch_player_count() {
-        let _ = msg_tx.send(LibMsg::PlayerCount(count));
-    }
+    // Player count is independent and can take several seconds offline; do
+    // not hold the install/update readiness state behind that request.
+    let player_tx = msg_tx.clone();
+    std::thread::spawn(move || {
+        if let Some(count) = fetch_player_count() {
+            let _ = player_tx.send(LibMsg::PlayerCount(count));
+        }
+    });
 
     // If the game was never installed, the library shows "Install" state.
     // The PLAY button will run the full install.
     let game_exe = crate::find_game_exe(dir);
     if game_exe.is_none() {
-        let _ = msg_tx.send(LibMsg::Ready {
-            update_available: false,
-            update_version: String::new(),
-        });
+        let _ = msg_tx.send(LibMsg::InstallRequired);
         return;
     }
 
@@ -525,8 +529,10 @@ fn do_play(
                         let msg_tx_c = msg_tx.clone();
                         std::thread::spawn(move || {
                             for msg in rx2 {
+                                let source_pct = msg.percent.clamp(8, 80);
+                                let percent = 84 + (u16::from(source_pct - 8) * 6 / 72) as u8;
                                 let _ = msg_tx_c.send(LibMsg::Progress {
-                                    percent: msg.percent,
+                                    percent,
                                     stage: msg.stage,
                                     detail: msg.detail,
                                 });
@@ -542,15 +548,28 @@ fn do_play(
                     if downloaded {
                         // The fresh setup installs and launches the game itself.
                         let dir_s = dir.to_string_lossy().to_string();
+                        send(91, "Installing update…");
                         let _ = msg_tx.send(LibMsg::CloseGui);
                         std::thread::sleep(Duration::from_millis(300));
                         let (p3, _rx3) = crate::progress::channel();
-                        crate::launcher::spawn_update(&dest, &dir_s, &p3);
-                        std::process::exit(0);
+                        if crate::launcher::spawn_update(&dest, &dir_s, &p3) {
+                            std::process::exit(0);
+                        }
+                        // Never strand a player because the downloaded setup
+                        // could not be started or completed.
+                        #[cfg(windows)]
+                        crate::message_box(
+                            "Flux Rec update",
+                            "The update could not be completed. Flux Rec will start using the installed version.",
+                            false,
+                        );
                     }
                     send(90, "Update failed — launching installed version…");
                 }
-                _ => {}
+                crate::updater::UpdateDecision::CheckFailed => {
+                    send(83, "Update check unavailable — launching installed version…");
+                }
+                crate::updater::UpdateDecision::UpToDate => {}
             }
             mark_network_check();
         }
