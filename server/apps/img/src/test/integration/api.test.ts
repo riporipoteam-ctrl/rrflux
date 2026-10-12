@@ -92,17 +92,21 @@ describe('img endpoints', () => {
 		expect(new Uint8Array(await res.arrayBuffer())).toEqual(IMAGE_BYTES)
 	})
 
-	// Images are served with the same 30-day window `cdn` uses for its blobs, plus
-	// `immutable` — an image never changes under its key, a new one takes a new key.
-	it('every served image carries the 30-day Cache-Control', async () => {
+	// Real images use the CDN's 30-day immutable cache, while a missing-key
+	// fallback expires quickly so a later uploaded thumbnail is not hidden.
+	it('uses long caching for real images and short caching for missing-image fallbacks', async () => {
 		const CACHE_CONTROL = `public, max-age=${86400 * 30}, immutable`
 
-		// The stored object, a static asset, and the fallback for a key in neither.
-		for (const path of [`/${BLOB_KEY}`, `/${CDN_NAME}`, '/does-not-exist-anywhere.jpg']) {
+		// The stored object and a static asset.
+		for (const path of [`/${BLOB_KEY}`, `/${CDN_NAME}`]) {
 			const res = await SELF.fetch(`${ORIGIN}${path}`)
 			expect(res.status, path).toBe(200)
 			expect(res.headers.get('cache-control'), path).toBe(CACHE_CONTROL)
 		}
+		const fallback = await SELF.fetch(`${ORIGIN}/does-not-exist-anywhere.jpg`)
+		expect(fallback.status).toBe(200)
+		expect(fallback.headers.get('cache-control')).toBe('public, max-age=60')
+		expect(fallback.headers.get('cache-control')).not.toContain('immutable')
 
 		// And the transformed variant, which is rebuilt rather than streamed. Uses a real
 		// (decodable) JPEG, since a resize has to actually run for this path to be reached.
@@ -156,12 +160,21 @@ describe('img endpoints', () => {
 		expect(body[1]).toBe(0xd8)
 	})
 
-	it('serves a nested static asset', async () => {
-		const res = await SELF.fetch(`${ORIGIN}/Base/Clearcut.jpg`)
+	it('serves a seeded nested image key', async () => {
+		const key = 'Base/Clearcut.jpg'
+		await putBlob(env, 'IMAGES', key, IMAGE_BYTES.buffer, { contentType: 'image/jpeg' })
+		const res = await SELF.fetch(`${ORIGIN}/${key}`)
+		expect(res.status).toBe(200)
+		expect(res.headers.get('content-type')).toMatch(/^image\/jpeg/)
+		expect(new Uint8Array(await res.arrayBuffer())).toEqual(IMAGE_BYTES)
+	})
+
+	it('serves an unseeded bundled static image', async () => {
+		const res = await SELF.fetch(`${ORIGIN}/Clearcut.jpg`)
 		expect(res.status).toBe(200)
 		expect(res.headers.get('content-type')).toMatch(/^image\/jpeg/)
 		const body = new Uint8Array(await res.arrayBuffer())
-		expect(body.length).toBeGreaterThan(0)
+		expect(body.length).toBeGreaterThan(IMAGE_BYTES.length)
 		expect(body[0]).toBe(0xff)
 		expect(body[1]).toBe(0xd8)
 	})

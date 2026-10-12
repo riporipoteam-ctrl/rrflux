@@ -12,8 +12,8 @@
 //!     minutes after the last launch must be offered on the next one, and
 //!     the player was promised a visible check each time. A live check has
 //!     a 5s timeout so a dead network never stalls a launch.
-//!   * FAIL-SOFT: any network/parse error -> `UpToDate`, the game launches
-//!     anyway. An update check must never strand the player.
+//!   * FAIL-SOFT: network, parse, or local client setup errors -> `CheckFailed`;
+//!     the game launches anyway. An update check must never strand the player.
 //!   * No Win32 code: compiles and runs on Linux unchanged.
 
 use futures_util::StreamExt;
@@ -58,8 +58,14 @@ fn parse_version(tag: &str) -> Option<(u64, u64, u64)> {
         .unwrap_or("");
     let mut parts = tail.split('.');
     let major = parts.next()?.parse::<u64>().ok()?;
-    let minor = parts.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-    let patch = parts.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+    let minor = parts
+        .next()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    let patch = parts
+        .next()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
     Some((major, minor, patch))
 }
 
@@ -72,7 +78,10 @@ pub enum UpdateDecision {
     /// No newer setup: just launch the game.
     UpToDate,
     /// A newer setup is available at `download_url`.
-    Available { version: String, download_url: String },
+    Available {
+        version: String,
+        download_url: String,
+    },
     /// v1.0.5: the check failed (network error). The UI should tell the
     /// user instead of silently saying "Ready to play".
     CheckFailed,
@@ -95,7 +104,7 @@ pub async fn check_for_updates(install_dir: &Path, progress: &Progress) -> Updat
         .build()
     {
         Ok(c) => c,
-        Err(_) => return UpdateDecision::UpToDate,
+        Err(_) => return UpdateDecision::CheckFailed,
     };
 
     let decision = check_inner(&client).await;
@@ -159,7 +168,10 @@ async fn check_via_html(client: &reqwest::Client) -> UpdateDecision {
     let mut best: Option<((u64, u64, u64), String)> = None;
     for part in html.split("recflare-installer-v") {
         // part starts with "X.Y.Z..." — extract version
-        let ver_str: String = part.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+        let ver_str: String = part
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
         if ver_str.is_empty() {
             continue;
         }
@@ -210,14 +222,12 @@ fn find_update(releases: &[serde_json::Value], current: (u64, u64, u64)) -> Upda
             continue;
         }
         let assets = rel.get("assets").and_then(|v| v.as_array());
-        let asset = assets.into_iter().flatten().find(|a| {
-            a.get("name").and_then(|n| n.as_str()) == Some(SETUP_ASSET_NAME)
-        });
+        let asset = assets
+            .into_iter()
+            .flatten()
+            .find(|a| a.get("name").and_then(|n| n.as_str()) == Some(SETUP_ASSET_NAME));
         if let Some(a) = asset {
-            if let Some(url) = a
-                .get("browser_download_url")
-                .and_then(|u| u.as_str())
-            {
+            if let Some(url) = a.get("browser_download_url").and_then(|u| u.as_str()) {
                 return UpdateDecision::Available {
                     version: tag.to_string(),
                     download_url: url.to_string(),
@@ -232,11 +242,7 @@ fn find_update(releases: &[serde_json::Value], current: (u64, u64, u64)) -> Upda
 /// update…"). Verifies the file is a plausible installer: non-empty, sane
 /// size, and a real PE executable (MZ header) — a truncated or HTML error
 /// page download can never be spawned. The caller spawns it.
-pub async fn download_update(
-    url: &str,
-    dest: &Path,
-    progress: &Progress,
-) -> Result<(), String> {
+pub async fn download_update(url: &str, dest: &Path, progress: &Progress) -> Result<(), String> {
     progress.set_status("Downloading update\u{2026}", 8);
     let client = reqwest::Client::builder()
         .user_agent("FluxRec-Launcher")
@@ -329,7 +335,10 @@ mod tests {
             rel("recflare-installer-v0.1.10", Some("https://dl/0.1.10.exe")),
         ];
         match find_update(&releases, (0, 1, 10)) {
-            UpdateDecision::Available { version, download_url } => {
+            UpdateDecision::Available {
+                version,
+                download_url,
+            } => {
                 assert_eq!(version, "recflare-installer-v0.1.11");
                 assert_eq!(download_url, "https://dl/0.1.11.exe");
             }

@@ -569,22 +569,26 @@ app.get(
 		// reported as placeholder spam. A transparent pixel is the neutral
 		// stand-in: not invented art, just empty.
 		const serveFallback = async () => {
-			// 1x1 transparent PNG (67 bytes) — generated, not a branded asset.
-			const transparentPng = new Uint8Array([
-				137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
-				0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137,
-				0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5,
-				0, 1, 13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
-			])
-			const headers = new Headers()
-			headers.set('content-type', 'image/png')
-			headers.set('content-length', String(transparentPng.byteLength))
-			// The fallback is a stand-in for a missing key, not the real object: never
-			// cache it as immutable, or clients keep the wrong image for 30 days after
-			// the real upload lands under this key.
-			headers.set('cache-control', 'public, max-age=60')
-			return new Response(transparentPng, { status: 200, headers })
-		}
+				// 1x1 transparent PNG (67 bytes) — generated, not a branded asset.
+				const transparentPng = new Uint8Array([
+					137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+					0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137,
+					0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5,
+					0, 1, 13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+				])
+				const headers = new Headers()
+				headers.set('content-type', 'image/png')
+				if (!transform) headers.set('content-length', String(transparentPng.byteLength))
+				// The fallback is a stand-in for a missing key, not the real object: never
+				// cache it as immutable, or clients keep the wrong image for 30 days after
+				// the real upload lands under this key.
+				headers.set('cache-control', 'public, max-age=60')
+				applyStubSignature(headers, signing)
+				if (needsBody(transform, signing)) {
+					return finalizeImage(c.env, transparentPng.slice().buffer as ArrayBuffer, headers, transform, signing)
+				}
+				return new Response(transparentPng, { status: 200, headers })
+			}
 
 		// Read the blob (and its metadata, which rides along with the bytes) in a
 		// single blob-store round trip. The old code did a separate `headBlob` first

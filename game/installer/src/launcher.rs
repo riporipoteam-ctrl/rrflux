@@ -33,7 +33,6 @@ use std::time::Duration;
 use crate::progress::Progress;
 use crate::updater::UpdateDecision;
 
-
 /// Ensure rec.net resolves to localhost to prevent Store WebView hangs.
 /// The 2023 client has hardcoded https://rec.net/shop URLs; rec.net is dead
 /// (Rec Room shut down June 2026), causing 6s DNS timeouts. Adding a hosts
@@ -41,21 +40,20 @@ use crate::updater::UpdateDecision;
 fn ensure_recnet_hosts_entry() {
     let hosts_path = "C:\\Windows\\System32\\drivers\\etc\\hosts";
     let entry = "127.0.0.1 rec.net";
-    
+
     // Check if already present
     if let Ok(content) = std::fs::read_to_string(hosts_path) {
         if content.contains("rec.net") {
             return;
         }
     }
-    
+
     // Try to append (fails silently without admin)
     if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(hosts_path) {
         use std::io::Write;
         let _ = writeln!(file, "\n{}", entry);
     }
 }
-
 
 /// `--play` entry point. Never returns (exits the process).
 pub fn run_launcher(
@@ -116,7 +114,13 @@ pub fn run_launcher(
             let repaired = match (&rt, client) {
                 (Ok(r), Ok(c)) => r
                     .block_on(crate::bepinex::repair_for_launcher(
-                        &c, dir, ns_host, photon_rt, photon_voice, photon_chat, &progress,
+                        &c,
+                        dir,
+                        ns_host,
+                        photon_rt,
+                        photon_voice,
+                        photon_chat,
+                        &progress,
                     ))
                     .map_err(|e| {
                         eprintln!("[launcher] 2025Patch repair failed: {e}");
@@ -126,7 +130,10 @@ pub fn run_launcher(
                 _ => false,
             };
             if !repaired {
-                progress.set_status("2025Patch repair failed — please re-run FluxRec-Setup.", 100);
+                progress.set_status(
+                    "2025Patch repair failed — please re-run FluxRec-Setup.",
+                    100,
+                );
                 std::thread::sleep(Duration::from_secs(6));
                 progress.done();
                 let _ = gui_thread.join();
@@ -188,8 +195,7 @@ pub fn run_launcher(
                     let mut ok = true;
                     // Only re-run the bypass pipeline when the bypass (or the
                     // VC++ runtime it needs) is actually broken.
-                    if !matches!(bypass_state, crate::bypass::BypassState::Ok(_)) || !vcredist_ok
-                    {
+                    if !matches!(bypass_state, crate::bypass::BypassState::Ok(_)) || !vcredist_ok {
                         ok &= r
                             .block_on(crate::bypass::repair_bypass(&c, dir, &progress))
                             .map_err(|e| {
@@ -201,11 +207,13 @@ pub fn run_launcher(
                     // AV repair (defender.rs): re-download quarantined files,
                     // re-apply the hosts entry, re-add the Defender exclusion.
                     if !av_problems.is_empty() {
-                        let left = r.block_on(
-                            crate::defender::repair_quarantine_targets(
-                                &c, dir, ns_host, &progress, &av_problems,
-                            ),
-                        );
+                        let left = r.block_on(crate::defender::repair_quarantine_targets(
+                            &c,
+                            dir,
+                            ns_host,
+                            &progress,
+                            &av_problems,
+                        ));
                         if !left.is_empty() {
                             eprintln!(
                                 "[launcher] AV repair incomplete: {}",
@@ -256,45 +264,54 @@ pub fn run_launcher(
     // 2. Update check (fast + fail-soft by design).
     let decision = match &rt {
         Ok(r) => r.block_on(crate::updater::check_for_updates(dir, &progress)),
-        Err(_) => UpdateDecision::UpToDate,
+        Err(_) => UpdateDecision::CheckFailed,
     };
-    if let UpdateDecision::Available {
-        version,
-        download_url,
-    } = decision
-    {
-        progress.set_status(&format!("Update {version} found \u{2014} installing\u{2026}"), 84);
-        let dest = std::env::temp_dir().join("FluxRec-Setup-update.exe");
-        let downloaded = match &rt {
-            Ok(r) => r
-                .block_on(crate::updater::download_update(
-                    &download_url,
-                    &dest,
-                    &progress,
-                ))
-                .is_ok(),
-            Err(_) => false,
-        };
-        if downloaded {
-            // Hand off: the fresh setup runs with --updated (installs, then
-            // launches the game itself). We WAIT for it instead of exiting
-            // fire-and-forget: on success the game is already launching, so
-            // we just exit; on any failure we fall through and launch the
-            // installed game. An update must never strand the player.
-            let dir_s = dir.to_string_lossy().to_string();
-            let update_ok = spawn_update(&dest, &dir_s, &progress);
-            if update_ok {
-                progress.done();
-                let _ = gui_thread.join();
-                std::process::exit(0);
-            }
+    match decision {
+        UpdateDecision::Available {
+            version,
+            download_url,
+        } => {
             progress.set_status(
-                "Update failed \u{2014} launching installed version\u{2026}",
-                90,
+                &format!("Update {version} found \u{2014} installing\u{2026}"),
+                84,
             );
+            let dest = std::env::temp_dir().join("FluxRec-Setup-update.exe");
+            let downloaded = match &rt {
+                Ok(r) => r
+                    .block_on(crate::updater::download_update(
+                        &download_url,
+                        &dest,
+                        &progress,
+                    ))
+                    .is_ok(),
+                Err(_) => false,
+            };
+            if downloaded {
+                // Hand off: the fresh setup runs with --updated (installs, then
+                // launches the game itself). We WAIT for it instead of exiting
+                // fire-and-forget: on success the game is already launching, so
+                // we just exit; on any failure we fall through and launch the
+                // installed game. An update must never strand the player.
+                let dir_s = dir.to_string_lossy().to_string();
+                let update_ok = spawn_update(&dest, &dir_s, &progress);
+                if update_ok {
+                    progress.done();
+                    let _ = gui_thread.join();
+                    std::process::exit(0);
+                }
+                progress.set_status(
+                    "Update failed \u{2014} launching installed version\u{2026}",
+                    90,
+                );
+            }
+            // Download or update failed: fall through and launch the installed
+            // game anyway.
         }
-        // Download or update failed: fall through and launch the installed
-        // game anyway.
+        UpdateDecision::CheckFailed => progress.set_status(
+            "Update check unavailable \u{2014} launching installed version\u{2026}",
+            90,
+        ),
+        UpdateDecision::UpToDate => {}
     }
 
     // 2b. Flux account linking prompt (v0.6.13). Offer once: the choice is
@@ -318,18 +335,17 @@ pub fn run_launcher(
 /// the update's own window carries the detailed progress.
 /// v1.0.0: made pub(crate) for the library flow.
 pub(crate) fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> bool {
-    let mut child = match crate::stealth::hidden_command(
-        dest.to_str().unwrap_or("FluxRec-Setup-update.exe"),
-    )
-    .args(["--updated", "--dir", dir_s])
-    .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[launcher] could not spawn updater: {e}");
-            return false;
-        }
-    };
+    let mut child =
+        match crate::stealth::hidden_command(dest.to_str().unwrap_or("FluxRec-Setup-update.exe"))
+            .args(["--updated", "--dir", dir_s])
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[launcher] could not spawn updater: {e}");
+                return false;
+            }
+        };
     progress.set_status("Installing update\u{2026}", 88);
     match child.wait() {
         Ok(status) => {
@@ -420,9 +436,19 @@ pub(crate) fn clear_unity_http_cache(progress: &Progress) {
         let base = std::path::PathBuf::from(profile);
         // Known Unity HTTP cache locations for Rec Room
         let cache_dirs = [
-            base.join("AppData").join("LocalLow").join("Rec Room").join("Rec Room").join("cache"),
-            base.join("AppData").join("LocalLow").join("Rec Room").join("cache"),
-            base.join("AppData").join("Local").join("Rec Room").join("cache"),
+            base.join("AppData")
+                .join("LocalLow")
+                .join("Rec Room")
+                .join("Rec Room")
+                .join("cache"),
+            base.join("AppData")
+                .join("LocalLow")
+                .join("Rec Room")
+                .join("cache"),
+            base.join("AppData")
+                .join("Local")
+                .join("Rec Room")
+                .join("cache"),
         ];
         for cache_dir in &cache_dirs {
             if cache_dir.is_dir() {
@@ -491,7 +517,9 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
                 crate::stealth::launch_hidden(&injector, &[]);
                 std::thread::sleep(Duration::from_millis(500));
             } else {
-                println!("[launcher] 2026 client detected (Referee anti-cheat) — skipping injector.");
+                println!(
+                    "[launcher] 2026 client detected (Referee anti-cheat) — skipping injector."
+                );
                 progress.set_status("Launching game\u{2026}", 100);
             }
             println!("[launcher] starting game: {}", exe.display());
