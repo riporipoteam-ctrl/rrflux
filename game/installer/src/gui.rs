@@ -1,4 +1,4 @@
-// Flux Rec Setup & Launcher — light, branded progress UI v1.0.26.
+// Flux Rec Setup & Launcher — light, branded progress UI v1.0.27.
 //
 // Full redesign:
 // - Borderless window, rounded corners, drop shadow, custom title bar
@@ -86,10 +86,10 @@ mod imp {
     type Silent = std::result::Result<(), ()>;
 
     // Window dimensions (client area == window area: WS_POPUP has no frame).
-    const SETUP_W: i32 = 980;
-    const SETUP_H: i32 = 660;
-    const LAUNCH_W: i32 = 540;
-    const LAUNCH_H: i32 = 400;
+    const SETUP_W: i32 = 1100;
+    const SETUP_H: i32 = 700;
+    const LAUNCH_W: i32 = 680;
+    const LAUNCH_H: i32 = 360;
     const CORNER: i32 = 36; // round-rect ellipse diameter for the window
     const TITLE_H: i32 = 46;
 
@@ -131,10 +131,7 @@ mod imp {
             "Compete",
             "Paintball, bowling and quests with players worldwide.",
         ),
-        (
-            "Customize",
-            "Thousands of avatar items, outfits and skins.",
-        ),
+        ("Customize", "Thousands of avatar items, outfits and skins."),
         (
             "Create",
             "Build your own rooms and games with the maker tools.",
@@ -686,7 +683,12 @@ mod imp {
             bottom: y + h,
         };
         let mut buf: Vec<u16> = text.encode_utf16().collect();
-        let _ = DrawTextW(hdc, &mut buf, &mut rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        let _ = DrawTextW(
+            hdc,
+            &mut buf,
+            &mut rc,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
     }
 
     unsafe fn text_block(hdc: HDC, font: HFONT, color: COLORREF, text: &str, rc: RECT) {
@@ -891,19 +893,6 @@ mod imp {
     const SIDE_W: i32 = 300;
 
     unsafe fn draw_setup(hdc: HDC, s: &GuiState) {
-        // Sidebar panel.
-        rr_fill(hdc, 0, TITLE_H, SIDE_W, s.win_h - TITLE_H, 0, BG_SIDE);
-        // Hairline between sidebar and content.
-        let pen = CreatePen(PS_SOLID, 1, BORDER);
-        if !pen.is_invalid() {
-            let old = SelectObject(hdc, pen);
-            let _ = MoveToEx(hdc, SIDE_W, TITLE_H, None);
-            let _ = LineTo(hdc, SIDE_W, s.win_h);
-            let _ = SelectObject(hdc, old);
-            let _ = DeleteObject(pen);
-        }
-
-        draw_setup_sidebar(hdc, s);
         draw_setup_content(hdc, s);
     }
 
@@ -1028,51 +1017,119 @@ mod imp {
     }
 
     unsafe fn draw_setup_content(hdc: HDC, s: &GuiState) {
-        let cx0 = SIDE_W + 40; // content left margin
-
-        // Headline.
-        text_at(hdc, s.f_title, WHITE, "Welcome to Flux Rec", cx0, 76);
+        let margin = 44;
+        text_at(hdc, s.f_tiny, BLUE, "FLUX REC  /  INSTALLATION", margin, 64);
+        text_at(
+            hdc,
+            s.f_title,
+            WHITE,
+            "Welcome to the control center",
+            margin,
+            82,
+        );
         text_at(
             hdc,
             s.f_body,
             GRAY,
-            "Your private Rec Room revival is setting up.",
-            cx0,
-            118,
+            "Download, configure and validate your game files in one guided flow.",
+            margin,
+            124,
         );
 
-        // 2x2 feature cards.
-        let cw = 300;
-        let ch = 118;
-        let gx = cx0;
-        let gy = 166;
-        let gap = 20;
-        for (i, (title, desc)) in CARDS.iter().enumerate() {
-            let col = (i % 2) as i32;
-            let row = (i / 2) as i32;
-            let x = gx + col * (cw + gap);
-            let y = gy + row * (ch + gap);
-            rr_fill(hdc, x, y, cw, ch, 20, BG_CARD);
-            rr_outline(hdc, x, y, cw, ch, 20, BORDER);
-            // Blue accent bar.
-            rr_fill(hdc, x + 18, y + 22, 4, ch - 44, 4, BLUE);
-            text_at(hdc, s.f_h2, WHITE, title, x + 36, y + 16);
-            text_block(
-                hdc,
-                s.f_small,
-                GRAY,
-                desc,
-                RECT {
-                    left: x + 36,
-                    top: y + 48,
-                    right: x + cw - 18,
-                    bottom: y + ch - 12,
-                },
-            );
+        // Horizontal stage rail replaces the old left-side checklist.
+        let states = step_states(s.percent, s.finished);
+        let gap = 14;
+        let step_w = (s.win_w - margin * 2 - gap * 3) / 4;
+        for (i, (title, sub)) in STEPS.iter().enumerate() {
+            let x = margin + i as i32 * (step_w + gap);
+            let y = 154;
+            rr_fill(hdc, x, y, step_w, 72, 14, BG_CARD);
+            rr_outline(hdc, x, y, step_w, 72, 14, BORDER);
+            let st = states.get(i).copied().unwrap_or(StepState::Todo);
+            draw_step(hdc, s, x + 26, y + 17, (i + 1) as i32, title, sub, st);
         }
 
-        // Progress block.
-        let py = 446;
+        let left = margin;
+        let top = 246;
+        let hero_w = 612;
+        let panel_h = 352;
+        let right = left + hero_w + 22;
+        let status_w = s.win_w - right - margin;
+
+        // Branded hero surface with a subtle orbit animation.
+        rr_fill(hdc, left, top, hero_w, panel_h, 22, BG_CARD);
+        rr_outline(hdc, left, top, hero_w, panel_h, 22, BORDER);
+        let orbit_cx = left + 112;
+        let orbit_cy = top + 126;
+        let orbit_pen = CreatePen(PS_SOLID, 1, BLUE_DIM);
+        if !orbit_pen.is_invalid() {
+            let old_pen = SelectObject(hdc, orbit_pen);
+            let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+            let _ = Ellipse(
+                hdc,
+                orbit_cx - 66,
+                orbit_cy - 66,
+                orbit_cx + 66,
+                orbit_cy + 66,
+            );
+            let _ = SelectObject(hdc, old_pen);
+            let _ = SelectObject(hdc, old_brush);
+            let _ = DeleteObject(orbit_pen);
+        }
+        let angle = (s.shimmer as f64 / 18.0) % (std::f64::consts::PI * 2.0);
+        let orbit_x = orbit_cx + (angle.cos() * 66.0) as i32;
+        let orbit_y = orbit_cy + (angle.sin() * 66.0) as i32;
+        rr_fill(hdc, orbit_x - 5, orbit_y - 5, 10, 10, 10, BLUE);
+        draw_logo(hdc, s, orbit_cx - 48, orbit_cy - 48, 96);
+        draw_wordmark(hdc, s, left + 388, top + 74);
+        text_center(
+            hdc,
+            s.f_tiny,
+            BLUE,
+            "THE REC ROOM COMMUNITY, REBUILT",
+            left + 388,
+            top + 116,
+            420,
+            20,
+        );
+        text_block(
+            hdc,
+            s.f_body,
+            GRAY,
+            "Join friends, explore player-made rooms and create your own. Flux Rec keeps the setup straightforward and the game files in one place.",
+            RECT { left: left + 228, top: top + 154, right: left + hero_w - 28, bottom: top + 242 },
+        );
+        rr_fill(hdc, left + 228, top + 264, 188, 34, 17, BLUE_DIM);
+        text_center(
+            hdc,
+            s.f_tiny,
+            BLUE,
+            "NO STEAM REQUIRED",
+            left + 322,
+            top + 270,
+            176,
+            20,
+        );
+        text_at(
+            hdc,
+            s.f_tiny,
+            DIM,
+            "RIPO TEAM  ·  FLUX REC",
+            left + 28,
+            top + panel_h - 31,
+        );
+
+        // Live work console: progress, current operation, and the latest detail line.
+        rr_fill(hdc, right, top, status_w, panel_h, 22, BG_CARD);
+        rr_outline(hdc, right, top, status_w, panel_h, 22, BORDER);
+        text_at(
+            hdc,
+            s.f_tiny,
+            BLUE,
+            "INSTALL ACTIVITY",
+            right + 24,
+            top + 24,
+        );
         let stage = if s.stage.is_empty() {
             "Preparing…"
         } else {
@@ -1084,20 +1141,203 @@ mod imp {
             WHITE,
             stage,
             RECT {
-                left: cx0,
-                top: py,
-                right: s.win_w - 170,
-                bottom: py + 28,
+                left: right + 24,
+                top: top + 58,
+                right: right + status_w - 118,
+                bottom: top + 92,
             },
         );
-        // Big percentage, right aligned.
         let pct = format!("{}%", s.percent);
-        let _ = SelectObject(hdc, s.f_big);
+        let _ = SelectObject(hdc, s.f_title);
         let pw = text_width(hdc, &pct);
-        text_at(hdc, s.f_big, WHITE, &pct, s.win_w - 40 - pw, py - 8);
+        text_at(
+            hdc,
+            s.f_title,
+            BLUE,
+            &pct,
+            right + status_w - pw - 24,
+            top + 48,
+        );
+        let bx = right + 24;
+        let bw = status_w - 48;
+        if s.percent == 0 && !s.finished {
+            draw_shimmer_bar(hdc, s, bx, top + 112, bw, 14);
+        } else {
+            draw_progress_bar(hdc, bx, top + 112, bw, 14, s.percent);
+        }
+        text_at(
+            hdc,
+            s.f_tiny,
+            GRAY,
+            if s.finished {
+                "Final checks complete"
+            } else {
+                "Progress updates automatically"
+            },
+            right + 24,
+            top + 142,
+        );
+        if !s.detail.is_empty() {
+            text_block(
+                hdc,
+                s.f_small,
+                GRAY,
+                &s.detail,
+                RECT {
+                    left: right + 24,
+                    top: top + 184,
+                    right: right + status_w - 24,
+                    bottom: top + 252,
+                },
+            );
+        } else {
+            text_block(
+                hdc,
+                s.f_small,
+                GRAY,
+                "You can minimize this window while the setup continues.",
+                RECT {
+                    left: right + 24,
+                    top: top + 184,
+                    right: right + status_w - 24,
+                    bottom: top + 252,
+                },
+            );
+        }
+        rr_fill(hdc, right + 24, top + 282, status_w - 48, 44, 14, BG_SIDE);
+        text_center(
+            hdc,
+            s.f_tiny,
+            GRAY,
+            "GAME FILES  ·  PATCHES  ·  FINAL CHECKS",
+            right + status_w / 2,
+            top + 293,
+            status_w - 64,
+            22,
+        );
 
-        draw_progress_bar(hdc, cx0, py + 40, s.win_w - cx0 - 40, 14, s.percent);
+        let fy = s.win_h - 38;
+        text_at(
+            hdc,
+            s.f_tiny,
+            DIM,
+            "AUTOMATIC UPDATES  ·  NO STEAM REQUIRED  ·  FLUX REC",
+            margin,
+            fy,
+        );
+    }
 
+    // ------------------------------------------------------------------
+    // Launcher mode: split-pane automatic update console
+    // ------------------------------------------------------------------
+
+    unsafe fn draw_launcher(hdc: HDC, s: &GuiState) {
+        let left = 28;
+        let panel_y = TITLE_H + 22;
+        let brand_w = 188;
+        rr_fill(
+            hdc,
+            left,
+            panel_y,
+            brand_w,
+            s.win_h - panel_y - 46,
+            18,
+            BG_CARD,
+        );
+        rr_outline(
+            hdc,
+            left,
+            panel_y,
+            brand_w,
+            s.win_h - panel_y - 46,
+            18,
+            BORDER,
+        );
+
+        let cx = left + brand_w / 2;
+        let cy = panel_y + 91;
+        let ring = CreatePen(PS_SOLID, 1, BLUE_DIM);
+        if !ring.is_invalid() {
+            let old_pen = SelectObject(hdc, ring);
+            let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+            let _ = Ellipse(hdc, cx - 55, cy - 55, cx + 55, cy + 55);
+            let _ = SelectObject(hdc, old_pen);
+            let _ = SelectObject(hdc, old_brush);
+            let _ = DeleteObject(ring);
+        }
+        let angle = (s.shimmer as f64 / 18.0) % (std::f64::consts::PI * 2.0);
+        let orbit_x = cx + (angle.cos() * 55.0) as i32;
+        let orbit_y = cy + (angle.sin() * 55.0) as i32;
+        rr_fill(hdc, orbit_x - 4, orbit_y - 4, 8, 8, 8, BLUE);
+        draw_logo(hdc, s, cx - 42, cy - 42, 84);
+        draw_wordmark(hdc, s, cx, panel_y + 165);
+        text_center(
+            hdc,
+            s.f_tiny,
+            GRAY,
+            "AUTOMATIC UPDATER",
+            cx,
+            panel_y + 204,
+            brand_w - 22,
+            20,
+        );
+        text_center(
+            hdc,
+            s.f_tiny,
+            DIM,
+            &format!("v{}", env!("CARGO_PKG_VERSION")),
+            cx,
+            panel_y + 234,
+            brand_w - 22,
+            18,
+        );
+
+        let content_x = left + brand_w + 28;
+        let content_w = s.win_w - content_x - 28;
+        rr_fill(
+            hdc,
+            content_x,
+            panel_y,
+            content_w,
+            s.win_h - panel_y - 46,
+            18,
+            BG_CARD,
+        );
+        rr_outline(
+            hdc,
+            content_x,
+            panel_y,
+            content_w,
+            s.win_h - panel_y - 46,
+            18,
+            BORDER,
+        );
+        text_at(
+            hdc,
+            s.f_tiny,
+            BLUE,
+            "FLUX REC  /  LIVE UPDATE",
+            content_x + 24,
+            panel_y + 23,
+        );
+
+        let stage = if s.stage.is_empty() {
+            "Starting Flux Rec…"
+        } else {
+            s.stage.as_str()
+        };
+        text_ellipsis(
+            hdc,
+            s.f_title,
+            WHITE,
+            stage,
+            RECT {
+                left: content_x + 24,
+                top: panel_y + 58,
+                right: content_x + content_w - 24,
+                bottom: panel_y + 100,
+            },
+        );
         if !s.detail.is_empty() {
             text_ellipsis(
                 hdc,
@@ -1105,76 +1345,74 @@ mod imp {
                 GRAY,
                 &s.detail,
                 RECT {
-                    left: cx0,
-                    top: py + 62,
-                    right: s.win_w - 40,
-                    bottom: py + 84,
+                    left: content_x + 24,
+                    top: panel_y + 108,
+                    right: content_x + content_w - 24,
+                    bottom: panel_y + 136,
                 },
+            );
+        } else {
+            text_at(
+                hdc,
+                s.f_small,
+                GRAY,
+                "Preparing your game session…",
+                content_x + 24,
+                panel_y + 108,
             );
         }
 
-        // Footer strip.
-        let fy = s.win_h - 46;
-        let pen = CreatePen(PS_SOLID, 1, BORDER);
-        if !pen.is_invalid() {
-            let old = SelectObject(hdc, pen);
-            let _ = MoveToEx(hdc, SIDE_W, fy, None);
-            let _ = LineTo(hdc, s.win_w, fy);
-            let _ = SelectObject(hdc, old);
-            let _ = DeleteObject(pen);
-        }
-        text_center(
-            hdc,
-            s.f_tiny,
-            DIM,
-            "Automatic updates   •   flux.sitey.my   •   Safe & secure",
-            (SIDE_W + s.win_w) / 2,
-            fy + 13,
-            s.win_w - SIDE_W,
-            20,
-        );
-    }
-
-    // ------------------------------------------------------------------
-    // Launcher mode: compact centered window
-    // ------------------------------------------------------------------
-
-    unsafe fn draw_launcher(hdc: HDC, s: &GuiState) {
-        let cx = s.win_w / 2;
-
-        // Logo.
-        draw_logo(hdc, s, cx - 52, 62, 104);
-
-        // Wordmark.
-        draw_wordmark(hdc, s, cx, 182);
-
-        // Status.
-        let stage = if s.stage.is_empty() {
-            "Starting…"
-        } else {
-            s.stage.as_str()
-        };
-        text_center(hdc, s.f_h2, WHITE, stage, cx, 226, s.win_w - 80, 28);
-
-        // Detail.
-        if !s.detail.is_empty() {
-            text_center(hdc, s.f_small, GRAY, &s.detail, cx, 256, s.win_w - 80, 22);
-        }
-
-        // Progress: determinate when we have a value, shimmer otherwise.
-        let bx = 70;
-        let bw = s.win_w - 140;
-        let by = 296;
+        let bx = content_x + 24;
+        let bw = content_w - 48;
+        let by = panel_y + 166;
         if s.percent > 0 {
-            draw_progress_bar(hdc, bx, by, bw, 12, s.percent);
+            draw_progress_bar(hdc, bx, by, bw, 14, s.percent);
             let pct = format!("{}%", s.percent);
-            text_center(hdc, s.f_tiny, DIM, &pct, cx, by + 20, 80, 18);
+            text_ellipsis(
+                hdc,
+                s.f_tiny,
+                DIM,
+                &pct,
+                RECT {
+                    left: bx,
+                    top: by + 20,
+                    right: bx + bw,
+                    bottom: by + 40,
+                },
+            );
         } else {
-            draw_shimmer_bar(hdc, s, bx, by, bw, 12);
+            draw_shimmer_bar(hdc, s, bx, by, bw, 14);
+            text_at(hdc, s.f_tiny, DIM, "Checking for changes", bx, by + 20);
         }
 
-        // Footer.
-        let ver = format!("v{}   •   flux.sitey.my", env!("CARGO_PKG_VERSION"));
-        text_center(hdc, s.f_tiny, DIM, &ver, cx, s.win_h - 34, s.win_w - 40, 20);
+        let stage_y = panel_y + 210;
+        for (i, (label, xoff)) in [("CHECK", 0), ("UPDATE", 118), ("LAUNCH", 236)]
+            .into_iter()
+            .enumerate()
+        {
+            let x = content_x + 24 + xoff;
+            let active = s.percent >= [0, 35, 80][i];
+            rr_fill(
+                hdc,
+                x,
+                stage_y,
+                104,
+                34,
+                12,
+                if active { BLUE_DIM } else { BG_SIDE },
+            );
+            text_center(
+                hdc,
+                s.f_tiny,
+                if active { BLUE } else { DIM },
+                label,
+                x + 52,
+                stage_y + 8,
+                96,
+                18,
+            );
+        }
+        let footer = format!("v{}  ·  flux.sitey.my", env!("CARGO_PKG_VERSION"));
+        text_at(hdc, s.f_tiny, DIM, &footer, content_x + 24, s.win_h - 31);
     }
 }

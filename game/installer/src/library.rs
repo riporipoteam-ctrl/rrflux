@@ -23,6 +23,12 @@ pub enum LibCmd {
     Play,
     /// User clicked Uninstall (already confirmed in the GUI).
     Uninstall,
+    /// User requested a live player-count refresh.
+    RefreshPlayerCount,
+    /// User explicitly requested an uncached update check.
+    CheckForUpdates,
+    /// Open the configured game install directory in Explorer.
+    OpenInstallFolder,
     /// User changed the theme. The GUI applies it live; we persist it.
     SetTheme(gui_library::Theme),
     /// User closed the window.
@@ -32,17 +38,24 @@ pub enum LibCmd {
 /// State updates from the worker thread to the GUI thread.
 pub enum LibMsg {
     /// Pre-launch checks finished: ready to play, with update info.
-    Ready { update_available: bool, update_version: String },
+    Ready {
+        update_available: bool,
+        update_version: String,
+    },
     /// Checks are running (fast path).
     Checking,
     /// No game executable exists yet; the primary action should say Install.
     InstallRequired,
     /// Check failed but the game can still launch (fail-soft).
     CheckFailed(String),
-    /// Player count for the game card.
-    PlayerCount(u32),
+    /// Live player count; `None` means the request failed, not zero players.
+    PlayerCount(Option<u32>),
     /// Progress update during update-download/install (reuses GuiMsg shape).
-    Progress { percent: u8, stage: String, detail: String },
+    Progress {
+        percent: u8,
+        stage: String,
+        detail: String,
+    },
     /// Tell the GUI to close (game is launching; splash takes over).
     CloseGui,
 }
@@ -121,17 +134,67 @@ fn fetch_player_count() -> Option<u32> {
             .timeout(Duration::from_secs(8))
             .build()
             .ok()?;
-        let text = client
-            .get("https://api.ripo-ripoteam.workers.dev/api/public/v1/players/count")
+        let response = client
+            .get("https://www.ripo-ripoteam.workers.dev/server-status")
             .send()
             .await
-            .ok()?
-            .text()
-            .await
             .ok()?;
-        let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-        json.get("count")?.as_u64().map(|c| c as u32)
+        if !response.status().is_success() {
+            return None;
+        }
+        let text = response.text().await.ok()?;
+        parse_live_player_count(&text)
     })
+}
+
+fn parse_live_player_count(body: &str) -> Option<u32> {
+    let json: serde_json::Value = serde_json::from_str(body).ok()?;
+    if json.get("status")?.as_str()? != "online" {
+        return None;
+    }
+    u32::try_from(json.get("players")?.as_u64()?).ok()
+}
+
+#[cfg(test)]
+mod player_count_tests {
+    use super::parse_live_player_count;
+
+    #[test]
+    fn accepts_a_live_zero_as_a_real_count() {
+        assert_eq!(
+            parse_live_player_count(r#"{"status":"online","players":0}"#),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn accepts_a_positive_live_count() {
+        assert_eq!(
+            parse_live_player_count(r#"{"status":"online","players":12}"#),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_status_schema_and_overflow() {
+        assert_eq!(
+            parse_live_player_count(r#"{"status":"offline","players":12}"#),
+            None
+        );
+        assert_eq!(
+            parse_live_player_count(r#"{"status":"online","count":12}"#),
+            None
+        );
+        assert_eq!(
+            parse_live_player_count(r#"{"status":"online","players":"12"}"#),
+            None
+        );
+        assert_eq!(
+            parse_live_player_count(r#"{"status":"online","players":4294967296}"#),
+            None
+        );
+        assert_eq!(parse_live_player_count("not json"), None);
+    }
 }
 
 /// Entry point for `--play` in v1.0.0. Never returns.
@@ -177,6 +240,20 @@ pub fn run_library(
             Ok(LibCmd::Uninstall) => {
                 do_uninstall(dir, &msg_tx);
             }
+            Ok(LibCmd::RefreshPlayerCount) => {
+                let player_tx = msg_tx.clone();
+                std::thread::spawn(move || {
+                    let _ = player_tx.send(LibMsg::PlayerCount(fetch_player_count()));
+                });
+            }
+            Ok(LibCmd::CheckForUpdates) => {
+                let check_dir = dir.to_path_buf();
+                let check_tx = msg_tx.clone();
+                std::thread::spawn(move || force_update_check(&check_dir, &check_tx));
+            }
+            Ok(LibCmd::OpenInstallFolder) => {
+                let _ = std::process::Command::new("explorer.exe").arg(dir).spawn();
+            }
             Ok(LibCmd::SetTheme(t)) => {
                 save_theme(t);
             }
@@ -198,9 +275,7 @@ fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
     // not hold the install/update readiness state behind that request.
     let player_tx = msg_tx.clone();
     std::thread::spawn(move || {
-        if let Some(count) = fetch_player_count() {
-            let _ = player_tx.send(LibMsg::PlayerCount(count));
-        }
+        let _ = player_tx.send(LibMsg::PlayerCount(fetch_player_count()));
     });
 
     // If the game was never installed, the library shows "Install" state.
@@ -229,9 +304,11 @@ fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
             let (progress, _rx) = crate::progress::channel();
             r.block_on(crate::updater::check_for_updates(dir, &progress))
         }
-        Err(_) => crate::updater::UpdateDecision::UpToDate,
+        Err(_) => crate::updater::UpdateDecision::CheckFailed,
     };
-    mark_network_check();
+    if !matches!(&decision, crate::updater::UpdateDecision::CheckFailed) {
+        mark_network_check();
+    }
 
     match decision {
         crate::updater::UpdateDecision::Available { version, .. } => {
@@ -241,6 +318,45 @@ fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
             });
         }
         // v1.0.5: tell the UI the check failed so it can warn the user.
+        crate::updater::UpdateDecision::CheckFailed => {
+            let _ = msg_tx.send(LibMsg::CheckFailed(
+                "Couldn't reach GitHub to check for updates. Check your connection.".to_string(),
+            ));
+        }
+        _ => {
+            let _ = msg_tx.send(LibMsg::Ready {
+                update_available: false,
+                update_version: String::new(),
+            });
+        }
+    }
+}
+
+/// Run a user-requested live update check without the launch-time one-hour cache.
+fn force_update_check(dir: &Path, msg_tx: &Sender<LibMsg>) {
+    let _ = msg_tx.send(LibMsg::Checking);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build();
+    let decision = match rt {
+        Ok(runtime) => {
+            let (progress, _rx) = crate::progress::channel();
+            runtime.block_on(crate::updater::check_for_updates(dir, &progress))
+        }
+        Err(_) => {
+            let _ = msg_tx.send(LibMsg::CheckFailed(
+                "Couldn't start the update check. Flux Rec can still be launched.".to_string(),
+            ));
+            return;
+        }
+    };
+    match decision {
+        crate::updater::UpdateDecision::Available { version, .. } => {
+            let _ = msg_tx.send(LibMsg::Ready {
+                update_available: true,
+                update_version: version,
+            });
+        }
         crate::updater::UpdateDecision::CheckFailed => {
             let _ = msg_tx.send(LibMsg::CheckFailed(
                 "Couldn't reach GitHub to check for updates. Check your connection.".to_string(),
@@ -319,7 +435,10 @@ fn smart_repair(
     // and a false positive would nuke 3.6GB. Just warn.
     if let Some(exe) = crate::find_game_exe(dir) {
         if !has_valid_mz(&exe) {
-            eprintln!("[smart-repair] WARNING: game exe has invalid header: {}", exe.display());
+            eprintln!(
+                "[smart-repair] WARNING: game exe has invalid header: {}",
+                exe.display()
+            );
             // Don't delete — let the user decide. Return false to trigger
             // a manual reinstall prompt, not an automatic nuke.
             return Err("Game exe appears corrupted. Please reinstall from Setup.".to_string());
@@ -421,14 +540,15 @@ fn do_play(
     // v1.0.8: Smart repair FIRST — scan the folder and fix only what's broken.
     // If the dir has substance (>100 files), do targeted repairs instead of
     // a full 3.6GB reinstall.
-    let needs_full_install = match smart_repair(dir, ns_host, photon_rt, photon_voice, photon_chat, msg_tx) {
-        Ok(healthy) => !healthy,
-        Err(e) => {
-            send(100, &e);
-            std::thread::sleep(Duration::from_secs(6));
-            std::process::exit(1);
-        }
-    };
+    let needs_full_install =
+        match smart_repair(dir, ns_host, photon_rt, photon_voice, photon_chat, msg_tx) {
+            Ok(healthy) => !healthy,
+            Err(e) => {
+                send(100, &e);
+                std::thread::sleep(Duration::from_secs(6));
+                std::process::exit(1);
+            }
+        };
 
     // If the game was never installed (or smart repair says it's empty),
     // run the full install.
@@ -452,7 +572,12 @@ fn do_play(
                     }
                 });
                 r.block_on(crate::run_install(
-                    dir, ns_host, photon_rt, photon_voice, photon_chat, &p2,
+                    dir,
+                    ns_host,
+                    photon_rt,
+                    photon_voice,
+                    photon_chat,
+                    &p2,
                 ))
                 .is_ok()
             }
@@ -479,7 +604,13 @@ fn do_play(
             if let Ok(c) = client {
                 let (p, _rx) = crate::progress::channel();
                 let _ = r.block_on(crate::bepinex::repair_for_launcher(
-                    &c, dir, ns_host, photon_rt, photon_voice, photon_chat, &p,
+                    &c,
+                    dir,
+                    ns_host,
+                    photon_rt,
+                    photon_voice,
+                    photon_chat,
+                    &p,
                 ));
             }
         }
@@ -522,6 +653,7 @@ fn do_play(
                     version,
                     download_url,
                 } => {
+                    mark_network_check();
                     send(84, &format!("Update {version} found — installing…"));
                     let dest = std::env::temp_dir().join("RipoTeamLauncher-update.exe");
                     let downloaded = {
@@ -538,12 +670,8 @@ fn do_play(
                                 });
                             }
                         });
-                        r.block_on(crate::updater::download_update(
-                            &download_url,
-                            &dest,
-                            &p2,
-                        ))
-                        .is_ok()
+                        r.block_on(crate::updater::download_update(&download_url, &dest, &p2))
+                            .is_ok()
                     };
                     if downloaded {
                         // The fresh setup installs and launches the game itself.
@@ -567,11 +695,18 @@ fn do_play(
                     send(90, "Update failed — launching installed version…");
                 }
                 crate::updater::UpdateDecision::CheckFailed => {
-                    send(83, "Update check unavailable — launching installed version…");
+                    send(
+                        83,
+                        "Update check unavailable — launching installed version…",
+                    );
                 }
-                crate::updater::UpdateDecision::UpToDate => {}
+                crate::updater::UpdateDecision::UpToDate => mark_network_check(),
             }
-            mark_network_check();
+        } else {
+            send(
+                83,
+                "Update check unavailable — launching installed version…",
+            );
         }
     }
 
