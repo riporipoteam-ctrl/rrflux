@@ -1009,11 +1009,12 @@ describe('rooms endpoints', () => {
 			await seedRoomWithSubRooms(env.DB, { Accessibility: 1, IsDorm: false, IsRRO: false, ...room })
 		}
 
+		// Use synthetic IDs outside ImportRooms.json; 9001/9002 belong to known first-party rooms.
 		// Two player-made public rooms and one that isn't public.
-		await seed({ RoomId: 9001, Name: 'OlderPlayerRoom', CreatedAt: '2026-07-01T00:00:00Z' })
-		await seed({ RoomId: 9002, Name: 'NewerPlayerRoom', CreatedAt: '2026-07-02T00:00:00Z' })
+		await seed({ RoomId: 99001, Name: 'OlderPlayerRoom', CreatedAt: '2026-07-01T00:00:00Z' })
+		await seed({ RoomId: 99002, Name: 'NewerPlayerRoom', CreatedAt: '2026-07-02T00:00:00Z' })
 		await seed({
-			RoomId: 9003,
+			RoomId: 99003,
 			Name: 'UnlistedPlayerRoom',
 			CreatedAt: '2026-07-03T00:00:00Z',
 			Accessibility: 2,
@@ -1028,13 +1029,13 @@ describe('rooms endpoints', () => {
 		// An RRO stays out even when it's the newest room in the database — by the flag,
 		// or by the auto-derived `rro` tag alone.
 		await seed({
-			RoomId: 9004,
+			RoomId: 99004,
 			Name: 'BrandNewRRO',
 			CreatedAt: '2026-07-04T00:00:00Z',
 			IsRRO: true,
 		})
 		await seed({
-			RoomId: 9005,
+			RoomId: 99005,
 			Name: 'TaggedRRO',
 			CreatedAt: '2026-07-05T00:00:00Z',
 			Tags: [{ Tag: 'rro', Type: 2 }],

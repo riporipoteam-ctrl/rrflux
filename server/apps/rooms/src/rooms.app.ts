@@ -374,7 +374,7 @@ async function authedGameVersion(c: Context<App>): Promise<string | null> {
  * being asserted is that a build was CHECKED, and a version string that sorts high (a
  * debug build, say) must not opt itself in. Add a build here once it's been tried.
  */
-const FEATURED_ROOMS_VERSIONS: ReadonlySet<string> = new Set(['20250718.01', '20230414'])
+const FEATURED_ROOMS_VERSIONS: ReadonlySet<string> = new Set(['20250718.01'])
 
 /**
  * Operator-granted elevated roles — the ones the auth worker stamps from an account's
