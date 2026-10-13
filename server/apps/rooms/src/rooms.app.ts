@@ -222,9 +222,8 @@ function allIds(idParam: string): number[] {
  */
 const DEFAULT_MAX_ROOMS_PER_ACCOUNT = 10
 
-/** Account ids granted the global (Role 0) maker pen — the reference server's
- * hardcoded moderator/dev accounts. */
-const MAKER_PEN_ACCOUNT_IDS = new Set([1, 2, 3])
+/** Legacy account ids granted the global (Role 0) maker pen. */
+const LEGACY_MAKER_PEN_ACCOUNT_IDS = new Set([1, 2, 3])
 
 /**
  * The slice of the shared presence row we read — the caller's current room instance.
@@ -239,7 +238,8 @@ interface PresenceView {
 
 /**
  * Room permissions + Photon token the client needs to spawn into a room. The
- * global (Role 0) maker pen is added only for the hardcoded dev accounts, and
+ * global (Role 0) maker pen is added for signed developer/moderator roles (plus
+ * legacy account IDs), and
  * `RoomInstanceId` is the caller's current instance from presence (null when
  * they aren't in one). `PhotonAccessToken` stays empty — the reference server
  * signs it via `ClientSecurity`, whose secret/algorithm we don't have; our
@@ -248,13 +248,14 @@ interface PresenceView {
  * `overrides` are the permissions the room's creator saved on the subroom the caller is
  * in (see `PUT …/subrooms/{subRoomId}/permissions`). They are matched against the
  * defaults by (`Permission`, `Role`) — the same pair the client addresses an entry by —
- * and win, so a subroom that revokes the Role 0 maker pen revokes it for a dev account
+ * and win, so a subroom that revokes the Role 0 maker pen revokes it for a privileged account
  * standing in it as well.
  */
 function photonAccessToken(
 	accountId: number,
 	roomInstanceId: number | null,
-	overrides: RoomPermission[] = []
+	overrides: RoomPermission[] = [],
+	roles: string[] = []
 ) {
 	const perm = (Permission: string, Role: number, Override: boolean): RoomPermission => ({
 		Override,
@@ -277,7 +278,11 @@ function photonAccessToken(
 		perm('CAN_USE_PLAY_GIZMOS_TOGGLE', 30, true),
 	]
 
-	if (MAKER_PEN_ACCOUNT_IDS.has(accountId)) {
+	if (
+		LEGACY_MAKER_PEN_ACCOUNT_IDS.has(accountId) ||
+		roles.includes('developer') ||
+		roles.includes('moderator')
+	) {
 		permissions.unshift(perm('CAN_USE_MAKER_PEN', 0, true))
 	}
 
@@ -307,6 +312,7 @@ function photonAccessToken(
 async function handlePhotonAccessToken(c: Context<App>) {
 	const accountId = await authedAccountId(c)
 	if (accountId === null) return unauthorized(c)
+	const roles = (await validateAndGetRoles(c.req.raw, await c.env.JWT_SECRET.get())) ?? []
 	const instance = (await getPresence<PresenceView>(c.env.DB, accountId))?.roomInstance
 	// The permission overrides are the ones saved on the subroom the caller is standing in.
 	// A player in no instance — sitting in the lobby, or an instance predating subroom
@@ -315,7 +321,7 @@ async function handlePhotonAccessToken(c: Context<App>) {
 		typeof instance?.subRoomId === 'number'
 			? await getSubRoomPermissions(c.env.DB, instance.subRoomId)
 			: []
-	return c.json(photonAccessToken(accountId, instance?.roomInstanceId ?? null, overrides))
+	return c.json(photonAccessToken(accountId, instance?.roomInstanceId ?? null, overrides, roles))
 }
 
 /**
