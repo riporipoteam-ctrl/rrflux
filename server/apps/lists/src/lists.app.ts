@@ -575,11 +575,10 @@ const STORE_BROAD_FEED_KEYS = new Set([
   // The avatar Customize view asks for `customizeitems?type=5`. Without this it falls
   // through to the custom-avatar-item draw (an empty table), so Customize shows nothing.
   'customizeitems',
-  // The Store's Featured page asks for `hotitems` and `newitems`. Without these the
-  // Store shows empty sections.
-  'hotitems',
-  'newitems',
 ])
+// Featured and New are discovery rows, not aliases for the entire wearable catalog.
+const STORE_DISCOVERY_FEED_KEYS = new Set(['hotitems', 'newitems'])
+const STORE_DISCOVERY_FEED_LIMIT = GENERIC_ROW_SIZE
 
 const canonicalAvatarNamesByDesc = new Map(
   avatarItemCatalog.map((item) => [
@@ -632,17 +631,22 @@ const storeFeedIdsCache = new Map<string, string[]>()
 /**
  * The 2025 storefront is a historical catalog snapshot. Build each feed once per Worker
  * isolate and preserve the public catalog, including free items and entries with no legacy
- * AvatarItemDesc. Only developer/unreleased rarity and query/box rows are excluded.
+ * AvatarItemDesc. Discovery rows use the snapshot's `IsFeatured` / `NewUntil` metadata;
+ * New is ordered by the latest recorded `NewUntil` and capped to keep the UI bounded.
  */
 export function buildStoreFeedIds(rawKey: string): string[] | null {
   const key = normalizeStoreFeedKey(rawKey)
   const consumablesKey = key === 'consumableitems'
-  if (key === '' || (!STORE_BROAD_FEED_KEYS.has(key) && STORE_CATEGORY_TERMS[key] === undefined && !consumablesKey)) return null
+  if (
+    key === '' ||
+    (!STORE_BROAD_FEED_KEYS.has(key) && !STORE_DISCOVERY_FEED_KEYS.has(key) &&
+      STORE_CATEGORY_TERMS[key] === undefined && !consumablesKey)
+  ) return null
   const cached = storeFeedIdsCache.get(key)
   if (cached !== undefined) return cached
 
   const terms = STORE_CATEGORY_TERMS[key]
-  const ids = sf32025.StoreItems
+  const items = sf32025.StoreItems
     .filter((item) => {
       const drop = item.GiftDrop
       if (drop.IsQuery) return false
@@ -664,6 +668,8 @@ export function buildStoreFeedIds(rawKey: string): string[] | null {
       // No price or date gate: free hairstyles/facial hair and historical catalog rows must
       // remain available. Those fields are useful for checkout, not catalog membership.
       if (STORE_BROAD_FEED_KEYS.has(key)) return drop.AvatarItemType === 0
+      if (key === 'hotitems') return Boolean(item.IsFeatured)
+      if (key === 'newitems') return Boolean(item.NewUntil)
       if (consumablesKey || key === 'skinsitems') return true
       const names = itemNames(item)
       if (key === 'hairdyeitems') return drop.AvatarItemType === 1 || matchesAnyName(names, terms!)
@@ -680,6 +686,13 @@ export function buildStoreFeedIds(rawKey: string): string[] | null {
       }
       return matchesAnyName(names, terms!)
     })
+  const rankedItems = key === 'newitems'
+    ? [...items].sort((a, b) =>
+        String(b.NewUntil ?? '').localeCompare(String(a.NewUntil ?? '')) ||
+        String(b.AvailableAt ?? '').localeCompare(String(a.AvailableAt ?? ''))
+      )
+    : items
+  const ids = (key === 'newitems' ? rankedItems.slice(0, STORE_DISCOVERY_FEED_LIMIT) : rankedItems)
     .map((item) => String(item.PurchasableItemId))
   const unique = [...new Set(ids)]
   storeFeedIdsCache.set(key, unique)

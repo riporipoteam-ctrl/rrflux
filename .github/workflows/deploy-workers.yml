@@ -50,6 +50,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -69,13 +71,33 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Deploy workers in order
+      - name: Select workers changed by this event
+        id: selected-workers
+        env:
+          REQUESTED_WORKERS: ${{ inputs.workers }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          WORKERS_INPUT="${{ inputs.workers }}"
-          if [ -z "$WORKERS_INPUT" ]; then
-            WORKERS_INPUT='api,auth,econ,lists,discovery,rooms'
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            changed_files="$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")"
+            workers="$(printf '%s\n' "$changed_files" | sed -nE 's#^server/apps/(accounts|api|auth|clubs|discovery|econ|img|lists|rooms)/.*#\1#p' | sort -u | paste -sd, -)"
+            if printf '%s\n' "$changed_files" | grep -Eq '^server/packages/'; then
+              workers='auth,accounts,rooms,econ,api,lists,discovery,clubs,img'
+            fi
+          else
+            workers="$REQUESTED_WORKERS"
+            if [ -z "$workers" ]; then
+              workers='api,auth,econ,lists,discovery,rooms'
+            fi
           fi
+          echo "workers=$workers" >> "$GITHUB_OUTPUT"
+          echo "Selected workers: ${workers:-none}"
+
+      - name: Deploy workers in order
+        if: steps.selected-workers.outputs.workers != ''
+        run: |
+          set -euo pipefail
+          WORKERS_INPUT="${{ steps.selected-workers.outputs.workers }}"
           IFS=',' read -ra WORKERS <<< "$WORKERS_INPUT"
           for worker in "${WORKERS[@]}"; do
             worker=$(echo "$worker" | xargs)

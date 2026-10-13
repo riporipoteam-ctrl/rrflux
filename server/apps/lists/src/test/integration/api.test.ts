@@ -1023,9 +1023,9 @@ it('fills a GENERIC (type=5) row with random first-party custom avatar items', a
 		}
 	})
 
-	it('returns the full eligible 2025 clothing snapshot as bare purchasable ids', async () => {
-		const expected = eligibleSnapshotItems((item) =>
-			Boolean(item.GiftDrop.AvatarItemDesc?.trim())
+		it('returns the full eligible 2025 clothing snapshot as bare purchasable ids', async () => {
+			const expected = eligibleSnapshotItems((item) =>
+				Boolean(item.GiftDrop.AvatarItemDesc?.trim())
 		).map((item) => String(item.PurchasableItemId))
 		const ids = await readPurchasableRow('clothingitems')
 		expect(ids).toEqual(expected)
@@ -1036,18 +1036,28 @@ it('fills a GENERIC (type=5) row with random first-party custom avatar items', a
 		// custom-avatar `1.<guid>` rows or silently trim the Clothing page to 50 items.
 		expect(await readGenericRow('clothingitems')).toEqual(expected.map((id) => `0.${id}`))
 
-		// Unknown type-4 rows retain the bounded legacy fallback; only known snapshot feeds expand.
-		const fallbackSlugs = ['newitems', 'HotList', 'NoSuchRowAnywhere']
+			// Unknown type-4 rows retain the bounded legacy fallback; only known snapshot feeds expand.
+			const fallbackSlugs = ['HotList', 'NoSuchRowAnywhere']
 		for (const slug of fallbackSlugs) {
 			const fallback = await readPurchasableRow(slug)
 			expect(fallback, slug).toHaveLength(GENERIC_ROW_SIZE)
 			expect(fallback.every((id) => isSeededAvatarItem(Number(id))), slug).toBe(true)
 		}
 		const unknownFallback = await readPurchasableRow('NoSuchRowAnywhere')
-		expect(await readPurchasableRow('NoSuchRowAnywhere')).not.toEqual(unknownFallback)
-	})
+			expect(await readPurchasableRow('NoSuchRowAnywhere')).not.toEqual(unknownFallback)
+		})
 
-		it('includes official legacy and Full Body clothes in the Clothing page and categories', async () => {
+		it('keeps Hot and New discovery rows relevant and bounded', async () => {
+			const hot = await readPurchasableRow('hotitems')
+			const newest = await readPurchasableRow('newitems')
+
+			expect(hot).toHaveLength(34)
+			expect(hot.every((id) => snapshotItemForId(id).IsFeatured)).toBe(true)
+			expect(newest).toHaveLength(50)
+			expect(newest.every((id) => Boolean(snapshotItemForId(id).NewUntil))).toBe(true)
+		})
+
+			it('includes official legacy and Full Body clothes in the Clothing page and categories', async () => {
 			const names = async (slug: string): Promise<string[]> =>
 				(await readPurchasableRow(slug)).map((id) => snapshotItemForId(id).GiftDrop.FriendlyName)
 			const clothingNames = await names('clothingitems')

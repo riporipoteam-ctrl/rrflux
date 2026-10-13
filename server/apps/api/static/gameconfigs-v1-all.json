@@ -531,7 +531,7 @@
 		"EndTime": null,
 		"Key": "Econ.StorefrontCarouselsToUseListsService",
 		"StartTime": null,
-		"Value": "(StoreClothing)/HatsItems,(StoreClothing)/TorsoItems,(StoreClothing)/AccessoriesItems,(StoreClothing)/GlovesItems,(StoreClothing)/HairItems"
+		"Value": "(StoreClothing)/HatsItems,(StoreClothing)/TorsoItems,(StoreClothing)/BottomsItems,(StoreClothing)/ShoesItems,(StoreClothing)/WaistItems,(StoreClothing)/GlovesItems,(StoreClothing)/ShoulderItems,(StoreClothing)/SkinsItems,(StoreClothing)/AccessoriesItems,(StoreClothing)/HairItems,(StoreClothing)/FacialHairItems"
 	},
 	{
 		"EndTime": null,

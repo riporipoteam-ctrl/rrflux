@@ -84,10 +84,10 @@ export default defineConfig({
 						{
 							// The API worker binds to the deployed Econ service in production. Tests use a
 							// local worker so the binding resolves without making network calls.
-							name: 'fluxrec-econ',
+							name: 'econ',
 							modules: true,
 							compatibilityDate: '2026-06-16',
-								script: `
+							script: `
 									export default {
 									async fetch(request) {
 										await request.arrayBuffer()

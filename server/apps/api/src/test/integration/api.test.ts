@@ -372,6 +372,34 @@ describe('public endpoints', () => {
 		}
 	})
 
+	test('Store categories all select their populated Lists feeds in both catalogs', async () => {
+		const expected = [
+			'(StoreClothing)/HatsItems',
+			'(StoreClothing)/TorsoItems',
+			'(StoreClothing)/BottomsItems',
+			'(StoreClothing)/ShoesItems',
+			'(StoreClothing)/WaistItems',
+			'(StoreClothing)/GlovesItems',
+			'(StoreClothing)/ShoulderItems',
+			'(StoreClothing)/SkinsItems',
+			'(StoreClothing)/AccessoriesItems',
+			'(StoreClothing)/HairItems',
+			'(StoreClothing)/FacialHairItems',
+		]
+		for (const [label, version] of [
+			['2023', GAME_VERSION],
+			['2025', '20250718.01'],
+		]) {
+			const res = await exports.default.fetch(`${ORIGIN}/api/gameconfigs/v1/all`, {
+				headers: await bearer('42', undefined, version),
+			})
+			expect(res.status, label).toBe(200)
+			const config = (await res.json()) as Array<{ Key: string; Value: string }>
+			const selector = config.find((entry) => entry.Key === 'Econ.StorefrontCarouselsToUseListsService')
+			expect(selector?.Value.split(','), label).toEqual(expected)
+		}
+	})
+
 	test('GET /api/gameconfigs/v1/all serves the 2023 catalog to the target build', async () => {
 		expect(await gameConfigKeys(GAME_VERSION)).not.toContain(KEY_2025_ONLY)
 	})

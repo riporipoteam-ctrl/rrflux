@@ -86,6 +86,35 @@ describe('2025 Store feeds', () => {
     expect(facial.every((id) => clothing.has(id))).toBe(true)
   })
 
+  it('uses featured metadata for Hot and bounds New to the latest 50 marked items', () => {
+    const eligible = sf32025.StoreItems.filter((item) => {
+      const drop = item.GiftDrop
+      return (
+        !drop.IsQuery &&
+        !drop.ConsumableItemDesc?.trim() &&
+        !drop.EquipmentModificationGuid?.trim() &&
+        (drop.AvatarItemType === 0 || drop.AvatarItemType === 1) &&
+        !UNSELLABLE_RARITIES.includes(drop.Rarity)
+      )
+    })
+    const expectedHot = eligible
+      .filter((item) => item.IsFeatured)
+      .map((item) => String(item.PurchasableItemId))
+    const expectedNew = eligible
+      .filter((item) => Boolean(item.NewUntil))
+      .sort((a, b) =>
+        String(b.NewUntil ?? '').localeCompare(String(a.NewUntil ?? '')) ||
+        String(b.AvailableAt ?? '').localeCompare(String(a.AvailableAt ?? ''))
+      )
+      .slice(0, 50)
+      .map((item) => String(item.PurchasableItemId))
+
+    expect(expectedHot).toHaveLength(34)
+    expect(buildStoreFeedIds('hotitems')).toEqual(expectedHot)
+    expect(buildStoreFeedIds('newitems')).toEqual(expectedNew)
+    expect(expectedNew).toHaveLength(50)
+  })
+
   it('retains free items instead of requiring a positive price entry', () => {
     const hair = new Set(buildStoreFeedIds('hairitems')!)
     const facial = new Set(buildStoreFeedIds('facialhairitems')!)
