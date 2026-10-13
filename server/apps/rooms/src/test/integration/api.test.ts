@@ -4186,6 +4186,17 @@ describe('rooms endpoints', () => {
 		expect((await SELF.fetch(`${ORIGIN}/photon_access_token`)).status).toBe(401)
 	})
 
+	it('GET /photon_access_token rejects a developer claim with an invalid signature', async () => {
+		const authorization = (await bearer('121', ['developer'])).Authorization
+		const [header, payload, signature] = authorization.slice('Bearer '.length).split('.')
+		const originalSignature = signature!
+		const tamperedSignature = `${originalSignature[0] === 'A' ? 'B' : 'A'}${originalSignature.slice(1)}`
+		const res = await SELF.fetch(`${ORIGIN}/photon_access_token`, {
+			headers: { Authorization: `Bearer ${header}.${payload}.${tamperedSignature}` },
+		})
+		expect(res.status).toBe(401)
+	})
+
 	it('GET /photon_access_token returns permissions + presence instance', async () => {
 		// Seed the caller's presence so RoomInstanceId reflects their current instance.
 		await env.DB.prepare('INSERT OR REPLACE INTO presence (data) VALUES (?1)')
@@ -4226,6 +4237,24 @@ describe('rooms endpoints', () => {
 				Permissions: Array<{ Permission: string; Role: number; Override: boolean }>
 			}
 			// The global maker pen is prepended → first entry, Role 0, Override true.
+			expect(body.Permissions[0]).toMatchObject({
+				Permission: 'CAN_USE_MAKER_PEN',
+				Role: 0,
+				Override: true,
+			})
+			expect(body.Permissions.length).toBe(12)
+		}
+	})
+
+	it('GET /photon_access_token grants the global maker pen to signed staff roles', async () => {
+		for (const role of ['developer', 'moderator']) {
+			const res = await SELF.fetch(`${ORIGIN}/photon_access_token`, {
+				headers: await bearer('121', [role]),
+			})
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				Permissions: Array<{ Permission: string; Role: number; Override: boolean }>
+			}
 			expect(body.Permissions[0]).toMatchObject({
 				Permission: 'CAN_USE_MAKER_PEN',
 				Role: 0,
