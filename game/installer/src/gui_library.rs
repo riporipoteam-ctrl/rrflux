@@ -567,7 +567,7 @@ mod imp {
         let mut wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
         let weight = if bold { FW_BOLD } else { FW_NORMAL };
         let font = CreateFontW(
-            -size,
+            -(size.max(12)),
             0,
             0,
             0,
@@ -1191,9 +1191,7 @@ mod imp {
         fill_rect(mem, &side_r, p.bg_side)?;
 
         // Brand mark + wordmark.
-        if draw_logo_bitmap(mem, st.logo_bitmap, 24, TITLE_H + 20, 36).is_err() {
-            let _ = draw_logo(mem, 24, TITLE_H + 20, 36, p.accent);
-        }
+        draw_logo(mem, 24, TITLE_H + 20, 36, p.accent)?;
         draw_text(
             mem,
             "RIPO TEAM",
@@ -1380,9 +1378,16 @@ mod imp {
             true,
             false,
         )?;
+        let headline = if st.install_required {
+            "Install Flux Rec"
+        } else if st.update_available {
+            "Update available"
+        } else {
+            "Ready to play"
+        };
         draw_text(
             hdc,
-            "Ready to play",
+            headline,
             content_x,
             TITLE_H + 31,
             460,
@@ -1442,7 +1447,17 @@ mod imp {
         } else {
             fill_gradient(hdc, &banner, p.banner_top, p.banner_bot)?;
         }
-        // Brand strip anchors the screenshot and keeps the title readable.
+        // Solid brand bars keep the title readable over varied screenshots.
+        fill_rect(
+            hdc,
+            &RECT {
+                left: banner.left,
+                top: banner.top,
+                right: banner.right,
+                bottom: banner.top + 112,
+            },
+            COLORREF(0x0017100B),
+        )?;
         fill_rect(
             hdc,
             &RECT {
@@ -1453,15 +1468,7 @@ mod imp {
             },
             COLORREF(0x00A43C12),
         )?;
-        if draw_logo_bitmap(hdc, st.logo_bitmap, banner.left + 22, banner.top + 22, 70).is_err() {
-            draw_logo(
-                hdc,
-                banner.left + 22,
-                banner.top + 22,
-                70,
-                COLORREF(0x00FFFFFF),
-            )?;
-        }
+        draw_logo(hdc, banner.left + 22, banner.top + 22, 70, p.accent)?;
         draw_text(
             hdc,
             "FLUX REC",
