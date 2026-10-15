@@ -2354,6 +2354,23 @@ describe('econ endpoints', () => {
 		})
 	})
 
+	test('POST /api/items/purchaseInfos prices first-party search fallback items', async () => {
+		const itemId = '00000000-0000-4000-8000-000000003108'
+		const res = await exports.default.fetch(`${ORIGIN}/api/items/purchaseInfos`, {
+			method: 'POST',
+			headers: { ...(await bearer('207')), 'content-type': 'application/json' },
+			body: JSON.stringify({ Ids: [{ itemType: 3, itemId }] }),
+		})
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as Array<Record<string, unknown>>
+		expect(body).toHaveLength(1)
+		expect(body[0]).toMatchObject({
+			ItemId: { itemType: 3, itemId },
+			PurchaseMethodId: { Type: 1, NumberId: null, Guid: itemId },
+			Prices: [{ CurrencyType: 2, Price: 2000 }],
+		})
+	})
+
 	test('POST /api/items/purchaseInfos falls back to captured Rec Center item details', async () => {
 		const res = await exports.default.fetch(`${ORIGIN}/api/items/purchaseInfos`, {
 			method: 'POST',

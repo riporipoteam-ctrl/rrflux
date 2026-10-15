@@ -300,7 +300,12 @@ export async function getCustomAvatarItems(
 	const byId = new Map(
 		results.map(toDto).map((item) => [item.CustomAvatarItemId.toLowerCase(), item])
 	)
-	return lowered.flatMap((id) => byId.get(id) ?? [])
+	return lowered.flatMap((id) => {
+		const stored = byId.get(id)
+		if (stored) return [stored]
+		const firstParty = staticCatalogItemsById.get(id)
+		return firstParty ? [firstParty] : []
+	})
 }
 
 /**
@@ -557,16 +562,54 @@ function staticCustomAvatarItemId(avatarItemId: string): string {
 // @ts-ignore - JSON module bundled by wrangler
 import minimalCatalog from './storefront-minimal.json'
 
+type MinimalCatalogEntry = {
+	n: string
+	d: string
+	p: number
+	id: string
+	thumb: string
+}
+
+const staticCatalogItemsById = new Map<string, CustomAvatarItem>(
+	(minimalCatalog as MinimalCatalogEntry[]).map((entry) => {
+		const item = toStaticCatalogItem(entry)
+		return [item.CustomAvatarItemId.toLowerCase(), item]
+	})
+)
+
+function toStaticCatalogItem(entry: MinimalCatalogEntry): CustomAvatarItem {
+	const customAvatarItemId = staticCustomAvatarItemId(entry.id)
+	return {
+		CustomAvatarItemId: customAvatarItemId,
+		CreatorAccountId: 1,
+		Name: entry.n,
+		Description: entry.d,
+		Price: entry.p,
+		Accessibility: 1,
+		ForceCannotPublish: false,
+		IsFeatured: false,
+		IsRecRoomApproved: true,
+		BaseAvatarItemId: null,
+		BaseAvatarItemColor: null,
+		DesignFilename: null,
+		ThumbnailImageFilename: entry.thumb,
+		CreatedAt: '2025-01-01T00:00:00Z',
+		ModifiedAt: '2025-01-01T00:00:00Z',
+		PreviewOrientation: 0,
+		OutfitType: guessOutfitType(entry.n),
+		CurrentSaves: [],
+		Tags: [],
+		CustomBadgeMetadata: null,
+		RankedEntityId: customAvatarItemId,
+		RankingContext: null,
+		PurchaseInfo: null,
+	}
+}
+
 async function searchStaticCatalog(
 	search: CustomAvatarItemSearch
 ): Promise<CustomAvatarItem[]> {
-	const catalog = minimalCatalog as Array<{
-		n: string
-		d: string
-		p: number
-		id: string
-		thumb: string
-	}>
+	const catalog = minimalCatalog as MinimalCatalogEntry[]
 	if (!Array.isArray(catalog)) return []
 
 	const take = Math.min(Math.max(search.take ?? 50, 0), SEARCH_MAX_TAKE)
@@ -582,33 +625,7 @@ async function searchStaticCatalog(
 
 		const outfitType = guessOutfitType(name)
 		if (outfitTypes.length > 0 && !outfitTypes.includes(outfitType)) continue
-		const customAvatarItemId = staticCustomAvatarItemId(entry.id)
-
-		items.push({
-			CustomAvatarItemId: customAvatarItemId,
-			CreatorAccountId: 1,
-			Name: name,
-			Description: entry.d,
-			Price: entry.p,
-			Accessibility: 1,
-			ForceCannotPublish: false,
-			IsFeatured: false,
-			IsRecRoomApproved: true,
-			BaseAvatarItemId: null,
-			BaseAvatarItemColor: null,
-			DesignFilename: null,
-			ThumbnailImageFilename: entry.thumb,
-			CreatedAt: '2025-01-01T00:00:00Z',
-			ModifiedAt: '2025-01-01T00:00:00Z',
-			PreviewOrientation: 0,
-			OutfitType: outfitType,
-			CurrentSaves: [],
-			Tags: [],
-			CustomBadgeMetadata: null,
-			RankedEntityId: customAvatarItemId,
-			RankingContext: null,
-			PurchaseInfo: null,
-		})
+		items.push(toStaticCatalogItem(entry))
 	}
 
 	return items.slice(skip, skip + take)

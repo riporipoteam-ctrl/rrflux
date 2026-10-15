@@ -1842,6 +1842,16 @@ describe('public endpoints', () => {
 		])
 		expect(mixed.map((i) => i.CustomAvatarItemId)).toEqual([first.CustomAvatarItemId])
 
+		// First-party items served by the storefront search use deterministic GUID-shaped ids,
+		// but are intentionally not rows in the player-created item table. They still need to
+		// resolve here so the client can hydrate search results and the economy worker can price
+		// them.
+		const stockItem = '00000000-0000-4000-8000-000000003108'
+		const stock = await bulkLookup([stockItem])
+		expect(stock).toMatchObject([
+			{ CustomAvatarItemId: stockItem, Name: 'Hiker Shirt (Violet)', CreatorAccountId: 1 },
+		])
+
 		// Ids also ride comma-separated inside one field, and on the query string — the
 		// client's exact encoding here isn't pinned down, so all three spellings are read.
 		const commas = await bulkLookup([`${first.CustomAvatarItemId},${second.CustomAvatarItemId}`])
