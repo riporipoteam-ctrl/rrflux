@@ -924,40 +924,37 @@ const DESC_BY_NAME: Map<string, string> = (() => {
  * `EquipmentModificationGuid`) keep their captured descs.
  */
 function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
-	// Add working thumbnail URLs from our img host. The 2023 client tries to load
-	// thumbnails from dead Rec Room CDN hosts (rec.net, unionassets.com) which causes
-	// a 6s DNS timeout hang then crash. Our img host serves the thumbnails.
-	const IMG_BASE = 'https://img.ripo-ripoteam.workers.dev/'
+	// Keep the storefront DTO field-for-field compatible with the client. It reads
+	// ThumbnailImageName and requests https://rec.net/{name}; the game patch rewrites
+	// that dead host to our img worker. The client rejects the non-native
+	// ThumbnailImage URL field that older enrichment added here.
 	return items.map((item) => {
 		if (!item.GiftDrop) return item
 		const drop = item.GiftDrop as any
 		const name = typeof drop.FriendlyName === 'string' ? drop.FriendlyName.trim().toLowerCase() : ''
 		let changed = false
 		const next: any = { ...drop }
+		if (Object.prototype.hasOwnProperty.call(next, 'ThumbnailImage')) {
+			delete next.ThumbnailImage
+			changed = true
+		}
 		// The client's Tooltip field is a plain string — a null leaks through from
 		// the captures and makes the client render nothing, so collapse it.
 		if (next.Tooltip == null) {
 			next.Tooltip = ''
 			changed = true
 		}
-		// Priority 1: item already has ThumbnailImageName (e.g. star boxes) — convert to full URL
+		// Keep existing native thumbnail names; fill missing names from the catalog.
 		const existingThumb = drop.ThumbnailImageName
-		if (existingThumb && typeof existingThumb === 'string' && existingThumb.length > 0) {
-			// Don't overwrite if ThumbnailImage is already a full URL
-			const current = drop.ThumbnailImage
-			if (!current || !current.startsWith('http')) {
-				next.ThumbnailImage = IMG_BASE + existingThumb
-				changed = true
-			}
-		} else if (name) {
-			// Priority 2: look the catalog thumbnail up by FriendlyName. (The old
-			// code keyed PurchasableItemId against the catalog's AvatarItemId,
-			// which never matches — captured GiftDrops don't carry AvatarItemId —
-			// so ~500 items got no image at all.)
-			const thumb = THUMBNAIL_BY_NAME.get(name)
-			if (thumb) {
-				next.ThumbnailImage = IMG_BASE + thumb
-				changed = true
+		if (name) {
+			if (!existingThumb || typeof existingThumb !== 'string' || existingThumb.trim() === '') {
+				// Look up the catalog thumbnail by FriendlyName. (The old code keyed
+				// PurchasableItemId against AvatarItemId, which never matches.)
+				const thumb = THUMBNAIL_BY_NAME.get(name)
+				if (thumb) {
+					next.ThumbnailImageName = thumb
+					changed = true
+				}
 			}
 			// Repair AvatarItemDesc: the captures carry a human-readable
 			// description here which the client cannot resolve to an item; the
