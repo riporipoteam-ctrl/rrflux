@@ -1301,7 +1301,13 @@ describe('public endpoints', () => {
 		// Coach's stock content alone (the storefront tab), `False` the players' alone (the
 		// user-generated-content tab), and the two never overlap. Absent is both. The client
 		// capitalises its booleans, so the comparison folds case.
-		expect((await search('?includeCoachItems=True')).map((i) => i.Name)).toEqual(['Coach Hat'])
+		const coachItems = await search('?includeCoachItems=True')
+		expect(coachItems.map((i) => i.Name)).toContain('Coach Hat')
+		expect(coachItems.length).toBeGreaterThan(1)
+		const hats = await search('?outfitTypes=0&includeCoachItems=True&skip=0&take=100')
+		expect(hats.map((i) => i.Name)).toContain('Coach Hat')
+		expect(hats.map((i) => i.Name)).toContain('Yeti Hat (Pink)')
+		expect(hats).toHaveLength(100)
 		expect((await search('?includeCoachItems=false')).map((i) => i.Name)).toEqual([
 			'Trousers A',
 			'Shirt B',
@@ -1322,13 +1328,14 @@ describe('public endpoints', () => {
 				'&outfitTypes=301&includePurchaseInfos=True&includeCoachItems=True&ordering=0&skip=0' +
 				'&take=100&unityAssetTarget=0&unityAssetVersion=3'
 		)
-		expect(real.map((i) => i.Name)).toEqual(['Coach Hat'])
+		expect(real.map((i) => i.Name)).toContain('Coach Hat')
+		expect(real.length).toBeGreaterThan(1)
 		// `includePurchaseInfos=True` notwithstanding: nothing prices a custom item here yet, so
 		// the field is null on every item and the parameter changes nothing.
 		expect(real.every((i) => i.PurchaseInfo === null)).toBe(true)
 	})
 
-	test('Coach storefront fallback uses client outfit enums and returns full pages', async () => {
+	test('Coach storefront catalog merges database items with the static catalog before paging', async () => {
 		await env.DB.prepare('DELETE FROM custom_avatar_item').run()
 		const query =
 			'?outfitTypes=0&outfitTypes=2&outfitTypes=3&outfitTypes=10&outfitTypes=20' +
@@ -1600,7 +1607,7 @@ describe('public endpoints', () => {
 		// dozen slots asked for) and serves the record exactly as exported, plus the store-side
 		// `PurchaseInfo` the client asked for with `includePurchaseInfos` (null until priced).
 		const store = await search(
-			'?outfitTypes=0&outfitTypes=2&outfitTypes=3&outfitTypes=10&outfitTypes=20&outfitTypes=100' +
+			'?searchQuery=Skeletal%20Wings&outfitTypes=0&outfitTypes=2&outfitTypes=3&outfitTypes=10&outfitTypes=20&outfitTypes=100' +
 				'&outfitTypes=101&outfitTypes=102&outfitTypes=103&outfitTypes=200&outfitTypes=300' +
 				'&outfitTypes=301&includePurchaseInfos=True&includeCoachItems=True&ordering=0&skip=0' +
 				'&take=100&unityAssetTarget=0&unityAssetVersion=3'
@@ -1610,7 +1617,7 @@ describe('public endpoints', () => {
 		// The same query from a Quest (`unityAssetTarget=2`, Android/Oculus) serves the same
 		// record with its assetbundles pointed at the `quest/` builds, and nothing else moved.
 		const questStore = await search(
-			'?outfitTypes=100&includePurchaseInfos=True&includeCoachItems=True&ordering=0&skip=0' +
+			'?searchQuery=Skeletal%20Wings&outfitTypes=100&includePurchaseInfos=True&includeCoachItems=True&ordering=0&skip=0' +
 				'&take=100&unityAssetTarget=2&unityAssetVersion=3'
 		)
 		expect(questStore).toEqual([
