@@ -547,6 +547,12 @@ function guessOutfitType(name: string): number {
 	return -1 // Unclassified stock items must not masquerade as custom shirts (105).
 }
 
+/** Give a first-party numeric catalog id the GUID shape the CustomAvatarItem UI expects. */
+function staticCustomAvatarItemId(avatarItemId: string): string {
+	const digits = avatarItemId.replace(/\D/g, '').slice(-12).padStart(12, '0')
+	return `00000000-0000-4000-8000-${digits}`
+}
+
 /** Static catalog fallback for the Watch menu Store (see above). */
 // @ts-ignore - JSON module bundled by wrangler
 import minimalCatalog from './storefront-minimal.json'
@@ -576,9 +582,10 @@ async function searchStaticCatalog(
 
 		const outfitType = guessOutfitType(name)
 		if (outfitTypes.length > 0 && !outfitTypes.includes(outfitType)) continue
+		const customAvatarItemId = staticCustomAvatarItemId(entry.id)
 
 		items.push({
-			CustomAvatarItemId: entry.id,
+			CustomAvatarItemId: customAvatarItemId,
 			CreatorAccountId: 1,
 			Name: name,
 			Description: entry.d,
@@ -598,7 +605,7 @@ async function searchStaticCatalog(
 			CurrentSaves: [],
 			Tags: [],
 			CustomBadgeMetadata: null,
-			RankedEntityId: entry.id,
+			RankedEntityId: customAvatarItemId,
 			RankingContext: null,
 			PurchaseInfo: null,
 		})
