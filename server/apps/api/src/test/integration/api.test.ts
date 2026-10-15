@@ -1350,6 +1350,7 @@ describe('public endpoints', () => {
 		const second = await fetchPage(query.replace('skip=0', 'skip=100'))
 		expect(first).toHaveLength(100)
 		expect(second).toHaveLength(100)
+		expect(first.every((item) => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.CustomAvatarItemId))).toBe(true)
 		expect(first.every((item) => item.OutfitType !== -1 && item.OutfitType !== 105)).toBe(true)
 		expect(first.some((item) => item.OutfitType === 0)).toBe(true)
 		expect(first.some((item) => item.OutfitType === 101)).toBe(true)
