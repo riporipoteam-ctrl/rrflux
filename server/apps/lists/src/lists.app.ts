@@ -253,6 +253,15 @@ const GENERIC_ID_PREFIX = {
  * rather than one it must match.
  */
 const GENERIC_ROW_SIZE = 50
+const STORE_PAGE_SIZE = 48
+const MAX_STORE_PAGE_SIZE = 100
+
+function storePage(query: (name: string) => string | undefined, length: number): [number, number] {
+	const skip = Math.max(0, Number.parseInt(query('skip') ?? query('offset') ?? '0', 10) || 0)
+	const asked = Number.parseInt(query('take') ?? query('limit') ?? '', 10)
+	const take = Number.isInteger(asked) ? Math.max(0, Math.min(asked, MAX_STORE_PAGE_SIZE)) : STORE_PAGE_SIZE
+	return [skip, Math.min(skip + take, length)]
+}
 
 /** What a store row draws from the catalog. */
 interface StoreRowRule {
@@ -1118,10 +1127,20 @@ const app = new Hono<App>()
 			// picks the slot, as it picks the category of a PurchasableItems row.
 			if (echoed === ListEntityType.Generic) {
 				const allEntities = await genericRowEntities(c, key)
-				const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
-				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
-				const take = takeRaw === '' ? allEntities.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
-				return c.json({ Type: echoed, Entities: allEntities.slice(skip, skip + take) })
+				const broad = STORE_BROAD_FEED_KEYS.has(normalizeStoreFeedKey(key))
+				let start: number
+				let end: number
+				if (broad) {
+					const page = storePage((name) => c.req.query(name), allEntities.length)
+					start = page[0]
+					end = page[1]
+				} else {
+					start = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
+					const raw = c.req.query('take') ?? c.req.query('limit')
+					const take = raw === undefined ? allEntities.length : Math.max(0, Number.parseInt(raw, 10) || 0)
+					end = start + take
+				}
+				return c.json({ Type: echoed, Entities: allEntities.slice(start, end) })
 			}
 
 			// PURCHASABLE ITEMS is answered by the type as well, and from the same catalogue draw —
@@ -1134,9 +1153,6 @@ const app = new Hono<App>()
 			// the row key is the only thing in the request that says which.
 			if (echoed === ListEntityType.PurchasableItems) {
 				const allEntities = await purchasableItemRowEntities(c, key)
-				// Paginate: the client requests pages via skip/take (or offset/limit).
-				// Returning the full list on every page request causes duplicates
-				// when the client appends pages, and overwhelms the UI virtualization.
 				const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
 				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
 				const take = takeRaw === '' ? allEntities.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)

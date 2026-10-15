@@ -5,7 +5,7 @@
     "sectionSubType": "Items_Headwear",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "headwearitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Headwear\",\"categoryDepth\":1,\"categoryCarouselType\":7,\"categoryUriNames\":\"HatsItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Headwear\",\"categoryDepth\":1,\"categoryCarouselType\":7,\"categoryUriNames\":\"HatsItems\",\"itemCount\":24}"
   },
   {
     "id": "StoreItemCarousel_UnifiedAlgorithmicList_Tops",
@@ -13,7 +13,7 @@
     "sectionSubType": "Items_Tops",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "topsitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Tops\",\"categoryDepth\":1,\"categoryCarouselType\":8,\"categoryUriNames\":\"TorsoItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Tops\",\"categoryDepth\":1,\"categoryCarouselType\":8,\"categoryUriNames\":\"TorsoItems\",\"itemCount\":24}"
   },
   {
     "id": "StoreItemCarousel_UnifiedAlgorithmicList_Bottoms",
@@ -21,7 +21,7 @@
     "sectionSubType": "Items_Bottoms",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "bottomsitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Bottoms\",\"categoryDepth\":1,\"categoryCarouselType\":17,\"categoryUriNames\":\"BottomsItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Bottoms\",\"categoryDepth\":1,\"categoryCarouselType\":17,\"categoryUriNames\":\"BottomsItems\",\"itemCount\":24}"
   },
   {
     "id": "StoreItemCarousel_UnifiedAlgorithmicList_Footwear",
@@ -29,7 +29,7 @@
     "sectionSubType": "Items_Footwear",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "footwearitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Footwear\",\"categoryDepth\":1,\"categoryCarouselType\":18,\"categoryUriNames\":\"ShoesItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Footwear\",\"categoryDepth\":1,\"categoryCarouselType\":18,\"categoryUriNames\":\"ShoesItems\",\"itemCount\":24}"
   },
   {
     "id": "StoreItemCarousel_UnifiedAlgorithmicList_Waist",
@@ -37,7 +37,7 @@
     "sectionSubType": "Items_Waist",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "waistitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Waist\",\"categoryDepth\":1,\"categoryCarouselType\":23,\"categoryUriNames\":\"WaistItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Waist\",\"categoryDepth\":1,\"categoryCarouselType\":23,\"categoryUriNames\":\"WaistItems\",\"itemCount\":24}"
   },
   {
     "id": "StoreItemCarousel_UnifiedAlgorithmicList_Hands",
@@ -45,7 +45,7 @@
     "sectionSubType": "Items_Hands",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "handsitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Hands\",\"categoryDepth\":1,\"categoryCarouselType\":10,\"categoryUriNames\":\"GlovesItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Hands\",\"categoryDepth\":1,\"categoryCarouselType\":10,\"categoryUriNames\":\"GlovesItems\",\"itemCount\":24}"
   },
   {
     "id": "StoreItemCarousel_UnifiedAlgorithmicList_Shoulder",
@@ -53,7 +53,7 @@
     "sectionSubType": "Items_Shoulder",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "shoulderitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Shoulders & Back\",\"categoryDepth\":1,\"categoryCarouselType\":22,\"categoryUriNames\":\"ShoulderItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Shoulders & Back\",\"categoryDepth\":1,\"categoryCarouselType\":22,\"categoryUriNames\":\"ShoulderItems\",\"itemCount\":24}"
   },
   {
     "id": "StoreItemCarousel_UnifiedAlgorithmicList_Hairstyles",
@@ -61,7 +61,7 @@
     "sectionSubType": "Items_Hairstyles",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "hairitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Hairstyles\",\"categoryDepth\":1,\"categoryCarouselType\":24,\"categoryUriNames\":\"HeadHairItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Hairstyles\",\"categoryDepth\":1,\"categoryCarouselType\":24,\"categoryUriNames\":\"HeadHairItems\",\"itemCount\":24}"
   },
   {
     "id": "StoreItemCarousel_UnifiedAlgorithmicList_FacialHair",
@@ -69,7 +69,7 @@
     "sectionSubType": "Items_FacialHair",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "facialhairitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Facial Hair\",\"categoryDepth\":1,\"categoryCarouselType\":25,\"categoryUriNames\":\"FacialHairItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Facial Hair\",\"categoryDepth\":1,\"categoryCarouselType\":25,\"categoryUriNames\":\"FacialHairItems\",\"itemCount\":24}"
   },
   {
     "id": "StoreItemCarousel_UnifiedAlgorithmicList_HairDye",
@@ -77,7 +77,7 @@
     "sectionSubType": "Items_HairDye",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "hairdyeitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Hair Dye\",\"categoryDepth\":1,\"categoryCarouselType\":6,\"categoryUriNames\":\"HairDyeItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Hair Dye\",\"categoryDepth\":1,\"categoryCarouselType\":6,\"categoryUriNames\":\"HairDyeItems\",\"itemCount\":24}"
   },
   {
     "id": "StoreItemCarousel_UnifiedAlgorithmicList_Skins",
@@ -85,6 +85,6 @@
     "sectionSubType": "Items_Skins",
     "source": "UnifiedAlgorithmicList",
     "sourceMetadata": "skinsitems",
-    "displayMetadata": "{\"DisplayTitle\":\"Equipment Skins\",\"categoryDepth\":1,\"categoryCarouselType\":5,\"categoryUriNames\":\"SkinsItems\",\"itemCount\":5000}"
+    "displayMetadata": "{\"DisplayTitle\":\"Equipment Skins\",\"categoryDepth\":1,\"categoryCarouselType\":5,\"categoryUriNames\":\"SkinsItems\",\"itemCount\":24}"
   }
 ]

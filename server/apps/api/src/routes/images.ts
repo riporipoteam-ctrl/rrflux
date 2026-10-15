@@ -238,8 +238,12 @@ export const imageRoutes = new Hono<App>({ strict: false })
 			if (id === null) return unauthorized(c)
 
 			const body = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
-			// The client posts the file as `image`; accept `file` too for safety.
-			const candidate = body.image ?? body.file
+			// Unity builds differ in the multipart field spelling. The JSON metadata part
+			// may itself be a File, so it must not be mistaken for the photo.
+			const fileEntry = Object.entries(body).find(
+				([name, value]) => name.toLowerCase() !== 'imgmeta' && value instanceof File
+			)
+			const candidate = fileEntry?.[1]
 			if (!(candidate instanceof File)) return c.json({ error: 'No file found in request' }, 400)
 			const file = candidate
 			const limit = maxApiUploadBytes(c.env)
@@ -253,9 +257,10 @@ export const imageRoutes = new Hono<App>({ strict: false })
 			// posted as a multipart field. It carries the metadata we record on the image
 			// (savedImageType, roomId, accessibility, description, taggedPlayerIds, …).
 			let meta: Record<string, unknown> = {}
-			if (typeof body.imgMeta === 'string') {
+			const metaField = Object.entries(body).find(([name]) => name.toLowerCase() === 'imgmeta')?.[1]
+			if (typeof metaField === 'string' || metaField instanceof File) {
 				try {
-					const parsed = JSON.parse(body.imgMeta)
+					const parsed = JSON.parse(typeof metaField === 'string' ? metaField : await metaField.text())
 					if (parsed && typeof parsed === 'object') meta = parsed as Record<string, unknown>
 				} catch {
 					// Malformed imgMeta — treat as an untyped upload (still stored).

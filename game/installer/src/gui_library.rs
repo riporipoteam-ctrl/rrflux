@@ -4,7 +4,7 @@
 //! - Sidebar with Ripo Team branding, Library/Settings nav.
 //! - Flux Rec game card: banner, logo, description, live player count,
 //!   PLAY button, uninstall.
-//! - Settings: light/dark theme toggle (default: light).
+//! - Settings: light/dark theme toggle (default: dark).
 //! - PLAY flow: update check -> install update if needed -> launch game ->
 //!   close library -> "Launching..." splash.
 //!
@@ -34,7 +34,7 @@ mod alpha_tests {
     }
 }
 
-/// UI theme. Default is Light (Armin's order).
+/// UI theme. New installations start with Dark; users can change it in Settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Theme {
     Light,
@@ -567,7 +567,7 @@ mod imp {
         let mut wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
         let weight = if bold { FW_BOLD } else { FW_NORMAL };
         let font = CreateFontW(
-            -size,
+            -(size.max(12)),
             0,
             0,
             0,
@@ -1191,9 +1191,7 @@ mod imp {
         fill_rect(mem, &side_r, p.bg_side)?;
 
         // Brand mark + wordmark.
-        if draw_logo_bitmap(mem, st.logo_bitmap, 24, TITLE_H + 20, 36).is_err() {
-            let _ = draw_logo(mem, 24, TITLE_H + 20, 36, p.accent);
-        }
+        draw_logo(mem, 24, TITLE_H + 20, 36, p.accent)?;
         draw_text(
             mem,
             "RIPO TEAM",
@@ -1208,7 +1206,7 @@ mod imp {
         )?;
         draw_text(
             mem,
-            "PLAYER HUB",
+            "2025 CLIENT",
             72,
             TITLE_H + 46,
             150,
@@ -1370,7 +1368,7 @@ mod imp {
 
         draw_text(
             hdc,
-            "YOUR GAME LIBRARY",
+            "FLUX REC  /  2025 CLIENT",
             content_x,
             TITLE_H + 12,
             400,
@@ -1380,9 +1378,16 @@ mod imp {
             true,
             false,
         )?;
+        let headline = if st.install_required {
+            "Install Flux Rec"
+        } else if st.update_available {
+            "Update available"
+        } else {
+            "Ready to play"
+        };
         draw_text(
             hdc,
-            "Ready when you are",
+            headline,
             content_x,
             TITLE_H + 31,
             460,
@@ -1394,7 +1399,7 @@ mod imp {
         )?;
         draw_text(
             hdc,
-            "One place for updates, install health and launch controls.",
+            "Launch your game and keep the client up to date.",
             content_x + 464,
             TITLE_H + 34,
             420,
@@ -1442,7 +1447,17 @@ mod imp {
         } else {
             fill_gradient(hdc, &banner, p.banner_top, p.banner_bot)?;
         }
-        // Brand strip anchors the screenshot and keeps the title readable.
+        // Solid brand bars keep the title readable over varied screenshots.
+        fill_rect(
+            hdc,
+            &RECT {
+                left: banner.left,
+                top: banner.top,
+                right: banner.right,
+                bottom: banner.top + 112,
+            },
+            COLORREF(0x0017100B),
+        )?;
         fill_rect(
             hdc,
             &RECT {
@@ -1453,15 +1468,7 @@ mod imp {
             },
             COLORREF(0x00A43C12),
         )?;
-        if draw_logo_bitmap(hdc, st.logo_bitmap, banner.left + 22, banner.top + 22, 70).is_err() {
-            draw_logo(
-                hdc,
-                banner.left + 22,
-                banner.top + 22,
-                70,
-                COLORREF(0x00FFFFFF),
-            )?;
-        }
+        draw_logo(hdc, banner.left + 22, banner.top + 22, 70, p.accent)?;
         draw_text(
             hdc,
             "FLUX REC",
@@ -1501,7 +1508,7 @@ mod imp {
 
         draw_text(
             hdc,
-            "Continue playing",
+            "Your game",
             card.left + 24,
             banner.bottom + 18,
             360,
@@ -1525,7 +1532,7 @@ mod imp {
         )?;
         draw_text(
             hdc,
-            &format!("Installed build  v{}", st.version),
+            &format!("Launcher  v{}  ·  2025 client", st.version),
             card.left + 24,
             banner.bottom + 112,
             banner_w - 48,
@@ -1668,11 +1675,11 @@ mod imp {
             false,
         )?;
         let update_sub = if st.update_available {
-            st.update_version.as_str()
+            st.update_version.trim_start_matches("recflare-installer-v")
         } else if !st.check_error.is_empty() {
-            "Play remains available; update check is fail-soft."
+            "Could not check updates. Try again."
         } else {
-            "Automatic update check runs when you press Play."
+            "Updates are checked before the game launches."
         };
         draw_text(
             hdc,

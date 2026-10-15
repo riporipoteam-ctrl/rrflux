@@ -101,12 +101,12 @@ pub fn mark_network_check() {
     let _ = std::fs::write(&p, now.to_string());
 }
 
-/// Load the saved theme (default: Light, per Armin's order).
+/// Load the saved theme; new installations use the game's dark library palette.
 pub fn load_theme() -> gui_library::Theme {
     let p = state_dir().join("theme.txt");
     match std::fs::read_to_string(&p).unwrap_or_default().trim() {
         "dark" => gui_library::Theme::Dark,
-        _ => gui_library::Theme::Light,
+        _ => gui_library::Theme::Dark,
     }
 }
 

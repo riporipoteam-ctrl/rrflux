@@ -5,7 +5,7 @@
     "SectionSubType": "Items_Headwear",
     "Source": "UnifiedAlgorithmicList",
     "SourceMetadata": "headwearitems",
-    "DisplayMetadata": "{\"DisplayTitle\":\"Headwear\",\"categoryDepth\":2,\"categoryCarouselType\":7,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+    "DisplayMetadata": "{\"DisplayTitle\":\"Headwear\",\"categoryDepth\":2,\"categoryCarouselType\":7,\"itemCount\":24,\"minItemsToShowSection\":1}"
   },
   {
     "Id": "StoreItemCarousel_UnifiedAlgorithmicList_Accessories",
@@ -13,7 +13,7 @@
     "SectionSubType": "Items_Accessories",
     "Source": "UnifiedAlgorithmicList",
     "SourceMetadata": "accessoriesitems",
-    "DisplayMetadata": "{\"DisplayTitle\":\"Accessories\",\"categoryDepth\":2,\"categoryCarouselType\":9,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+    "DisplayMetadata": "{\"DisplayTitle\":\"Accessories\",\"categoryDepth\":2,\"categoryCarouselType\":9,\"itemCount\":24,\"minItemsToShowSection\":1}"
   },
   {
     "Id": "StoreItemCarousel_UnifiedAlgorithmicList_Shoulder_Accessories",
@@ -21,7 +21,7 @@
     "SectionSubType": "Items_Shoulder",
     "Source": "UnifiedAlgorithmicList",
     "SourceMetadata": "shoulderitems",
-    "DisplayMetadata": "{\"DisplayTitle\":\"Shoulders & Back\",\"categoryDepth\":2,\"categoryCarouselType\":22,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+    "DisplayMetadata": "{\"DisplayTitle\":\"Shoulders & Back\",\"categoryDepth\":2,\"categoryCarouselType\":22,\"itemCount\":24,\"minItemsToShowSection\":1}"
   },
   {
     "Id": "StoreItemCarousel_UnifiedAlgorithmicList_Waist_Accessories",
@@ -29,7 +29,7 @@
     "SectionSubType": "Items_Waist",
     "Source": "UnifiedAlgorithmicList",
     "SourceMetadata": "waistitems",
-    "DisplayMetadata": "{\"DisplayTitle\":\"Waist\",\"categoryDepth\":2,\"categoryCarouselType\":23,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+    "DisplayMetadata": "{\"DisplayTitle\":\"Waist\",\"categoryDepth\":2,\"categoryCarouselType\":23,\"itemCount\":24,\"minItemsToShowSection\":1}"
   },
   {
     "Id": "StoreItemCarousel_UnifiedAlgorithmicList_Hands_Accessories",
@@ -37,6 +37,6 @@
     "SectionSubType": "Items_Hands",
     "Source": "UnifiedAlgorithmicList",
     "SourceMetadata": "handsitems",
-    "DisplayMetadata": "{\"DisplayTitle\":\"Hands\",\"categoryDepth\":2,\"categoryCarouselType\":10,\"itemCount\":5000,\"minItemsToShowSection\":1}"
+    "DisplayMetadata": "{\"DisplayTitle\":\"Hands\",\"categoryDepth\":2,\"categoryCarouselType\":10,\"itemCount\":24,\"minItemsToShowSection\":1}"
   }
 ]

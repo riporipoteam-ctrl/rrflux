@@ -908,8 +908,8 @@ it('serves a discovery row from /algorithmiclists', async () => {
 })
 
 /** A GENERIC (type=5) row's ids, checking the envelope every such row shares. */
-async function readGenericRow(slug: string): Promise<string[]> {
-	const res = await SELF.fetch(`${ORIGIN}/algorithmiclists/${slug}?type=5`)
+async function readGenericRow(slug: string, page = ''): Promise<string[]> {
+	const res = await SELF.fetch(`${ORIGIN}/algorithmiclists/${slug}?type=5${page}`)
 	expect(res.status, slug).toBe(200)
 	const body = (await res.json()) as {
 		Type: number
@@ -1018,7 +1018,8 @@ it('fills a GENERIC (type=5) row with random first-party custom avatar items', a
 		for (const slug of slugs) {
 			const purchasableIds = await readPurchasableRow(slug)
 			const genericIds = await readGenericRow(slug)
-			expect(genericIds, slug).toEqual(purchasableIds.map((id) => `0.${id}`))
+			const expected = slug === 'clothingitems' ? purchasableIds.slice(0, 48) : purchasableIds
+			expect(genericIds, slug).toEqual(expected.map((id) => `0.${id}`))
 			expect(purchasableIds.every((id) => storefrontItemById.has(Number(id))), slug).toBe(true)
 		}
 	})
@@ -1032,9 +1033,12 @@ it('fills a GENERIC (type=5) row with random first-party custom avatar items', a
 		expect(ids.length).toBeGreaterThan(2400)
 		expect(await readPurchasableRow('ClothingItems')).toEqual(expected)
 
-		// Type 5 uses `0.<id>` composites for the same full feed; it must not collapse back to
-		// custom-avatar `1.<guid>` rows or silently trim the Clothing page to 50 items.
-		expect(await readGenericRow('clothingitems')).toEqual(expected.map((id) => `0.${id}`))
+		// The initial 2025 Clothing carousel is bounded so opening Store does not enqueue
+		// thousands of cards. Explicit pages still expose the entire catalog in order.
+		expect(await readGenericRow('clothingitems')).toEqual(expected.slice(0, 48).map((id) => `0.${id}`))
+		expect(await readGenericRow('clothingitems', '&skip=48&take=24')).toEqual(
+			expected.slice(48, 72).map((id) => `0.${id}`)
+		)
 
 			// Unknown type-4 rows retain the bounded legacy fallback; only known snapshot feeds expand.
 			const fallbackSlugs = ['HotList', 'NoSuchRowAnywhere']

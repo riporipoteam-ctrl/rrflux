@@ -6877,6 +6877,25 @@ describe('images', () => {
 		expect(stored.PlayerEventId).toBeNull()
 	})
 
+	test('accepts the 2025 multipart photo and JSON file parts', async () => {
+		const fd = new FormData()
+		fd.append('ImgMeta', new File([
+			JSON.stringify({ savedImageType: 1, roomId: 777, accessibility: 2 }),
+		], 'metadata.json', { type: 'application/json' }))
+		fd.append('Photo', new File([new Uint8Array([1, 2, 3])], 'camera.png', { type: 'image/png' }))
+		const res = await exports.default.fetch(`${ORIGIN}/api/images/v4/uploadsaved`, {
+			method: 'POST',
+			headers: await bearer('42'),
+			body: fd,
+		})
+		expect(res.status).toBe(200)
+		const { ImageName } = (await res.json()) as { ImageName: string }
+		const meta = (await (
+			await exports.default.fetch(`${ORIGIN}/api/images/v6?name=${encodeURIComponent(ImageName)}`)
+		).json()) as { SavedImageType: number; RoomId: number; Accessibility: number }
+		expect(meta).toMatchObject({ SavedImageType: 1, RoomId: 777, Accessibility: 2 })
+	})
+
 	test('POST /api/images/v4/uploadsaved records a profile thumbnail on the account', async () => {
 		const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])
 		const fd = new FormData()
