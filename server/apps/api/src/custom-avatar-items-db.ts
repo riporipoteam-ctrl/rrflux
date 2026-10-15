@@ -28,6 +28,9 @@
  */
 
 import { COACH_ACCOUNT_ID } from './custom-avatar-items-load'
+/** Static catalog fallback for the Watch menu Store (see above). */
+// @ts-ignore - JSON module bundled by wrangler
+import minimalCatalog from './storefront-minimal.json'
 
 /** Schema DDL (mirror of migrations/0022_custom_avatar_item_json.sql). */
 export const SCHEMA_DDL: string[] = [
@@ -303,7 +306,7 @@ export async function getCustomAvatarItems(
 	return lowered.flatMap((id) => {
 		const stored = byId.get(id)
 		if (stored) return [stored]
-		const firstParty = staticCatalogItemsById.get(id)
+		const firstParty = findStaticCatalogItemById(id)
 		return firstParty ? [firstParty] : []
 	})
 }
@@ -504,11 +507,11 @@ export async function searchCustomAvatarItems(
 	if (search.minPrice !== undefined) where.push(`price >= ${bind(search.minPrice)}`)
 	if (search.maxPrice !== undefined) where.push(`price <= ${bind(search.maxPrice)}`)
 
-	// Coach content is the public Store catalog. Keep every matching Coach row so the
-	// static first-party catalog can be merged with it before paging; applying OFFSET to
-	// each source independently makes categories with a few D1 rows look almost empty.
-	const includeStaticCatalog = search.includeCoachItems === true
-	const pagination = includeStaticCatalog ? '' : ` LIMIT ${bind(take)} OFFSET ${bind(skip)}`
+	// The stock catalog is imported into D1 with its real item ids, outfit types, and saves.
+	// Searching a second, name-only catalog here fabricates incomplete items and guesses their
+	// category from the name (for example, a hoodie can leak into Headwear). Keep the query and
+	// paging in D1 so each request reads only the page the client asked for.
+	const pagination = ` LIMIT ${bind(take)} OFFSET ${bind(skip)}`
 	const { results } = await db
 		.prepare(
 			`SELECT data FROM custom_avatar_item WHERE ${where.join(' AND ')}
@@ -516,22 +519,7 @@ export async function searchCustomAvatarItems(
 		)
 		.bind(...binds)
 		.all<Row>()
-	const dtos = results.map(toDto)
-
-	// The Watch Store asks for Coach items. D1 may have a handful of Coach-created
-	// rows, while the thousands of first-party catalog records are bundled as JSON.
-	// A fallback only when D1 is completely empty hides the entire catalog as soon as
-	// one matching Coach row exists (for example, Headwear showed just five hats).
-	if (includeStaticCatalog) {
-		const names = new Set(dtos.map((item) => item.Name.trim().toLowerCase()))
-		const merged = [
-			...dtos,
-			...matchingStaticCatalog(search).filter((item) => !names.has(item.Name.trim().toLowerCase())),
-		]
-		return merged.slice(skip, skip + take)
-	}
-
-	return dtos
+	return results.map(toDto)
 }
 
 /** Outfit slot derived from an item's name when the catalog gives no slot. */
@@ -565,10 +553,6 @@ function staticCustomAvatarItemId(avatarItemId: string): string {
 	return `00000000-0000-4000-8000-${digits}`
 }
 
-/** Static catalog fallback for the Watch menu Store (see above). */
-// @ts-ignore - JSON module bundled by wrangler
-import minimalCatalog from './storefront-minimal.json'
-
 type MinimalCatalogEntry = {
 	n: string
 	d: string
@@ -577,12 +561,18 @@ type MinimalCatalogEntry = {
 	thumb: string
 }
 
-const staticCatalogItemsById = new Map<string, CustomAvatarItem>(
-	(minimalCatalog as MinimalCatalogEntry[]).map((entry) => {
-		const item = toStaticCatalogItem(entry)
-		return [item.CustomAvatarItemId.toLowerCase(), item]
-	})
-)
+/**
+ * Resolve synthetic ids issued by the old name-only Store fallback for already-owned items.
+ * Do this only on a miss so loading the API worker does not eagerly construct thousands of
+ * incomplete item records on every cold start.
+ */
+function findStaticCatalogItemById(id: string): CustomAvatarItem | undefined {
+	const wanted = id.toLowerCase()
+	const entry = (minimalCatalog as MinimalCatalogEntry[]).find(
+		(entry) => staticCustomAvatarItemId(entry.id).toLowerCase() === wanted
+	)
+	return entry ? toStaticCatalogItem(entry) : undefined
+}
 
 function toStaticCatalogItem(entry: MinimalCatalogEntry): CustomAvatarItem {
 	const customAvatarItemId = staticCustomAvatarItemId(entry.id)
@@ -611,26 +601,6 @@ function toStaticCatalogItem(entry: MinimalCatalogEntry): CustomAvatarItem {
 		RankingContext: null,
 		PurchaseInfo: null,
 	}
-}
-
-function matchingStaticCatalog(search: CustomAvatarItemSearch): CustomAvatarItem[] {
-	const catalog = minimalCatalog as MinimalCatalogEntry[]
-	if (!Array.isArray(catalog)) return []
-	const outfitTypes = search.outfitTypes ?? []
-	const needle = (search.searchQuery?.trim() ?? '').toLowerCase()
-
-	const items: CustomAvatarItem[] = []
-	for (const entry of catalog) {
-		const name = entry.n
-		if (!name) continue
-		if (needle && !name.toLowerCase().includes(needle)) continue
-
-		const outfitType = guessOutfitType(name)
-		if (outfitTypes.length > 0 && !outfitTypes.includes(outfitType)) continue
-		items.push(toStaticCatalogItem(entry))
-	}
-
-	return items
 }
 
 /**
