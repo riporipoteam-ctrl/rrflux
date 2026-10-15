@@ -37,6 +37,4 @@ jobs:
 
       - name: Run API integration tests
         working-directory: server/apps/api
-        run: >-
-          pnpm run test -- src/test/integration/api.test.ts -t
-          'stock search only serves imported items|GET /api/customAvatarItems/v1/search filters, pages and excludes unpublished'
+        run: pnpm exec vitest run src/test/integration/api.test.ts --testNamePattern='stock search only serves imported items|GET /api/customAvatarItems/v1/search filters, pages and excludes unpublished'
