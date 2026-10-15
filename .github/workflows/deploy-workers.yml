@@ -84,9 +84,8 @@ jobs:
             if printf '%s\n' "$changed_files" | grep -Eq '^server/packages/'; then
               workers='auth,accounts,rooms,econ,api,lists,discovery,clubs,img'
             fi
-            # The 2025 client reaches the same Econ code through the fluxrec-econ
-            # workers.dev alias. Deploy econ when this workflow changes so alias
-            # routing fixes cannot merge without also updating the client-facing worker.
+            # The 2025 client uses a separate workers.dev name for Econ.
+            # Deploy it when workflow routing changes so this alias stays current.
             if printf '%s\n' "$changed_files" | grep -Fxq '.github/workflows/deploy-workers.yml'; then
               workers="$(printf '%s\n' "$workers" econ | tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -)"
             fi
@@ -116,4 +115,3 @@ jobs:
               echo "=== fluxrec-econ deployed ==="
             fi
           done
-
