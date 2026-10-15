@@ -1302,12 +1302,9 @@ describe('public endpoints', () => {
 		// user-generated-content tab), and the two never overlap. Absent is both. The client
 		// capitalises its booleans, so the comparison folds case.
 		const coachItems = await search('?includeCoachItems=True')
-		expect(coachItems.map((i) => i.Name)).toContain('Coach Hat')
-		expect(coachItems.length).toBeGreaterThan(1)
+		expect(coachItems.map((i) => i.Name)).toEqual(['Coach Hat'])
 		const hats = await search('?outfitTypes=0&includeCoachItems=True&skip=0&take=100')
-		expect(hats.map((i) => i.Name)).toContain('Coach Hat')
-		expect(hats.map((i) => i.Name)).toContain('Yeti Hat (Pink)')
-		expect(hats).toHaveLength(100)
+		expect(hats.map((i) => i.Name)).toEqual(['Coach Hat'])
 		expect((await search('?includeCoachItems=false')).map((i) => i.Name)).toEqual([
 			'Trousers A',
 			'Shirt B',
@@ -1328,51 +1325,86 @@ describe('public endpoints', () => {
 				'&outfitTypes=301&includePurchaseInfos=True&includeCoachItems=True&ordering=0&skip=0' +
 				'&take=100&unityAssetTarget=0&unityAssetVersion=3'
 		)
-		expect(real.map((i) => i.Name)).toContain('Coach Hat')
-		expect(real.length).toBeGreaterThan(1)
+		expect(real.map((i) => i.Name)).toEqual(['Coach Hat'])
 		// `includePurchaseInfos=True` notwithstanding: nothing prices a custom item here yet, so
 		// the field is null on every item and the parameter changes nothing.
 		expect(real.every((i) => i.PurchaseInfo === null)).toBe(true)
 	})
 
-	test('Coach storefront catalog merges database items with the static catalog before paging', async () => {
+	test('stock search only serves imported items with their exported outfit type and saves', async () => {
 		await env.DB.prepare('DELETE FROM custom_avatar_item').run()
-		const query =
-			'?outfitTypes=0&outfitTypes=2&outfitTypes=3&outfitTypes=10&outfitTypes=20' +
-			'&outfitTypes=100&outfitTypes=101&outfitTypes=102&outfitTypes=103&outfitTypes=200' +
-			'&outfitTypes=300&outfitTypes=301&includeCoachItems=True&skip=0&take=100'
-		const fetchPage = async (pageQuery: string) => {
+		const search = async (query: string) => {
 			const response = await exports.default.fetch(
-				`${ORIGIN}/api/customAvatarItems/v1/search${pageQuery}`
+				`${ORIGIN}/api/customAvatarItems/v1/search${query}`
 			)
 			expect(response.status).toBe(200)
-			return (await response.json()) as Array<{
-				CustomAvatarItemId: string
-				Name: string
-				OutfitType: number
-			}>
+			return (await response.json()) as Array<Record<string, unknown>>
 		}
 
-		const first = await fetchPage(query)
-		const second = await fetchPage(query.replace('skip=0', 'skip=100'))
-		expect(first).toHaveLength(100)
-		expect(second).toHaveLength(100)
-		expect(first.every((item) => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.CustomAvatarItemId))).toBe(true)
-		expect(first.every((item) => item.OutfitType !== -1 && item.OutfitType !== 105)).toBe(true)
-		expect(first.some((item) => item.OutfitType === 0)).toBe(true)
-		expect(first.some((item) => item.OutfitType === 101)).toBe(true)
-		expect(
-			first.some((item) => second.some((other) => other.CustomAvatarItemId === item.CustomAvatarItemId))
-		).toBe(false)
+		// An empty Coach table must not be filled with guessed CustomAvatarItems synthesized
+		// from legacy storefront names. Those rows have fake ids and no render saves.
+		expect(await search('?includeCoachItems=True&skip=0&take=100')).toEqual([])
 
-		const tops = await fetchPage(
-			'?searchQuery=Cozy%20Winter%20Coat&outfitTypes=101&includeCoachItems=True&take=100'
+		const now = '2025-01-01T00:00:00.000Z'
+		const addStockItem = async (name: string, outfitType: number, id = crypto.randomUUID()) =>
+			importCustomAvatarItem(env.DB, {
+				Accessibility: 1,
+				BaseAvatarItemColor: null,
+				BaseAvatarItemId: null,
+				CreatedAt: now,
+				CreatorAccountId: 1,
+				CurrentSaves: [
+					{
+						AdditionalConfiguration: JSON.stringify({ v: 1, d: { n: `(${name})`, o: outfitType } }),
+						BodyType: 0,
+						CreatedAt: now,
+						CustomAvatarItemId: id,
+						CustomAvatarItemSaveId: 1,
+						Description: null,
+						ModifiedAt: now,
+						OutfitType: outfitType,
+						QAState: 0,
+						ThumbnailFileName: `avatar/${id}-thumb.png`,
+						UnityAsset: `${id}.assetbundle`,
+						UnityAsset2: null,
+						UnityAsset2Hash: null,
+						UnityAssetHash: '',
+						UnityAssetId: crypto.randomUUID(),
+					},
+				],
+				CustomAvatarItemId: id,
+				CustomBadgeMetadata: null,
+				Description: '',
+				DesignFilename: null,
+				ForceCannotPublish: false,
+				IsFeatured: false,
+				IsRecRoomApproved: true,
+				ModifiedAt: now,
+				Name: name,
+				OutfitType: outfitType,
+				PreviewOrientation: 0,
+				Price: 1500,
+				RankedEntityId: id,
+				RankingContext: null,
+				Tags: [{ TagType: 0, Value: 'export' }],
+				ThumbnailImageFilename: null,
+			})
+
+		const hat = await addStockItem('Yeti Hat (Pink)', 0)
+		const hoodie = await addStockItem('Paw Print Hoodie', 101)
+		const heads = await search(
+			'?searchQuery=Paw%20Print%20Hoodie&outfitTypes=0&includeCoachItems=True&take=100'
 		)
-		expect(tops.map((item) => item.Name)).toContain('Cozy Winter Coat (Pastel Blue)')
-		const feet = await fetchPage(
-			'?searchQuery=Froggy%20Rain%20Boots&outfitTypes=301&includeCoachItems=True&take=100'
+		const tops = await search(
+			'?searchQuery=Paw%20Print%20Hoodie&outfitTypes=101&includeCoachItems=True&take=100'
 		)
-		expect(feet.map((item) => [item.Name, item.OutfitType])).toEqual([['Froggy Rain Boots', 301]])
+		const hats = await search(
+			'?searchQuery=Yeti%20Hat&outfitTypes=0&includeCoachItems=True&take=100'
+		)
+		expect(heads).toEqual([])
+		expect(tops).toEqual([{ ...hoodie, PurchaseInfo: null }])
+		expect(hats).toEqual([{ ...hat, PurchaseInfo: null }])
+		expect(tops[0].CurrentSaves as unknown[]).toHaveLength(1)
 	})
 
 	test('GET /api/customAvatarItems/v1/search matches name or description, and bounds price', async () => {

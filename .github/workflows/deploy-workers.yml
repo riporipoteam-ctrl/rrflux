@@ -98,6 +98,10 @@ jobs:
           echo "workers=$workers" >> "$GITHUB_OUTPUT"
           echo "Selected workers: ${workers:-none}"
 
+      - name: Load first-party custom avatar items
+        if: contains(steps.selected-workers.outputs.workers, 'api')
+        run: bun runx admin cai-load --remote
+
       - name: Deploy workers in order
         if: steps.selected-workers.outputs.workers != ''
         run: |
