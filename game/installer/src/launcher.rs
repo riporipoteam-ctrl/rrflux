@@ -11,11 +11,9 @@
 //!      fail-soft). No skip-cache: a release published after the last
 //!      launch is offered on the next one.
 //!   2. If a newer setup exists: "Downloading update\u{2026}" with progress,
-//!      then the new setup is spawned with `--updated` and we WAIT for it.
-//!      On success the update is fully installed and the fresh setup has
-//!      already launched the game, so we just exit. On any failure we fall
-//!      through and launch the installed game — an update must never strand
-//!      the player with nothing running.
+//!      then the new setup is spawned with `--updated`. The current launcher
+//!      exits so the setup can replace its executable; the setup shows its own
+//!      progress window and launches the game after a successful update.
 //!   3. Otherwise: "Launching game…" — `Injector.exe` is started first (it
 //!      injects 2025Patch.dll once the game loads), then
 //!      `Recroom_Release.exe +forcemode:screen` is spawned with no console
@@ -287,11 +285,9 @@ pub fn run_launcher(
                 Err(_) => false,
             };
             if downloaded {
-                // Hand off: the fresh setup runs with --updated (installs, then
-                // launches the game itself). We WAIT for it instead of exiting
-                // fire-and-forget: on success the game is already launching, so
-                // we just exit; on any failure we fall through and launch the
-                // installed game. An update must never strand the player.
+                // Hand off to the fresh setup. This launcher is itself the file
+                // being replaced, so it must exit before the installer copies
+                // the new build into the game directory.
                 let dir_s = dir.to_string_lossy().to_string();
                 let update_ok = spawn_update(&dest, &dir_s, &progress);
                 if update_ok {
@@ -327,15 +323,13 @@ pub fn run_launcher(
     std::process::exit(0);
 }
 
-/// Spawn the downloaded setup with `--updated --dir <dir>` and wait for it
-/// to finish. Returns true only when the updater exited successfully — it
-/// installs over the game dir and launches the game itself in that case.
-/// Any spawn or wait failure returns false so the caller falls back to the
-/// installed game. Shows "Installing update\u{2026}" while the child runs;
-/// the update's own window carries the detailed progress.
+/// Start the downloaded setup with `--updated --dir <dir>` and detach it.
+/// The caller exits immediately after success so Windows releases the running
+/// launcher executable before the setup copies the replacement into place.
+/// The setup displays its own progress and launches the game after installing.
 /// v1.0.0: made pub(crate) for the library flow.
 pub(crate) fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> bool {
-    let mut child =
+    let child =
         match crate::stealth::hidden_command(dest.to_str().unwrap_or("FluxRec-Setup-update.exe"))
             .args(["--updated", "--dir", dir_s])
             .spawn()
@@ -346,19 +340,10 @@ pub(crate) fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> boo
                 return false;
             }
         };
-    progress.set_status("Installing update\u{2026}", 88);
-    match child.wait() {
-        Ok(status) => {
-            if !status.success() {
-                eprintln!("[launcher] updater exited with status {status}");
-            }
-            status.success()
-        }
-        Err(e) => {
-            eprintln!("[launcher] waiting for updater failed: {e}");
-            false
-        }
-    }
+    progress.set_status("Update setup started\u{2026}", 91);
+    // Dropping Child does not terminate the process; it only detaches it.
+    drop(child);
+    true
 }
 
 /// v0.6.13: Offer to link the Flux Rec account with the Flux social media

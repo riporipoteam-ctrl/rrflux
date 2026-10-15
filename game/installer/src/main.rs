@@ -781,6 +781,51 @@ fn quarantine_2023_tree(dir: &Path) -> Result<PathBuf, String> {
     Err("could not find a free .2023-backup name".to_string())
 }
 
+fn copy_launcher_with_retry(source: &Path, target: &Path) -> Result<(), std::io::Error> {
+    // The updater starts this installer from the launcher itself. The parent
+    // exits as soon as the setup is spawned, but Windows can keep the image
+    // file locked briefly while that process shuts down.
+    let target_name = target.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "launcher target has no file name",
+        )
+    })?;
+    let staged = target.with_file_name(format!("{}.new", target_name.to_string_lossy()));
+    std::fs::copy(source, &staged)?;
+
+    let mut last_error = None;
+    for attempt in 0..20 {
+        match std::fs::remove_file(target) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < 19 {
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+                continue;
+            }
+        }
+
+        match std::fs::rename(&staged, target) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_error = Some(e),
+        }
+        if attempt < 19 {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
+    let _ = std::fs::remove_file(&staged);
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "launcher replacement did not complete",
+        )
+    }))
+}
+
 fn create_shortcuts(dir: &Path) -> Result<(), String> {
     let exe = match find_game_exe(dir) {
         Some(p) => p,
@@ -797,38 +842,71 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
     // Fail-soft: if the copy fails we fall back to the old direct target.
     // v1.0.0: the launcher is now "Ripo Team Launcher".
     let launcher_exe = dir.join("RipoTeamLauncher.exe");
-    let launcher_ok = match std::env::current_exe() {
+    let launcher_target = match std::env::current_exe() {
         Ok(me) => {
-            // remove-first: Windows cannot overwrite a running exe, and the
-            // launcher always exits before spawning a new setup, so the old
-            // copy is never running here.
-            #[cfg(windows)]
-            let _ = std::fs::remove_file(&launcher_exe);
-            match std::fs::copy(&me, &launcher_exe) {
-                Ok(_) => {
+            match copy_launcher_with_retry(&me, &launcher_exe) {
+                Ok(()) => {
                     println!("[shortcut] installed launcher: {}", launcher_exe.display());
                     // AV hardening (2026-09-24): a copied exe keeps its
                     // Mark-of-the-Web; clear it so Defender/SmartScreen treat
                     // the launcher like a local file.
                     defender::unblock_file(&launcher_exe);
-                    true
+                    Some(launcher_exe.clone())
                 }
                 Err(e) => {
-                    eprintln!("[shortcut] WARNING: launcher copy failed ({}); using direct target.", e);
-                    false
+                    // Older launchers waited for this setup to finish before
+                    // exiting, so their own executable can remain locked
+                    // during the first update. Install a versioned copy and
+                    // repoint the desktop shortcut; newer launches detach
+                    // before updating and return to the stable filename.
+                    if launcher_exe.is_file() {
+                        let versioned = dir.join(format!(
+                            "RipoTeamLauncher-{}.exe",
+                            env!("CARGO_PKG_VERSION")
+                        ));
+                        match copy_launcher_with_retry(&me, &versioned) {
+                            Ok(()) => {
+                                println!(
+                                    "[shortcut] installed versioned launcher: {}",
+                                    versioned.display()
+                                );
+                                defender::unblock_file(&versioned);
+                                Some(versioned)
+                            }
+                            Err(versioned_error) => {
+                                eprintln!(
+                                    "[shortcut] WARNING: launcher copy failed ({e}); versioned copy failed ({versioned_error}). Keeping existing launcher."
+                                );
+                                Some(launcher_exe.clone())
+                            }
+                        }
+                    } else {
+                        eprintln!(
+                            "[shortcut] WARNING: launcher copy failed ({}); using direct target.",
+                            e
+                        );
+                        None
+                    }
                 }
             }
         }
         Err(e) => {
-            eprintln!("[shortcut] WARNING: current_exe unavailable ({}); using direct target.", e);
-            false
+            eprintln!(
+                "[shortcut] WARNING: current_exe unavailable ({}); reusing any installed launcher.",
+                e
+            );
+            if launcher_exe.is_file() {
+                Some(launcher_exe.clone())
+            } else {
+                None
+            }
         }
     };
-    // New behavior: shortcut -> launcher --play. Fallback: game exe directly.
-    let (target, args): (PathBuf, &str) = if launcher_ok {
-        (launcher_exe, "--play")
-    } else {
-        (exe, "+forcemode:screen")
+    // Use the launcher copy (stable or versioned) when one is available. Only
+    // first installs with no usable copy fall back directly to the game.
+    let (target, args): (PathBuf, &str) = match launcher_target {
+        Some(path) => (path, "--play"),
+        None => (exe, "+forcemode:screen"),
     };
     #[cfg(windows)]
     {
@@ -2037,6 +2115,24 @@ mod tests {
 
     fn md5_of(bytes: &[u8]) -> String {
         format!("{:x}", md5::compute(bytes))
+    }
+
+    #[test]
+    fn launcher_update_replaces_an_existing_copy() {
+        let dir = tmp_dir("launcher-copy");
+        let source = dir.join("new-setup.exe");
+        let target = dir.join("RipoTeamLauncher.exe");
+        std::fs::write(&source, b"new launcher bytes").unwrap();
+        std::fs::write(&target, b"old launcher bytes").unwrap();
+
+        copy_launcher_with_retry(&source, &target).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new launcher bytes");
+
+        let missing_source = dir.join("missing-setup.exe");
+        assert!(copy_launcher_with_retry(&missing_source, &target).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"new launcher bytes");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

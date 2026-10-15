@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "fluxrec-installer"
-version = "1.0.29"
+version = "1.0.30"
 dependencies = [
  "flate2",
  "futures-util",
