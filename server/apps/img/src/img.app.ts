@@ -584,8 +584,18 @@ app.get(
 				// the real upload lands under this key.
 				headers.set('cache-control', 'public, max-age=60')
 				applyStubSignature(headers, signing)
-				if (needsBody(transform, signing)) {
-					return finalizeImage(c.env, transparentPng.slice().buffer as ArrayBuffer, headers, transform, signing)
+				// This 1×1 image is deliberately only a missing-object placeholder. Passing
+				// it through Photon for the client's common `?width=256&sig=p1` request
+				// fails in production and returns HTTP 500, leaving the Store card broken.
+				// The signature stub is already present; return the valid PNG directly.
+				if (signing.mode === 'rsa') {
+					return finalizeImage(
+						c.env,
+						transparentPng.slice().buffer as ArrayBuffer,
+						headers,
+						null,
+						signing
+					)
 				}
 				return new Response(transparentPng, { status: 200, headers })
 			}

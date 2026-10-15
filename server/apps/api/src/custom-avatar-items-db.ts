@@ -525,15 +525,26 @@ export async function searchCustomAvatarItems(
 /** Outfit slot derived from an item's name when the catalog gives no slot. */
 function guessOutfitType(name: string): number {
 	const n = name.toLowerCase()
-	if (/\b(hat|cap|helmet|hood|beanie|head|hair|wig|crown|tiara|ears|antlers)\b/.test(n)) return 1 // Headwear
-	if (/\b(shirt|t-shirt|tee|jacket|coat|top|hoodie|sweater|vest|blouse)\b/.test(n)) return 2 // Tops
-	if (/\b(pants|shorts|skirt|jeans|trousers|leggings|bottoms)\b/.test(n)) return 3 // Bottoms
-	if (/\b(shoe|boot|sneaker| sandal|foot|feet|slipper)\b/.test(n)) return 4 // Footwear
-	if (/\b(belt|waist|fanny)\b/.test(n)) return 5 // Waist
-	if (/\b(glove|hand|mitt)\b/.test(n)) return 6 // Hands
-	if (/\b(backpack|back|wing|cape|shoulder)\b/.test(n)) return 7 // Shoulders & Back
-	if (/\b(beard|mustache|goatee|facial)\b/.test(n)) return 8 // Facial Hair
-	return 105 // default: custom shirt slot
+	// These are RecRoom.Avatars.OutfitType ordinals from the client. The older 1–8
+	// category numbers silently filtered every first-party hat, shoe, and many tops out
+	// of the Store search because the client sends enum values such as Hat=0, Shirt=101,
+	// and Feet=301.
+	if (/\b(hair|wig|mohawk|ponytail|braid)\b/.test(n)) return 2 // Hair
+	if (/\b(ear|ears|earring)\b/.test(n)) return 3 // Ear
+	if (/\b(eye|eyes|goggle|sunglasses|glasses|eyewear)\b/.test(n)) return 10 // Eye
+	if (/\b(beard|mustache|moustache|goatee|facial hair|stache)\b/.test(n)) return 20 // Beard
+	if (/\b(team jersey|jersey)\b/.test(n)) return 104 // TeamJersey
+	if (/\b(backpack|wings?|cape|shoulder|back)\b/.test(n)) return 100 // Shoulder
+	if (/\b(belt|waist|fanny)\b/.test(n)) return 102 // Waist
+	if (/\b(scarf|tie|necklace|neck|bowtie)\b/.test(n)) return 103 // Neck
+	if (/\b(glove|hand|mitt|wrist)\b/.test(n)) return 200 // Wrist
+	if (/\b(pants|shorts|skirt|jeans|trousers|leggings|bottoms)\b/.test(n)) return 300 // Legs
+	if (/\b(shoes?|boots?|sneakers?|sandals?|footwear|slippers?)\b/.test(n)) return 301 // Feet
+	if (/\b(shirt|t-shirt|tee|jacket|coat|top|hoodie|sweater|vest|blouse|dress|suit|onesie)\b/.test(n)) {
+		return 101 // Shirt
+	}
+	if (/\b(hat|cap|helmet|hood|beanie|head|headwear|headband|crown|tiara|antlers?)\b/.test(n)) return 0 // Hat
+	return -1 // Unclassified stock items must not masquerade as custom shirts (105).
 }
 
 /** Static catalog fallback for the Watch menu Store (see above). */
@@ -552,7 +563,7 @@ async function searchStaticCatalog(
 	}>
 	if (!Array.isArray(catalog)) return []
 
-	const take = Math.min(Math.max(search.take ?? 50, 0), 50)
+	const take = Math.min(Math.max(search.take ?? 50, 0), SEARCH_MAX_TAKE)
 	const skip = Math.max(search.skip ?? 0, 0)
 	const outfitTypes = search.outfitTypes ?? []
 	const needle = (search.searchQuery?.trim() ?? '').toLowerCase()

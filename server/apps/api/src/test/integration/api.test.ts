@@ -1328,6 +1328,45 @@ describe('public endpoints', () => {
 		expect(real.every((i) => i.PurchaseInfo === null)).toBe(true)
 	})
 
+	test('Coach storefront fallback uses client outfit enums and returns full pages', async () => {
+		await env.DB.prepare('DELETE FROM custom_avatar_item').run()
+		const query =
+			'?outfitTypes=0&outfitTypes=2&outfitTypes=3&outfitTypes=10&outfitTypes=20' +
+			'&outfitTypes=100&outfitTypes=101&outfitTypes=102&outfitTypes=103&outfitTypes=200' +
+			'&outfitTypes=300&outfitTypes=301&includeCoachItems=True&skip=0&take=100'
+		const fetchPage = async (pageQuery: string) => {
+			const response = await exports.default.fetch(
+				`${ORIGIN}/api/customAvatarItems/v1/search${pageQuery}`
+			)
+			expect(response.status).toBe(200)
+			return (await response.json()) as Array<{
+				CustomAvatarItemId: string
+				Name: string
+				OutfitType: number
+			}>
+		}
+
+		const first = await fetchPage(query)
+		const second = await fetchPage(query.replace('skip=0', 'skip=100'))
+		expect(first).toHaveLength(100)
+		expect(second).toHaveLength(100)
+		expect(first.every((item) => item.OutfitType !== -1 && item.OutfitType !== 105)).toBe(true)
+		expect(first.some((item) => item.OutfitType === 0)).toBe(true)
+		expect(first.some((item) => item.OutfitType === 101)).toBe(true)
+		expect(
+			first.some((item) => second.some((other) => other.CustomAvatarItemId === item.CustomAvatarItemId))
+		).toBe(false)
+
+		const tops = await fetchPage(
+			'?searchQuery=Cozy%20Winter%20Coat&outfitTypes=101&includeCoachItems=True&take=100'
+		)
+		expect(tops.map((item) => item.Name)).toContain('Cozy Winter Coat (Pastel Blue)')
+		const feet = await fetchPage(
+			'?searchQuery=Froggy%20Rain%20Boots&outfitTypes=301&includeCoachItems=True&take=100'
+		)
+		expect(feet.map((item) => [item.Name, item.OutfitType])).toEqual([['Froggy Rain Boots', 301]])
+	})
+
 	test('GET /api/customAvatarItems/v1/search matches name or description, and bounds price', async () => {
 		await env.DB.prepare('DELETE FROM custom_avatar_item').run()
 
