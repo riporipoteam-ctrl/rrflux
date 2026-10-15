@@ -1,4 +1,4 @@
-//! Ripo Team Launcher v1.0.29 — game library UI.
+//! Ripo Team Launcher v1.0.30 — game library UI.
 //!
 //! A game-library style launcher (inspired by Steam/EGS):
 //! - Sidebar with Ripo Team branding, Library/Settings nav.
