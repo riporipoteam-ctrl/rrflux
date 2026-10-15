@@ -2566,7 +2566,9 @@ describe('econ endpoints', () => {
 	test('GET /api/storefronts/v3/giftdropstore/3 returns the storefront catalog', async () => {
 		const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v3/giftdropstore/3`)
 		expect(res.status).toBe(200)
-		expect(await res.json()).toBeTruthy()
+		expect(res.headers.get('Cache-Control')).toBe('public, max-age=300')
+		const catalog = (await res.json()) as { StoreItems?: unknown[] }
+		expect(catalog.StoreItems?.length).toBeGreaterThan(3000)
 	})
 
 	// Room storefronts (v4/room/{id}): the 2023 client calls this when opening the

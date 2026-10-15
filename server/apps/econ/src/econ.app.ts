@@ -1149,12 +1149,38 @@ async function loadStorefront(
 		options.defaultToCurrentForPublicBrowse === true &&
 		c.req.header('Authorization') === undefined &&
 		c.req.header('rn.ver') === undefined
-	const res = await c.env.ASSETS.fetch(
+	const path = storefrontAssetPath(String(storefrontType), build, defaultToCurrentForPublicBrowse)
+	const response = await loadCachedStorefrontResponse(c, path)
+	return response ? ((await response.json()) as Storefront) : null
+}
+
+/**
+ * Read and normalize a static storefront catalog through the Workers Cache API.
+ * The 2025 main store is several megabytes and is requested repeatedly by the Watch
+ * store and purchase routes. Cache the normalized JSON at the edge per deployed
+ * release and catalog file so repeat opens do not reparse and re-enrich thousands
+ * of items on every request. The short TTL also covers deployments that do not set
+ * a release id (for example local preview builds).
+ */
+async function loadCachedStorefrontResponse(c: Context<App>, path: string): Promise<Response | null> {
+	const cacheKey = new Request(
 		new URL(
-			storefrontAssetPath(String(storefrontType), build, defaultToCurrentForPublicBrowse),
+			`/__storefront-cache/${encodeURIComponent(c.env.SENTRY_RELEASE)}/${encodeURIComponent(path)}`,
 			c.req.url
-		)
+		),
+		{ method: 'GET' }
 	)
+	const cache = typeof caches === 'undefined' ? null : caches.default
+	if (cache) {
+		try {
+			const cached = await cache.match(cacheKey)
+			if (cached) return cached
+		} catch {
+			// Cache failures must never make the store unavailable; fall through to ASSETS.
+		}
+	}
+
+	const res = await c.env.ASSETS.fetch(new URL(path, c.req.url))
 	if (!res.ok) return null
 	const catalog = (await res.json()) as Storefront
 	// Re-price potion/film items stuck in dead activity currencies so the
@@ -1166,7 +1192,20 @@ async function loadStorefront(
 		// by the catalog's AvatarItemDesc.
 		catalog.StoreItems = enrichWithThumbnails(catalog.StoreItems)
 	}
-	return catalog
+	const response = new Response(JSON.stringify(catalog), {
+		headers: {
+			'Cache-Control': 'public, max-age=300',
+			'Content-Type': 'application/json; charset=utf-8',
+		},
+	})
+	if (cache) {
+		try {
+			c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()))
+		} catch {
+			// Cache failures must never make the store unavailable; the request still succeeds.
+		}
+	}
+	return response
 }
 
 async function loadRecCenterFallbackItems(c: Context<App>): Promise<StoreItem[]> {
@@ -5190,11 +5229,19 @@ const app = new Hono<App>({ strict: false })
 			const defaultToCurrentForPublicBrowse =
 				c.req.header('Authorization') === undefined && c.req.header('rn.ver') === undefined
 			const path = storefrontAssetPath(id, build, defaultToCurrentForPublicBrowse)
-			const res = await c.env.ASSETS.fetch(new URL(path, c.req.url))
-			if (!res.ok) return c.notFound()
-			const catalog = (await res.json()) as { StoreItems?: StoreItem[] }
+			const response = await loadCachedStorefrontResponse(c, path)
+			if (!response) return c.notFound()
+			if (
+				c.req.query('skip') === undefined &&
+				c.req.query('offset') === undefined &&
+				c.req.query('take') === undefined &&
+				c.req.query('limit') === undefined
+			) {
+				return response
+			}
+			const catalog = (await response.json()) as { StoreItems?: StoreItem[] }
 			if (Array.isArray(catalog.StoreItems)) {
-				const allItems = enrichWithThumbnails(repriceDeadCurrencyItems(catalog.StoreItems))
+				const allItems = catalog.StoreItems
 				const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
 				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
 				const take = takeRaw === '' ? allItems.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
@@ -5331,11 +5378,19 @@ app
 			const defaultToCurrentForPublicBrowse =
 				c.req.header('Authorization') === undefined && c.req.header('rn.ver') === undefined
 			const path = storefrontAssetPath(storefrontId, build, defaultToCurrentForPublicBrowse)
-			const res = await c.env.ASSETS.fetch(new URL(path, c.req.url))
-			if (!res.ok) return c.notFound()
-			const catalog = (await res.json()) as { StoreItems?: StoreItem[] }
+			const response = await loadCachedStorefrontResponse(c, path)
+			if (!response) return c.notFound()
+			if (
+				c.req.query('skip') === undefined &&
+				c.req.query('offset') === undefined &&
+				c.req.query('take') === undefined &&
+				c.req.query('limit') === undefined
+			) {
+				return response
+			}
+			const catalog = (await response.json()) as { StoreItems?: StoreItem[] }
 			if (Array.isArray(catalog.StoreItems)) {
-				const allItems = enrichWithThumbnails(repriceDeadCurrencyItems(catalog.StoreItems))
+				const allItems = catalog.StoreItems
 				const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
 				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
 				const take = takeRaw === '' ? allItems.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
