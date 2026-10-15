@@ -2054,7 +2054,8 @@ const app = new Hono<App>()
 			}
 
 			const body = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>
-			const imageName = typeof body.imageName === 'string' ? body.imageName.trim() : ''
+			const imageField = Object.entries(body).find(([name]) => name.toLowerCase() === 'imagename')?.[1]
+			const imageName = typeof imageField === 'string' ? imageField.trim() : ''
 			if (imageName === '') {
 				return roomResult(c, {
 					Success: false,
@@ -3202,7 +3203,8 @@ const app = new Hono<App>()
 			if (!canManageRoom(room, accountId)) return c.body(null, 403)
 
 			const body = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>
-			const imageName = typeof body.imageName === 'string' ? body.imageName.trim() : ''
+			const imageField = Object.entries(body).find(([name]) => name.toLowerCase() === 'imagename')?.[1]
+			const imageName = typeof imageField === 'string' ? imageField.trim() : ''
 			if (imageName === '') return roomEnvelope(c, null, 'You must provide an image!')
 			const title = typeof body.title === 'string' ? body.title : ''
 			const subtitle = typeof body.subtitle === 'string' ? body.subtitle : ''

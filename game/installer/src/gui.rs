@@ -97,16 +97,16 @@ mod imp {
     const TIMER_MS: u32 = 50;
 
     // Palette (COLORREF = 0x00BBGGRR).
-    // v1.0.17: LIGHT THEME redesign — clean, modern, airy.
-    const BG: COLORREF = COLORREF(0x00FFFFFF); // #FFFFFF white
+    // Neutral surfaces keep installation state readable at a glance.
+    const BG: COLORREF = COLORREF(0x00F8F5F2); // #F2F5F8
     const BG_TITLE: COLORREF = COLORREF(0x00FFFFFF); // #FFFFFF title bar
-    const BG_SIDE: COLORREF = COLORREF(0x00FAF7F5); // #F5F7FA light sidebar
+    const BG_SIDE: COLORREF = COLORREF(0x00F1E9E3); // #E3E9F1
     const BG_CARD: COLORREF = COLORREF(0x00FFFFFF); // #FFFFFF cards
-    const BLUE: COLORREF = COLORREF(0x00FF9B2E); // Flux blue #2E9BFF
+    const BLUE: COLORREF = COLORREF(0x00EB6E28); // #286EEB
     const BLUE_LIGHT: COLORREF = COLORREF(0x00FFC76F); // #6FC7FF highlight
     const BLUE_DIM: COLORREF = COLORREF(0x00D6E9FF); // light blue tint
-    const WHITE: COLORREF = COLORREF(0x00231D1A); // #1A1D23 dark text
-    const GRAY: COLORREF = COLORREF(0x0070625A); // #5A6270 secondary text
+    const WHITE: COLORREF = COLORREF(0x002A1E13); // #131E2A dark text
+    const GRAY: COLORREF = COLORREF(0x007A6858); // #58687A secondary text
     const DIM: COLORREF = COLORREF(0x00A8AEB8); // #B8AEA8 dim text
     const TRACK: COLORREF = COLORREF(0x00F0EBE8); // #E8EBF0 progress track
     const BORDER: COLORREF = COLORREF(0x00E8E4E1); // #E1E4E8 card border
@@ -1023,7 +1023,7 @@ mod imp {
             hdc,
             s.f_title,
             WHITE,
-            "Welcome to the control center",
+            "Install Flux Rec",
             margin,
             82,
         );
@@ -1031,7 +1031,7 @@ mod imp {
             hdc,
             s.f_body,
             GRAY,
-            "Download, configure and validate your game files in one guided flow.",
+            "The 2025 client, ready to play. Follow the live progress below.",
             margin,
             124,
         );
@@ -1056,55 +1056,35 @@ mod imp {
         let right = left + hero_w + 22;
         let status_w = s.win_w - right - margin;
 
-        // Branded hero surface with a subtle orbit animation.
+        // Clear product identity and client version, separate from live install status.
         rr_fill(hdc, left, top, hero_w, panel_h, 22, BG_CARD);
         rr_outline(hdc, left, top, hero_w, panel_h, 22, BORDER);
-        let orbit_cx = left + 112;
-        let orbit_cy = top + 126;
-        let orbit_pen = CreatePen(PS_SOLID, 1, BLUE_DIM);
-        if !orbit_pen.is_invalid() {
-            let old_pen = SelectObject(hdc, orbit_pen);
-            let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-            let _ = Ellipse(
-                hdc,
-                orbit_cx - 66,
-                orbit_cy - 66,
-                orbit_cx + 66,
-                orbit_cy + 66,
-            );
-            let _ = SelectObject(hdc, old_pen);
-            let _ = SelectObject(hdc, old_brush);
-            let _ = DeleteObject(orbit_pen);
-        }
-        let angle = (s.shimmer as f64 / 18.0) % (std::f64::consts::PI * 2.0);
-        let orbit_x = orbit_cx + (angle.cos() * 66.0) as i32;
-        let orbit_y = orbit_cy + (angle.sin() * 66.0) as i32;
-        rr_fill(hdc, orbit_x - 5, orbit_y - 5, 10, 10, 10, BLUE);
-        draw_logo(hdc, s, orbit_cx - 48, orbit_cy - 48, 96);
-        draw_wordmark(hdc, s, left + 388, top + 74);
+        rr_fill(hdc, left + 32, top + 54, 164, 164, 30, BG_SIDE);
+        draw_logo(hdc, s, left + 64, top + 86, 100);
+        draw_wordmark(hdc, s, left + 404, top + 70);
         text_center(
             hdc,
             s.f_tiny,
             BLUE,
-            "THE REC ROOM COMMUNITY, REBUILT",
-            left + 388,
+            "2025 CLIENT  /  RIPO TEAM",
+            left + 404,
             top + 116,
-            420,
+            360,
             20,
         );
         text_block(
             hdc,
             s.f_body,
             GRAY,
-            "Join friends, explore player-made rooms and create your own. Flux Rec keeps the setup straightforward and the game files in one place.",
-            RECT { left: left + 228, top: top + 154, right: left + hero_w - 28, bottom: top + 242 },
+            "Play with friends, explore rooms and create your own. Setup downloads the client and checks its files before launch.",
+            RECT { left: left + 228, top: top + 154, right: left + hero_w - 28, bottom: top + 244 },
         );
         rr_fill(hdc, left + 228, top + 264, 188, 34, 17, BLUE_DIM);
         text_center(
             hdc,
             s.f_tiny,
             BLUE,
-            "NO STEAM REQUIRED",
+            "2025 GAME BUILD",
             left + 322,
             top + 270,
             176,
@@ -1221,7 +1201,7 @@ mod imp {
             hdc,
             s.f_tiny,
             DIM,
-            "AUTOMATIC UPDATES  ·  NO STEAM REQUIRED  ·  FLUX REC",
+            "FLUX REC  /  2025 CLIENT  /  AUTOMATIC UPDATES",
             margin,
             fy,
         );
@@ -1256,26 +1236,14 @@ mod imp {
 
         let cx = left + brand_w / 2;
         let cy = panel_y + 91;
-        let ring = CreatePen(PS_SOLID, 1, BLUE_DIM);
-        if !ring.is_invalid() {
-            let old_pen = SelectObject(hdc, ring);
-            let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-            let _ = Ellipse(hdc, cx - 55, cy - 55, cx + 55, cy + 55);
-            let _ = SelectObject(hdc, old_pen);
-            let _ = SelectObject(hdc, old_brush);
-            let _ = DeleteObject(ring);
-        }
-        let angle = (s.shimmer as f64 / 18.0) % (std::f64::consts::PI * 2.0);
-        let orbit_x = cx + (angle.cos() * 55.0) as i32;
-        let orbit_y = cy + (angle.sin() * 55.0) as i32;
-        rr_fill(hdc, orbit_x - 4, orbit_y - 4, 8, 8, 8, BLUE);
+        rr_fill(hdc, cx - 60, cy - 60, 120, 120, 28, BG_SIDE);
         draw_logo(hdc, s, cx - 42, cy - 42, 84);
         draw_wordmark(hdc, s, cx, panel_y + 165);
         text_center(
             hdc,
             s.f_tiny,
             GRAY,
-            "AUTOMATIC UPDATER",
+            "2025 CLIENT",
             cx,
             panel_y + 204,
             brand_w - 22,
@@ -1316,7 +1284,7 @@ mod imp {
             hdc,
             s.f_tiny,
             BLUE,
-            "FLUX REC  /  LIVE UPDATE",
+            "FLUX REC  /  LAUNCH STATUS",
             content_x + 24,
             panel_y + 23,
         );
@@ -1412,7 +1380,7 @@ mod imp {
                 18,
             );
         }
-        let footer = format!("v{}  ·  flux.sitey.my", env!("CARGO_PKG_VERSION"));
+        let footer = format!("Launcher v{}  ·  2025 game build", env!("CARGO_PKG_VERSION"));
         text_at(hdc, s.f_tiny, DIM, &footer, content_x + 24, s.win_h - 31);
     }
 }

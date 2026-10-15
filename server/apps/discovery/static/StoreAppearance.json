@@ -5,6 +5,6 @@
     "SectionSubType": "Items_AllWearables",
     "Source": "UnifiedAlgorithmicList",
     "SourceMetadata": "clothingitems",
-    "DisplayMetadata": "{\"DisplayTitle\":\"Clothing\",\"categoryDepth\":1,\"categoryCarouselType\":0,\"itemCount\":5000,\"minItemsToShowSection\":1,\"horizontalScrollEnabled\":false}"
+    "DisplayMetadata": "{\"DisplayTitle\":\"Clothing\",\"categoryDepth\":1,\"categoryCarouselType\":0,\"itemCount\":24,\"minItemsToShowSection\":1,\"horizontalScrollEnabled\":false}"
   }
 ]

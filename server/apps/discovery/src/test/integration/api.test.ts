@@ -11,6 +11,9 @@ const PAGE_SOURCES = [
 	'StoreCategories',
 	'StoreFeatured',
 	'StoreClothing',
+	'StoreAppearance',
+	'StoreAccessories',
+	'StoreStyling',
 	'StoreConsumables',
 ]
 
@@ -95,6 +98,17 @@ describe('GET /sections/pagesource/:type', () => {
 		}
 	})
 
+	it('bounds the first store page so the client does not render thousands of cards at once', async () => {
+		for (const source of ['StoreCategories', 'StoreClothing', 'StoreAppearance', 'StoreAccessories', 'StoreStyling']) {
+			for (const section of await pageSource(source)) {
+				const display = field(section, 'displayMetadata')
+				if (typeof display !== 'string') continue
+				const metadata = JSON.parse(display) as { itemCount?: number }
+				if (metadata.itemCount !== undefined) expect(metadata.itemCount).toBeLessThanOrEqual(48)
+			}
+		}
+	})
+
 	// The asset manifest is case-sensitive and there is no index to fold case against, so
 	// the name has to match the file exactly.
 	it('404s a name whose case does not match the file', async () => {
@@ -145,6 +159,19 @@ describe('GET /sections/bulk', () => {
 		expect(res.headers.get('content-type')).toContain('application/json')
 		return (await res.json()) as Section[]
 	}
+
+	it('resolves store sections from both legacy and current page layouts', async () => {
+		const sections = await bulk([
+			'StoreItemCarousel_UnifiedAlgorithmicList_AllWearables',
+			'StoreItemCarousel_UnifiedAlgorithmicList_AllWearables_Appearance',
+			'store-featured-hot',
+		])
+		expect(sections.map((section) => field(section, 'id'))).toEqual([
+			'StoreItemCarousel_UnifiedAlgorithmicList_AllWearables',
+			'StoreItemCarousel_UnifiedAlgorithmicList_AllWearables_Appearance',
+			'store-featured-hot',
+		])
+	})
 
 	// The ids arrive as a REPEATED parameter, not a delimited one. Reading only the first
 	// would drop every row but one and leave the page nearly empty.

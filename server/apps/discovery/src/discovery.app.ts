@@ -94,11 +94,32 @@ const app = new Hono<App>()
 			const ids = c.req.queries('id')
 			if (ids === undefined || ids.length === 0) return c.json([])
 
-			const sections = await readSections(c, SECTIONS_CATALOGUE)
+			const storeSources = [
+				'StoreCategories',
+				'StoreClothing',
+				'StoreAppearance',
+				'StoreAccessories',
+				'StoreStyling',
+				'StoreFeatured',
+				'StoreConsumables',
+				'StoreSkins',
+			]
+			const sources = ids.some((id) => id.startsWith('Store') || id.startsWith('store-'))
+				? [SECTIONS_CATALOGUE, ...storeSources]
+				: [SECTIONS_CATALOGUE]
+			const [sections, ...storePages] = await Promise.all(sources.map((name) => readSections(c, name)))
 			if (sections === null) return c.notFound()
 
 			const wanted = new Set(ids)
-			return c.json(sections.filter((s) => typeof s.id === 'string' && wanted.has(s.id)))
+			const seen = new Set<string>()
+			return c.json(
+				[...sections, ...storePages.flatMap((page) => page ?? [])].filter((section) => {
+					const id = section.id ?? section.Id
+					if (typeof id !== 'string' || !wanted.has(id) || seen.has(id)) return false
+					seen.add(id)
+					return true
+				})
+			)
 		}
 	)
 

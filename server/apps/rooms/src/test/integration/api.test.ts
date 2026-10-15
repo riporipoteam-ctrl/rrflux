@@ -1593,6 +1593,11 @@ describe('rooms endpoints', () => {
 		expect(await bodyOf(ok)).toMatchObject({ Success: true })
 		const room = (await (await SELF.fetch(`${ORIGIN}/rooms/2`)).json()) as { ImageName: string }
 		expect(room.ImageName).toBe(imageName)
+
+		const legacyCase = await putForm('/rooms/2/image', { ImageName: 'camera/room-cover.jpg' }, '1')
+		expect((await bodyOf(legacyCase)).Success).toBe(true)
+		const updated = (await (await SELF.fetch(`${ORIGIN}/rooms/2`)).json()) as { ImageName: string }
+		expect(updated.ImageName).toBe('camera/room-cover.jpg')
 	})
 
 	it('DELETE /rooms/:id is auth-gated, owner-only, and removes the room + its blob-store image', async () => {
