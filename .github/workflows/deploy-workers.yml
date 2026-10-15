@@ -84,6 +84,11 @@ jobs:
             if printf '%s\n' "$changed_files" | grep -Eq '^server/packages/'; then
               workers='auth,accounts,rooms,econ,api,lists,discovery,clubs,img'
             fi
+            # The 2025 client uses a separate workers.dev name for Econ.
+            # Deploy it when workflow routing changes so this alias stays current.
+            if printf '%s\n' "$changed_files" | grep -Fxq '.github/workflows/deploy-workers.yml'; then
+              workers="$(printf '%s\n' "$workers" econ | tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -)"
+            fi
           else
             workers="$REQUESTED_WORKERS"
             if [ -z "$workers" ]; then
@@ -104,4 +109,9 @@ jobs:
             echo "=== Deploying $worker ==="
             (cd "apps/$worker" && pnpm run deploy)
             echo "=== $worker deployed ==="
+            if [ "$worker" = "econ" ]; then
+              echo "=== Deploying 2025 client Econ alias ==="
+              (cd apps/econ && pnpm run deploy -- --name fluxrec-econ)
+              echo "=== fluxrec-econ deployed ==="
+            fi
           done
