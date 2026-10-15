@@ -22,6 +22,10 @@ on:
     paths:
       - "game/installer/**"
       - ".github/workflows/build-recflare-installer.yml"
+  pull_request:
+    paths:
+      - "game/installer/**"
+      - ".github/workflows/build-recflare-installer.yml"
 
 jobs:
   build-windows:
@@ -43,6 +47,7 @@ jobs:
         run: cargo build --release
 
       - name: Publish prerelease
+        if: github.event_name == 'push'
         shell: powershell
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,7 +60,7 @@ jobs:
           # skipped release creation in v0.1.4.
           gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --prerelease --title "Flux Rec setup (RecFlare pipeline) v$ver" --notes "Zero-touch installer: downloads the 2023 Rec Room client, installs the Steam bypass, BepInEx and the RecNet redirect plugin (RecFlare backend), writes config, no Steam needed. Transactional install with rollback."
+            gh release create $tag --prerelease --title "Flux Rec setup (2025 client) v$ver" --notes "Flux Rec setup for the 2025 client. Includes the refreshed launcher and automatic update screens."
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
           }
           gh release upload $tag "game\installer\target\release\FluxRec-Setup.exe" --clobber
