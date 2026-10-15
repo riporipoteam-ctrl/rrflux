@@ -115,6 +115,14 @@ describe('img endpoints', () => {
 		expect(resized.headers.get('cache-control')).toBe(CACHE_CONTROL)
 	})
 
+	it('serves the missing-thumbnail fallback for signed resize requests', async () => {
+		const res = await SELF.fetch(`${ORIGIN}/missing-store-item.png?width=256&sig=p1`)
+		expect(res.status).toBe(200)
+		expect(res.headers.get('content-type')).toBe('image/png')
+		expect(res.headers.get('content-signature')).toBeTruthy()
+		expect(new Uint8Array(await res.arrayBuffer())).toHaveLength(67)
+	})
+
 	it('serves an extensionless key from the CDN_ASSETS namespace under image/', async () => {
 		const res = await SELF.fetch(`${ORIGIN}/${CDN_NAME}`)
 		expect(res.status).toBe(200)
