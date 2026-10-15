@@ -48,10 +48,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Load first-party custom avatar items
-        if: github.event_name == 'workflow_dispatch' && contains(inputs.workers, 'api')
-        run: bun runx admin cai-load --remote
-
       - name: Deploy workers in order
         run: |
           set -euo pipefail
