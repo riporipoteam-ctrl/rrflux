@@ -111,7 +111,7 @@ jobs:
             echo "=== $worker deployed ==="
             if [ "$worker" = "econ" ]; then
               echo "=== Deploying 2025 client Econ alias ==="
-              (cd apps/econ && pnpm run deploy -- --name fluxrec-econ)
+              (cd apps/econ && pnpm run deploy --name fluxrec-econ)
               echo "=== fluxrec-econ deployed ==="
             fi
           done
