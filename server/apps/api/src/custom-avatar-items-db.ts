@@ -504,24 +504,31 @@ export async function searchCustomAvatarItems(
 	if (search.minPrice !== undefined) where.push(`price >= ${bind(search.minPrice)}`)
 	if (search.maxPrice !== undefined) where.push(`price <= ${bind(search.maxPrice)}`)
 
-	const limit = bind(take)
-	const offset = bind(skip)
+	// Coach content is the public Store catalog. Keep every matching Coach row so the
+	// static first-party catalog can be merged with it before paging; applying OFFSET to
+	// each source independently makes categories with a few D1 rows look almost empty.
+	const includeStaticCatalog = search.includeCoachItems === true
+	const pagination = includeStaticCatalog ? '' : ` LIMIT ${bind(take)} OFFSET ${bind(skip)}`
 	const { results } = await db
 		.prepare(
 			`SELECT data FROM custom_avatar_item WHERE ${where.join(' AND ')}
-			 ORDER BY created_at DESC, custom_avatar_item_id
-			 LIMIT ${limit} OFFSET ${offset}`
+			 ORDER BY created_at DESC, custom_avatar_item_id${pagination}`
 		)
 		.bind(...binds)
 		.all<Row>()
 	const dtos = results.map(toDto)
 
-	// The Watch menu Store browses with `includeCoachItems=true`, but the D1
-	// `custom_avatar_item` table has no Coach (account 1) stock — the 3,306-item
-	// authentic catalog lives only as a static JSON. Fall back to the static
-	// catalog so the store categories aren't empty.
-	if (search.includeCoachItems === true && dtos.length === 0) {
-		return searchStaticCatalog(search)
+	// The Watch Store asks for Coach items. D1 may have a handful of Coach-created
+	// rows, while the thousands of first-party catalog records are bundled as JSON.
+	// A fallback only when D1 is completely empty hides the entire catalog as soon as
+	// one matching Coach row exists (for example, Headwear showed just five hats).
+	if (includeStaticCatalog) {
+		const names = new Set(dtos.map((item) => item.Name.trim().toLowerCase()))
+		const merged = [
+			...dtos,
+			...matchingStaticCatalog(search).filter((item) => !names.has(item.Name.trim().toLowerCase())),
+		]
+		return merged.slice(skip, skip + take)
 	}
 
 	return dtos
@@ -606,14 +613,9 @@ function toStaticCatalogItem(entry: MinimalCatalogEntry): CustomAvatarItem {
 	}
 }
 
-async function searchStaticCatalog(
-	search: CustomAvatarItemSearch
-): Promise<CustomAvatarItem[]> {
+function matchingStaticCatalog(search: CustomAvatarItemSearch): CustomAvatarItem[] {
 	const catalog = minimalCatalog as MinimalCatalogEntry[]
 	if (!Array.isArray(catalog)) return []
-
-	const take = Math.min(Math.max(search.take ?? 50, 0), SEARCH_MAX_TAKE)
-	const skip = Math.max(search.skip ?? 0, 0)
 	const outfitTypes = search.outfitTypes ?? []
 	const needle = (search.searchQuery?.trim() ?? '').toLowerCase()
 
@@ -628,7 +630,7 @@ async function searchStaticCatalog(
 		items.push(toStaticCatalogItem(entry))
 	}
 
-	return items.slice(skip, skip + take)
+	return items
 }
 
 /**
