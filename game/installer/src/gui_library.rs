@@ -1,4 +1,4 @@
-//! Ripo Team Launcher v1.0.27 — game library UI.
+//! Ripo Team Launcher v1.0.29 — game library UI.
 //!
 //! A game-library style launcher (inspired by Steam/EGS):
 //! - Sidebar with Ripo Team branding, Library/Settings nav.
@@ -813,8 +813,7 @@ mod imp {
         hbmp
     }
 
-    /// Draw the Flux Rec logo mark (rounded square with stylized "R").
-    /// Simple geometric approximation of the blue logo.
+    /// Draw the Flux Rec logo mark with the Rec Room face.
     unsafe fn draw_logo(hdc: HDC, x: i32, y: i32, size: i32, accent: COLORREF) -> Silent {
         let r = RECT {
             left: x,
@@ -823,27 +822,51 @@ mod imp {
             bottom: y + size,
         };
         round_rect_path(hdc, &r, size / 5, accent)?;
-        // Inner "R" — draw with lines.
-        let pen = CreatePen(PS_SOLID, (size / 12).max(2), COLORREF(0x00FFFFFF));
+        // Keep the face readable at the sidebar size as well as on the larger
+        // game card. The old geometric "R" did not match the desktop shortcut.
+        let white = COLORREF(0x00FFFFFF);
+        let pen = CreatePen(PS_SOLID, (size / 18).max(1), white);
         if pen.is_invalid() {
             return Err(());
         }
         let old = SelectObject(hdc, pen);
+        let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
         let s = size as f32;
         let px = |fx: f32| x + (s * fx) as i32;
         let py = |fy: f32| y + (s * fy) as i32;
-        // Vertical stem
-        MoveToEx(hdc, px(0.32), py(0.24), None);
-        LineTo(hdc, px(0.32), py(0.76));
-        // Bowl
-        MoveToEx(hdc, px(0.32), py(0.24), None);
-        LineTo(hdc, px(0.60), py(0.24));
-        LineTo(hdc, px(0.68), py(0.36));
-        LineTo(hdc, px(0.60), py(0.48));
-        LineTo(hdc, px(0.32), py(0.48));
-        // Leg
-        MoveToEx(hdc, px(0.52), py(0.48), None);
-        LineTo(hdc, px(0.70), py(0.76));
+        let face = RECT {
+            left: px(0.22),
+            top: py(0.19),
+            right: px(0.78),
+            bottom: py(0.81),
+        };
+        let _ = RoundRect(
+            hdc,
+            face.left,
+            face.top,
+            face.right,
+            face.bottom,
+            (size / 5).max(3),
+            (size / 5).max(3),
+        );
+
+        let white_brush = CreateSolidBrush(white);
+        if !white_brush.is_invalid() {
+            let previous_brush = SelectObject(hdc, white_brush);
+            let eye = (size / 11).max(2);
+            let _ = Ellipse(hdc, px(0.36), py(0.36), px(0.36) + eye, py(0.36) + eye);
+            let _ = Ellipse(hdc, px(0.59), py(0.36), px(0.59) + eye, py(0.36) + eye);
+            let _ = SelectObject(hdc, previous_brush);
+            let _ = DeleteObject(white_brush);
+        }
+
+        // A short, rounded U-shaped smile made from simple line segments.
+        MoveToEx(hdc, px(0.36), py(0.55), None);
+        LineTo(hdc, px(0.41), py(0.63));
+        LineTo(hdc, px(0.49), py(0.67));
+        LineTo(hdc, px(0.57), py(0.63));
+        LineTo(hdc, px(0.63), py(0.55));
+        SelectObject(hdc, old_brush);
         SelectObject(hdc, old);
         DeleteObject(pen);
         Ok(())
@@ -2926,7 +2949,7 @@ mod imp {
                 if !ptr.is_null() {
                     let st = &mut *ptr;
                     let mut repaint = false;
-                    if st.view == View::Working || st.view == View::Library {
+                    if st.view == View::Working {
                         st.anim_t = st.anim_t.wrapping_add(1);
                         repaint = st.anim_t % 2 == 0;
                     }
