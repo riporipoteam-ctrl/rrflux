@@ -151,19 +151,8 @@ describe('img endpoints', () => {
 		}
 	})
 
-	it('recovers original flat storefront thumbnail hashes from img.rec.net', async () => {
-		const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
-		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
-			const request = input instanceof Request ? input : new Request(input)
-			const requestUrl = new URL(request.url)
-			expect(requestUrl.host).toBe('img.rec.net')
-			expect(requestUrl.pathname).toBe('/evdt42n8s2y5vjf5s10ky2esv.png')
-			expect(requestUrl.search).toBe('')
-			return new Response(imageBytes, {
-				status: 200,
-				headers: { 'content-type': 'image/png', 'content-length': String(imageBytes.length) },
-			})
-		})
+	it('does not wait on the unavailable original store image host for missing hashes', async () => {
+		const mockFetch = vi.fn()
 		vi.stubGlobal('fetch', mockFetch)
 
 		try {
@@ -171,8 +160,8 @@ describe('img endpoints', () => {
 			expect(res.status).toBe(200)
 			expect(res.headers.get('content-type')).toBe('image/png')
 			expect(res.headers.get('content-signature')).toBeTruthy()
-			expect(new Uint8Array(await res.arrayBuffer())).toEqual(imageBytes)
-			expect(mockFetch).toHaveBeenCalledTimes(1)
+			expect(new Uint8Array(await res.arrayBuffer())).toHaveLength(67)
+			expect(mockFetch).not.toHaveBeenCalled()
 		} finally {
 			vi.unstubAllGlobals()
 		}
