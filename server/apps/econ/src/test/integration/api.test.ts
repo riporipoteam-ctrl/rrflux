@@ -2689,7 +2689,12 @@ describe('econ endpoints', () => {
 				headers,
 			})
 			expect(res.status).toBe(200)
-			return (await res.json()) as { StorefrontType: number; StoreItems: unknown[] }
+			return (await res.json()) as {
+				StorefrontType: number
+				StoreItems: Array<{
+					GiftDrop: { FriendlyName: string; ThumbnailImageName?: string }
+				}>
+			}
 		}
 		const at = async (version: string) =>
 			(await bearer('42', undefined, version)) as Record<string, string>
@@ -2714,6 +2719,12 @@ describe('econ endpoints', () => {
 			expect(merged.StoreItems.length, version).toBe(sf32025.StoreItems.length)
 			expect(merged.StoreItems.length, version).toBeGreaterThan(sf3.StoreItems.length)
 		}
+		const currentStore = await store(await at('20250718.01'))
+		const thumbnailFor = (name: string) =>
+			currentStore.StoreItems.find((item) => item.GiftDrop.FriendlyName === name)?.GiftDrop
+				.ThumbnailImageName
+		expect(thumbnailFor('PaintballSet Shoes')).toBe('avatar/bkte1bx9xwngkf63cfbzj2wei.png')
+		expect(thumbnailFor('Creator Expo 2025 Hoodie')).toBe('avatar/b98w6cpkgsf9mcfyfq27jqxl4.png')
 
 		// The id does not change within a snapshot: an old-build client buys an sf3 item
 		// from sf3 at sf3's price. (The 2025 capture is a different snapshot — the real API
