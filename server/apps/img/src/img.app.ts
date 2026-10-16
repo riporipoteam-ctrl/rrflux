@@ -28,6 +28,7 @@ const FALLBACK_ASSET_PATH = '/DefaultProfileImage.jpg'
 /** Prefix extensionless keys resolve under in the shared `recflare-cdn` bucket. */
 const CDN_IMAGE_PREFIX = 'image/'
 const CANONICAL_AVATAR_IMAGE_ORIGIN = 'https://img.recflare.net'
+const CANONICAL_STORE_IMAGE_ORIGIN = 'https://img.rec.net'
 
 /** Fetch a first-party store thumbnail from its canonical CDN origin on local miss. */
 async function fetchCanonicalAvatarImage(c: Context<App>, key: string): Promise<Response | null> {
@@ -59,6 +60,26 @@ async function fetchCanonicalAvatarImage(c: Context<App>, key: string): Promise<
 		}
 	} catch {
 		// A canonical-host outage should fall through to local storage/fallback.
+	}
+	return null
+}
+
+/** Fetch a captured Rec Room store thumbnail by its original CDN filename on local miss. */
+async function fetchCanonicalStoreImage(key: string): Promise<Response | null> {
+	// Storefront hashes are flat CDN filenames. Restrict the proxy to that shape so user
+	// uploads, nested keys, and arbitrary image paths never become upstream requests.
+	if (!/^[a-z0-9_-]{20,40}\.png$/i.test(key)) return null
+
+	try {
+		const response = await fetch(new Request(new URL(key, CANONICAL_STORE_IMAGE_ORIGIN), {
+			signal: AbortSignal.timeout(1_000),
+		}))
+		const contentType = response.headers.get('content-type') ?? ''
+		if (response.ok && contentType.startsWith('image/') && response.headers.get('content-length') !== '67') {
+			return response
+		}
+	} catch {
+		// An upstream miss/outage falls through to local storage and the short-lived fallback.
 	}
 	return null
 }
@@ -598,6 +619,11 @@ app.get(
 		// database miss for every card; non-avatar/user images remain local-first.
 		const canonicalAvatarImage = await fetchCanonicalAvatarImage(c, key)
 		if (canonicalAvatarImage) return canonicalAvatarImage
+
+		// The 2025 storefront's original flat thumbnail hashes live on Rec Room's image CDN.
+		// Resolve these misses at the source, then apply our normal resize/signature/cache path.
+		const canonicalStoreImage = await fetchCanonicalStoreImage(key)
+		if (canonicalStoreImage) return serveStaticAsset(c.env, canonicalStoreImage, transform, signing)
 
 		// Conditional requests only make sense for the untransformed object: a
 		// resized response carries no etag, so the client can never send a matching

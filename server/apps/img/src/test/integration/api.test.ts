@@ -151,6 +151,33 @@ describe('img endpoints', () => {
 		}
 	})
 
+	it('recovers original flat storefront thumbnail hashes from img.rec.net', async () => {
+		const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
+		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+			const request = input instanceof Request ? input : new Request(input)
+			const requestUrl = new URL(request.url)
+			expect(requestUrl.host).toBe('img.rec.net')
+			expect(requestUrl.pathname).toBe('/evdt42n8s2y5vjf5s10ky2esv.png')
+			expect(requestUrl.search).toBe('')
+			return new Response(imageBytes, {
+				status: 200,
+				headers: { 'content-type': 'image/png', 'content-length': String(imageBytes.length) },
+			})
+		})
+		vi.stubGlobal('fetch', mockFetch)
+
+		try {
+			const res = await unsignedFetch(`${ORIGIN}/evdt42n8s2y5vjf5s10ky2esv.png?sig=p1`)
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toBe('image/png')
+			expect(res.headers.get('content-signature')).toBeTruthy()
+			expect(new Uint8Array(await res.arrayBuffer())).toEqual(imageBytes)
+			expect(mockFetch).toHaveBeenCalledTimes(1)
+		} finally {
+			vi.unstubAllGlobals()
+		}
+	})
+
 	it('serves an extensionless key from the CDN_ASSETS namespace under image/', async () => {
 		const res = await SELF.fetch(`${ORIGIN}/${CDN_NAME}`)
 		expect(res.status).toBe(200)
