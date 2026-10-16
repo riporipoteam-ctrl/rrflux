@@ -42,6 +42,9 @@ export function json(schema: z.ZodType, description: string) {
 	return { description, content: { 'application/json': { schema: resolver(schema) } } }
 }
 
+/** Loose JSON object schema for endpoints whose payload is assembled from stored records. */
+export const JsonObject = z.record(z.string(), z.unknown())
+
 /**
  * Emit a zod schema as a form request body. `describeRoute`'s `requestBody` takes a
  * plain OpenAPI schema (not a `resolver()`), so convert here. zod's `$schema` key and

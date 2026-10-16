@@ -30,6 +30,37 @@ import {
 import type { Context } from 'hono'
 import type { App } from './context'
 
+const CANONICAL_CDN_ORIGIN = 'https://cdn.recflare.net'
+
+/**
+ * The workers.dev account does not contain every original avatar bundle. The
+ * canonical CDN does, so recover first-party avatar bundles there on a local
+ * miss while keeping user room/data blobs in their own namespace.
+ */
+async function fetchCanonicalAvatarAsset(c: Context<App>, key: string): Promise<Response | null> {
+	if (!key.startsWith('avatar/')) return null
+
+	const url = new URL(c.req.url)
+	url.protocol = 'https:'
+	url.host = new URL(CANONICAL_CDN_ORIGIN).host
+
+	try {
+		const headers = new Headers(c.req.raw.headers)
+		headers.delete('host')
+		headers.delete('content-length')
+		const response = await fetch(
+			new Request(url, {
+				method: c.req.method,
+				headers,
+				signal: AbortSignal.timeout(1_000),
+			})
+		)
+		return response.ok || response.status === 206 || response.status === 304 ? response : null
+	} catch {
+		return null
+	}
+}
+
 /**
  * CDN routes. The `cdn` prefix maps to this worker's subdomain, so method routes
  * are served bare. Everything but the liveness probe and the bundled tip data is
@@ -59,11 +90,16 @@ async function serveAsset(c: Context<App>, key: string) {
 		// The blob store has no credentials configured — a deployment problem,
 		// not a client one.
 		if (e instanceof BlobStoreNotConfiguredError) {
+			const recovered = await fetchCanonicalAvatarAsset(c, key)
+			if (recovered) return recovered
 			return c.json({ error: 'blob storage is not configured' }, 503)
 		}
 		throw e
 	}
-	if (!meta) return c.notFound()
+	if (!meta) {
+		const recovered = await fetchCanonicalAvatarAsset(c, key)
+		return recovered ?? c.notFound()
+	}
 
 	// The deterministic etag replaces the R2 `httpEtag` the old code served: a
 	// new upload under an existing key changes `updatedAt`, so conditional
@@ -97,7 +133,10 @@ async function serveAsset(c: Context<App>, key: string) {
 		key,
 		parsedRange ? { range: parsedRange } : undefined
 	)
-	if (!read) return c.notFound()
+	if (!read) {
+		const recovered = await fetchCanonicalAvatarAsset(c, key)
+		return recovered ?? c.notFound()
+	}
 
 	if (parsedRange) {
 		headers.set('content-length', String(parsedRange.length))

@@ -45,6 +45,7 @@ import {
 	IdentityFlagsRequest,
 	json,
 	jsonBody,
+	JsonObject,
 	ParentalControl,
 	PhoneRequest,
 	PrivacySettings,
@@ -1122,7 +1123,7 @@ const app = new Hono<App>()
 					return {
 						imageId: d.Id,
 						imageName: d.ImageName,
-						imageUrl: d.ImageName ? `https://img.ripo-ripoteam.workers.dev/${d.ImageName}` : null,
+						imageUrl: d.ImageName ? `https://img.recflare.net/${d.ImageName}` : null,
 						roomId: d.RoomId,
 						takenAt: d.CreatedAt ?? null,
 					}

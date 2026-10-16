@@ -1,6 +1,6 @@
 import { PhotonImage } from '@cf-wasm/photon'
 import { createExecutionContext, env, SELF, waitOnExecutionContext } from 'cloudflare:test'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { putBlob } from '@repo/blob-store'
 
@@ -121,6 +121,34 @@ describe('img endpoints', () => {
 		expect(res.headers.get('content-type')).toBe('image/png')
 		expect(res.headers.get('content-signature')).toBeTruthy()
 		expect(new Uint8Array(await res.arrayBuffer())).toHaveLength(67)
+	})
+
+	it('recovers missing store thumbnails from the canonical image host', async () => {
+		const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
+		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+			const request = input instanceof Request ? input : new Request(input)
+			const requestUrl = new URL(request.url)
+			expect(requestUrl.host).toBe('img.recflare.net')
+			expect(requestUrl.pathname).toBe('/avatar/recovered-thumbnail.png')
+			expect(requestUrl.search).toBe('?width=128&sig=p1')
+			return new Response(imageBytes, {
+				status: 200,
+				headers: { 'content-type': 'image/png', 'content-length': String(imageBytes.length) },
+			})
+		})
+		vi.stubGlobal('fetch', mockFetch)
+
+		try {
+			const res = await unsignedFetch(
+				`${ORIGIN}/avatar/recovered-thumbnail.png?width=128&sig=p1`
+			)
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toBe('image/png')
+			expect(new Uint8Array(await res.arrayBuffer())).toEqual(imageBytes)
+			expect(mockFetch).toHaveBeenCalledTimes(1)
+		} finally {
+			vi.unstubAllGlobals()
+		}
 	})
 
 	it('serves an extensionless key from the CDN_ASSETS namespace under image/', async () => {

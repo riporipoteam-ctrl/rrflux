@@ -15,6 +15,7 @@ import { withCleanSpec, withNotFound, withOnError } from '@repo/hono-helpers'
 import { imageBytes, json, ServiceStatus } from './openapi'
 
 import type { BlobBinding, BlobRead } from '@repo/blob-store'
+import type { Context } from 'hono'
 import type { App, Env } from './context'
 
 /** Key id the client uses to look up the public half of the signing key. */
@@ -26,6 +27,41 @@ const FALLBACK_ASSET_PATH = '/DefaultProfileImage.jpg'
 
 /** Prefix extensionless keys resolve under in the shared `recflare-cdn` bucket. */
 const CDN_IMAGE_PREFIX = 'image/'
+const CANONICAL_AVATAR_IMAGE_ORIGIN = 'https://img.recflare.net'
+
+/** Fetch a first-party store thumbnail from its canonical CDN origin on local miss. */
+async function fetchCanonicalAvatarImage(c: Context<App>, key: string): Promise<Response | null> {
+	if (!key.startsWith('avatar/')) return null
+
+	const url = new URL(c.req.url)
+	url.protocol = 'https:'
+	url.host = new URL(CANONICAL_AVATAR_IMAGE_ORIGIN).host
+
+	try {
+		const headers = new Headers(c.req.raw.headers)
+		headers.delete('host')
+		headers.delete('content-length')
+		const response = await fetch(
+			new Request(url, {
+				method: c.req.method,
+				headers,
+				signal: AbortSignal.timeout(1_000),
+			})
+		)
+		const contentType = response.headers.get('content-type') ?? ''
+		const contentLength = response.headers.get('content-length')
+		if (
+			(response.ok || response.status === 304) &&
+			contentType.startsWith('image/') &&
+			contentLength !== '67'
+		) {
+			return response
+		}
+	} catch {
+		// A canonical-host outage should fall through to local storage/fallback.
+	}
+	return null
+}
 
 /**
  * Cache-Control for served images — 30 days (86400 × 30), matching what `cdn` serves its
@@ -556,6 +592,12 @@ app.get(
 				return serveStaticAsset(c.env, staticAsset, transform, signing)
 			}
 		}
+
+		// Original store thumbnails are available on the canonical host. Check it
+		// before Firestore so the large first-party catalog loads without a local
+		// database miss for every card; non-avatar/user images remain local-first.
+		const canonicalAvatarImage = await fetchCanonicalAvatarImage(c, key)
+		if (canonicalAvatarImage) return canonicalAvatarImage
 
 		// Conditional requests only make sense for the untransformed object: a
 		// resized response carries no etag, so the client can never send a matching
