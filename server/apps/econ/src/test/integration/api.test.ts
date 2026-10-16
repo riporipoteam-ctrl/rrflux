@@ -2723,8 +2723,10 @@ describe('econ endpoints', () => {
 		const thumbnailFor = (name: string) =>
 			currentStore.StoreItems.find((item) => item.GiftDrop.FriendlyName === name)?.GiftDrop
 				.ThumbnailImageName
-		expect(thumbnailFor('PaintballSet Shoes')).toBe('avatar/bkte1bx9xwngkf63cfbzj2wei.png')
-		expect(thumbnailFor('Creator Expo 2025 Hoodie')).toBe('avatar/b98w6cpkgsf9mcfyfq27jqxl4.png')
+		expect(thumbnailFor('PaintballSet Shoes')).toBe('avatar/bkte1bx9xwngkf63cfbzj2wei.png?width=256')
+		expect(thumbnailFor('Creator Expo 2025 Hoodie')).toBe(
+			'avatar/b98w6cpkgsf9mcfyfq27jqxl4.png?width=256'
+		)
 
 		// The id does not change within a snapshot: an old-build client buys an sf3 item
 		// from sf3 at sf3's price. (The 2025 capture is a different snapshot — the real API

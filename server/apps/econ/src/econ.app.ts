@@ -961,8 +961,12 @@ function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
 				(typeof downloadableId === 'string' &&
 					THUMBNAIL_BY_2025_CAI_ID.get(downloadableId.toLowerCase())) ||
 				THUMBNAIL_BY_2025_CAI_NAME.get(name)
-			if (recovered2025Thumb && existingThumb !== recovered2025Thumb) {
-				next.ThumbnailImageName = recovered2025Thumb
+			// Store cards are square and small, while recovered CAI source images can be
+			// 1 MB each. Ask the image worker for a cached 256 px variant so browsing a
+			// large clothing catalog does not download full-resolution source PNGs.
+			const storeThumb = recovered2025Thumb ? `${recovered2025Thumb}?width=256` : undefined
+			if (storeThumb && existingThumb !== storeThumb) {
+				next.ThumbnailImageName = storeThumb
 				changed = true
 			} else if (!existingThumb || typeof existingThumb !== 'string' || existingThumb.trim() === '') {
 				// Look up the catalog thumbnail by FriendlyName. (The old code keyed
