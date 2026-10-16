@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test'
 import { exports } from 'cloudflare:workers'
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { blobEtag, headBlob, putBlob } from '@repo/blob-store'
 
@@ -334,8 +334,42 @@ describe('cdn endpoints', () => {
 	})
 
 	test('GET /avatar/:asset 404s when the assetbundle is absent', async () => {
-		const res = await exports.default.fetch(`${ORIGIN}/avatar/missing.assetbundle`)
-		expect(res.status).toBe(404)
+		vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+		try {
+			const res = await exports.default.fetch(`${ORIGIN}/avatar/missing.assetbundle`)
+			expect(res.status).toBe(404)
+		} finally {
+			vi.unstubAllGlobals()
+		}
+	})
+
+	test('GET /avatar/:asset recovers a missing original bundle from the canonical CDN', async () => {
+		const bytes = new Uint8Array([0x55, 0x6e, 0x69, 0x74, 0x79, 0x46, 0x53])
+		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+			const request = input instanceof Request ? input : new Request(input)
+			expect(new URL(request.url).host).toBe('cdn.recflare.net')
+			expect(request.headers.get('range')).toBe('bytes=0-3')
+			return new Response(bytes, {
+				status: 206,
+				headers: {
+					'content-type': 'application/octet-stream',
+					'content-range': 'bytes 0-3/7',
+				},
+			})
+		})
+		vi.stubGlobal('fetch', mockFetch)
+
+		try {
+			const res = await exports.default.fetch(`${ORIGIN}/avatar/recovered.assetbundle`, {
+				headers: { Range: 'bytes=0-3' },
+			})
+			expect(res.status).toBe(206)
+			expect(res.headers.get('content-range')).toBe('bytes 0-3/7')
+			expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes)
+			expect(mockFetch).toHaveBeenCalledTimes(1)
+		} finally {
+			vi.unstubAllGlobals()
+		}
 	})
 
 	test('GET /openapi.json documents every route', async () => {
