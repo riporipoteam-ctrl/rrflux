@@ -40,6 +40,7 @@ import { censorSwears } from '../../api/src/sanitize'
 import { BalanceAddType } from '../../notify/src/notification-payloads'
 import { NotificationType } from '../../notify/src/notification-types'
 import avatarItemCatalog from '../static/db/avatar-items.json'
+import store2025ThumbnailMap from '../static/db/2025-store-thumbnail-map.json'
 import defaultAvatarItems from '../static/default-avatar-items.json'
 import defaultAvatar from '../static/default-avatar.json'
 import defaultBaseAvatarItems from '../static/default-base-avatar-items.json'
@@ -880,6 +881,14 @@ const THUMBNAIL_BY_NAME: Map<string, string> = (() => {
 	return map
 })()
 
+/** 2025 CAI thumbnails recovered by the downloadable avatar item id. */
+const THUMBNAIL_BY_2025_CAI_ID = new Map(
+	Object.entries(store2025ThumbnailMap.byId).map(([id, image]) => [id.toLowerCase(), image])
+)
+const THUMBNAIL_BY_2025_CAI_NAME = new Map(
+	Object.entries(store2025ThumbnailMap.byName).map(([name, image]) => [name.toLowerCase(), image])
+)
+
 /**
  * The catalog's real opaque `AvatarItemDesc` by normalized FriendlyName, built from the
  * captured avatar-item catalog. Used to repair storefront GiftDrops whose `AvatarItemDesc`
@@ -947,7 +956,15 @@ function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
 		// Keep existing native thumbnail names; fill missing names from the catalog.
 		const existingThumb = drop.ThumbnailImageName
 		if (name) {
-			if (!existingThumb || typeof existingThumb !== 'string' || existingThumb.trim() === '') {
+			const downloadableId = drop.AvatarItemInfo?.DownloadableAvatarItemId
+			const recovered2025Thumb =
+				(typeof downloadableId === 'string' &&
+					THUMBNAIL_BY_2025_CAI_ID.get(downloadableId.toLowerCase())) ||
+				THUMBNAIL_BY_2025_CAI_NAME.get(name)
+			if (recovered2025Thumb && existingThumb !== recovered2025Thumb) {
+				next.ThumbnailImageName = recovered2025Thumb
+				changed = true
+			} else if (!existingThumb || typeof existingThumb !== 'string' || existingThumb.trim() === '') {
 				// Look up the catalog thumbnail by FriendlyName. (The old code keyed
 				// PurchasableItemId against AvatarItemId, which never matches.)
 				const thumb = THUMBNAIL_BY_NAME.get(name)
