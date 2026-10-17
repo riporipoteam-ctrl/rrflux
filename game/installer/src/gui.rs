@@ -94,7 +94,10 @@ mod imp {
     const TITLE_H: i32 = 46;
 
     const TIMER_ID: usize = 1;
-    const TIMER_MS: u32 = 50;
+    // Poll installer progress at 10 Hz. The setup window used to repaint its
+    // entire 1100x700 surface 20 times per second even when progress had not
+    // changed, which wasted CPU on slower PCs.
+    const TIMER_MS: u32 = 100;
 
     // Palette (COLORREF = 0x00BBGGRR).
     // Neutral surfaces keep installation state readable at a glance.
@@ -549,6 +552,7 @@ mod imp {
                 let s = &mut *ptr;
                 if wparam.0 == TIMER_ID {
                     // Drain progress messages.
+                    let mut changed = false;
                     loop {
                         match s.rx.try_recv() {
                             Ok(m) => {
@@ -556,24 +560,36 @@ mod imp {
                                     let _ = DestroyWindow(hwnd);
                                     break;
                                 }
-                                s.percent = m.percent.min(100);
+                                let percent = m.percent.min(100);
+                                if s.percent != percent {
+                                    s.percent = percent;
+                                    changed = true;
+                                }
                                 if s.percent >= 100 {
                                     s.finished = true;
                                 }
-                                if !m.stage.is_empty() {
+                                if !m.stage.is_empty() && s.stage != m.stage {
                                     s.stage = m.stage;
+                                    changed = true;
                                 }
-                                if !m.detail.is_empty() {
+                                if !m.detail.is_empty() && s.detail != m.detail {
                                     s.detail = m.detail;
+                                    changed = true;
                                 }
                             }
                             Err(TryRecvError::Empty) => break,
                             Err(TryRecvError::Disconnected) => break,
                         }
                     }
-                    // Shimmer animation for indeterminate progress.
-                    s.shimmer = (s.shimmer + 6) % (s.win_w + 200);
-                    let _ = InvalidateRect(hwnd, None, false);
+                    // Animate only while the installer has no determinate
+                    // progress. During downloads, redraw only on new data.
+                    if s.percent == 0 && !s.finished {
+                        s.shimmer = (s.shimmer + 12) % (s.win_w + 200);
+                        changed = true;
+                    }
+                    if changed {
+                        let _ = InvalidateRect(hwnd, None, false);
+                    }
                 }
                 LRESULT(0)
             }
