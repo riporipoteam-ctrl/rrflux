@@ -929,40 +929,40 @@ const THUMBNAIL_BY_2025_CAI_NAME = new Map(
  */
 function backpackThumbnailFor(drop: any, name: string): string | undefined {
 	const starBox = name.match(/^([0-5])[- ]*star unique box$/)
-	if (starBox) return `store/backpack/unique-box-${starBox[1]}.png`
-	if (drop.IsQuery === true) return 'store/backpack/gift-box.png'
+	if (starBox) return `store-backpack-unique-box-${starBox[1]}.png`
+	if (drop.IsQuery === true) return 'store-backpack-gift-box.png'
 
 	if (typeof drop.ConsumableItemDesc === 'string' && drop.ConsumableItemDesc.trim() !== '') {
-		if (/\b(?:potion|hair dye)\b/.test(name)) return 'store/backpack/potion.png'
-		if (/\b(?:camera film|film)\b/.test(name)) return 'store/backpack/camera.png'
+		if (/\b(?:potion|hair dye)\b/.test(name)) return 'store-backpack-potion.png'
+		if (/\b(?:camera film|film)\b/.test(name)) return 'store-backpack-camera.png'
 		if (
 			/\b(?:blaster|launcher|gun|rifle|pistol|grenade|bomb|cannon|thrower|slingshot|staff|blade|sword)\b/.test(
 				name
 			)
 		)
-			return 'store/backpack/weapon.png'
+			return 'store-backpack-weapon.png'
 		if (
 			/\b(?:apple|cake|donuts?|pizza|popcorn|pretzel|sushi|chocolate|candy|nacho|ham|tomato|latte|tea|cola|bubbly|beer|mochi|dango|onigiri|turkey leg|cheese)\b/.test(
 				name
 			)
 		)
-			return 'store/backpack/food.png'
-		return 'store/backpack/consumable.png'
+			return 'store-backpack-food.png'
+		return 'store-backpack-consumable.png'
 	}
 
 	if (typeof drop.EquipmentModificationGuid === 'string' && drop.EquipmentModificationGuid !== '') {
 		const prefab =
 			typeof drop.EquipmentPrefabName === 'string' ? drop.EquipmentPrefabName.toLowerCase() : ''
-		if (prefab.includes('sharecamera')) return 'store/backpack/camera.png'
-		if (prefab.includes('makerpen')) return 'store/backpack/maker-pen.png'
+		if (prefab.includes('sharecamera')) return 'store-backpack-camera.png'
+		if (prefab.includes('makerpen')) return 'store-backpack-maker-pen.png'
 		if (
 			prefab.includes('paintball') ||
 			prefab.includes('grenade') ||
 			prefab.includes('questshield') ||
 			prefab.includes('questsword')
 		)
-			return 'store/backpack/weapon.png'
-		return 'store/backpack/equipment.png'
+			return 'store-backpack-weapon.png'
+		return 'store-backpack-equipment.png'
 	}
 
 	return undefined

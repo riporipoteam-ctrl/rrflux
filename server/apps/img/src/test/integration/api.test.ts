@@ -136,6 +136,18 @@ describe('img endpoints', () => {
 		expect(bytes.length).toBeGreaterThan(67)
 	})
 
+	it('serves flat bundled store thumbnails without encoded path separators', async () => {
+		for (const key of ['food', 'potion', 'unique-box-5']) {
+			const res = await SELF.fetch(`${ORIGIN}/store-backpack-${key}.png?width=256&sig=p1`)
+			expect(res.status, key).toBe(200)
+			expect(res.headers.get('content-type'), key).toBe('image/png')
+			expect(res.headers.get('content-signature'), key).toBeTruthy()
+			const bytes = new Uint8Array(await res.arrayBuffer())
+			expect([...bytes.slice(0, PNG_MAGIC.length)], key).toEqual([...PNG_MAGIC])
+			expect(bytes.length, key).toBeGreaterThan(67)
+		}
+	})
+
 	it('recovers a valid avatar PNG from the canonical image host', async () => {
 		const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
 		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
