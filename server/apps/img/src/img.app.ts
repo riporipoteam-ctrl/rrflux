@@ -568,7 +568,17 @@ app.get(
 		},
 	}),
 	async (c) => {
-		const key = c.req.param('key')
+		const encodedKey = c.req.param('key')
+		let key: string
+		try {
+			// Unity's image client percent-encodes nested separators (for example,
+			// `store%2Fbackpack%2Ffood.png`). Hono or the runtime may already have
+			// decoded them; decoding once here is safe in either case and lets the
+			// static asset lookup use the same slash-separated key as direct requests.
+			key = decodeURIComponent(encodedKey)
+		} catch {
+			return c.body(null, 400)
+		}
 		if (key.includes('..')) return c.body(null, 400)
 
 		// `?sig=p1` always answers with a Content-Signature header — the client needs
