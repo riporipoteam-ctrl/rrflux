@@ -226,6 +226,7 @@ function consumablePreviewFor(desc: unknown): Record<string, unknown> | undefine
 		ConsumableToolName: definition.ConsumableToolName,
 		IsRRO: definition.IsRRO,
 		RoomieCategory: definition.RoomieCategory,
+		ThumbnailImageName: definition.ThumbnailImageName,
 	}
 }
 
@@ -1036,6 +1037,15 @@ function enrichWithThumbnails(
 			: undefined
 		if (consumablePreview) {
 			for (const [key, value] of Object.entries(consumablePreview)) {
+				// Prefer the storefront's own item thumbnail when present; definitions
+				// fill the same field on inventory responses and any sparse store rows.
+				if (
+					key === 'ThumbnailImageName' &&
+					typeof next[key] === 'string' &&
+					next[key].trim() !== ''
+				) {
+					continue
+				}
 				if (next[key] !== value) {
 					next[key] = value
 					changed = true
@@ -1044,9 +1054,13 @@ function enrichWithThumbnails(
 		}
 		// Keep existing native thumbnail names; fill missing names from the catalog.
 		const existingThumb = drop.ThumbnailImageName
+		const preferredThumb =
+			typeof next.ThumbnailImageName === 'string' && next.ThumbnailImageName.trim() !== ''
+				? next.ThumbnailImageName
+				: existingThumb
 		const backpackThumb = name ? backpackThumbnailFor(drop, name) : undefined
 		const hasItemSpecificStoreThumbnail =
-			typeof existingThumb === 'string' && /^[a-z0-9]{25}\.png$/i.test(existingThumb)
+			typeof preferredThumb === 'string' && /^[a-z0-9]{25}\.png$/i.test(preferredThumb)
 		const usesBundledBoxArt =
 			backpackThumb === 'store/backpack/gift-box.png' ||
 			backpackThumb?.startsWith('store/backpack/unique-box-') === true
@@ -1066,7 +1080,11 @@ function enrichWithThumbnails(
 			) {
 				next.ThumbnailImageName = backpackThumb
 				changed = true
-			} else if (!existingThumb || typeof existingThumb !== 'string' || existingThumb.trim() === '') {
+			} else if (
+				!preferredThumb ||
+				typeof preferredThumb !== 'string' ||
+				preferredThumb.trim() === ''
+			) {
 				// Look up the catalog thumbnail by FriendlyName. (The old code keyed
 				// PurchasableItemId against AvatarItemId, which never matches.)
 				const thumb = THUMBNAIL_BY_NAME.get(name)

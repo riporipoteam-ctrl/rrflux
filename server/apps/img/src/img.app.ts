@@ -21,15 +21,11 @@ import type { App, Env } from './context'
 /** Key id the client uses to look up the public half of the signing key. */
 const SIGNATURE_KEY_ID = 'KEY:RSA:p1.rec.net'
 
-/** Kept for reference: the well-known static key below. (The missing-key fallback is
- * a generated 1x1 transparent PNG, not this asset.) */
-const FALLBACK_ASSET_PATH = '/DefaultProfileImage.jpg'
-
 /** Prefix extensionless keys resolve under in the shared `recflare-cdn` bucket. */
 const CDN_IMAGE_PREFIX = 'image/'
 const CANONICAL_IMAGE_ORIGIN = 'https://img.recflare.net'
 
-/** Fetch a first-party thumbnail from its canonical CDN origin on local miss. */
+/** Recover first-party avatar images and item thumbnails on a local blob-store miss. */
 async function fetchCanonicalImage(c: Context<App>, key: string): Promise<Response | null> {
 	const isAvatarImage = key.startsWith('avatar/')
 	const isStoreItemThumbnail = /^[a-z0-9]{25}\.png$/i.test(key)
@@ -37,7 +33,7 @@ async function fetchCanonicalImage(c: Context<App>, key: string): Promise<Respon
 
 	const url = new URL(c.req.url)
 	url.protocol = 'https:'
-		url.host = new URL(CANONICAL_IMAGE_ORIGIN).host
+	url.host = new URL(CANONICAL_IMAGE_ORIGIN).host
 
 	try {
 		const headers = new Headers(c.req.raw.headers)
@@ -52,10 +48,17 @@ async function fetchCanonicalImage(c: Context<App>, key: string): Promise<Respon
 		)
 		const contentType = response.headers.get('content-type') ?? ''
 		const contentLength = response.headers.get('content-length')
+		// The canonical image host serves DefaultProfileImage.jpg for unknown PNG keys.
+		// Do not treat that JPEG as a valid store thumbnail: it makes hundreds of
+		// unrelated consumables all display the same fallback image. 2025 item and
+		// avatar thumbnails use PNG bytes, so their filename and MIME type must agree.
+		const mimeType = contentType.split(';', 1)[0]?.trim().toLowerCase() ?? ''
+		const matchesPngKey = !key.toLowerCase().endsWith('.png') || mimeType === 'image/png'
 		if (
 			(response.ok || response.status === 304) &&
 			contentType.startsWith('image/') &&
-			contentLength !== '67'
+			contentLength !== '67' &&
+			matchesPngKey
 		) {
 			return response
 		}
@@ -595,9 +598,9 @@ app.get(
 			}
 		}
 
-		// Original store thumbnails are available on the canonical host. Check it
-		// before Firestore so catalog cards load without a database miss. Restrict
-		// this fallback to avatar paths and 25-character item-thumbnail keys.
+		// Recover original avatar/item PNGs from the canonical image host before
+		// checking Firestore. Missing PNG keys must not accept its JPEG profile-image
+		// placeholder; fetchCanonicalImage validates the extension/content type.
 		const canonicalImage = await fetchCanonicalImage(c, key)
 		if (canonicalImage) return canonicalImage
 
