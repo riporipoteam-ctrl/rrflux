@@ -124,6 +124,18 @@ describe('img endpoints', () => {
 		expect(new Uint8Array(await res.arrayBuffer())).toHaveLength(67)
 	})
 
+	it('serves bundled thumbnails when the client percent-encodes nested path separators', async () => {
+		const res = await SELF.fetch(
+			`${ORIGIN}/store%2Fbackpack%2Ffood.png?width=256&sig=p1`
+		)
+		expect(res.status).toBe(200)
+		expect(res.headers.get('content-type')).toBe('image/png')
+		expect(res.headers.get('content-signature')).toBeTruthy()
+		const bytes = new Uint8Array(await res.arrayBuffer())
+		expect([...bytes.slice(0, PNG_MAGIC.length)]).toEqual([...PNG_MAGIC])
+		expect(bytes.length).toBeGreaterThan(67)
+	})
+
 	it('recovers a valid avatar PNG from the canonical image host', async () => {
 		const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
 		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
