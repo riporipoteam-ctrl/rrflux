@@ -2453,7 +2453,7 @@ describe('econ endpoints', () => {
 			}>
 			expect(list).toHaveLength(1)
 			expect(list[0]).toMatchObject({ ConsumableItemDesc: desc, ConsumableItemId: 1616 })
-			expect(list[0].ThumbnailImageName).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
+			expect(list[0].ThumbnailImageName).toBe('store/backpack/food.png')
 			expect(JSON.parse(list[0].ConfigurationData).UnityAssetData.UnityAssetId).toBe(
 				'52106138-cc33-4bd1-86fa-91adf31aca95'
 			)
@@ -2491,11 +2491,18 @@ describe('econ endpoints', () => {
 			'52106138-cc33-4bd1-86fa-91adf31aca95'
 		)
 		expect(appleConfiguration.UnityAssetData.ReferencedUnityAssetIds).toHaveLength(3)
-		expect(apple.ThumbnailImageName).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
+		expect(apple.ThumbnailImageName).toBe('store/backpack/food.png')
+		expect(
+			definitions.find((definition) => definition.FriendlyName === 'Root Beer')?.ThumbnailImageName
+		).toBe('store/backpack/food.png')
+		expect(
+			definitions.find((definition) => definition.FriendlyName === 'Assorted Donuts')
+				?.ThumbnailImageName
+		).toBe('store/backpack/food.png')
 
 		const potion = definitions.find((definition) => definition.FriendlyName === 'Blue Pulse Potion')!
 		expect(potion.ConfigurationData).toBeTruthy()
-		expect(potion.ThumbnailImageName).toBeTruthy()
+		expect(potion.ThumbnailImageName).toBe('store/backpack/potion.png')
 
 		const form = new URLSearchParams()
 		form.append('descriptors', apple.ConsumableItemDesc)
@@ -2867,11 +2874,14 @@ describe('econ endpoints', () => {
 				.ThumbnailImageName
 		expect(thumbnailFor('PaintballSet Shoes')).toBe('avatar/bkte1bx9xwngkf63cfbzj2wei.png')
 		expect(thumbnailFor('Creator Expo 2025 Hoodie')).toBe('avatar/b98w6cpkgsf9mcfyfq27jqxl4.png')
-		expect(thumbnailFor('Apple')).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
-		expect(thumbnailFor('Blue Pulse Potion')).toBe('2k971pdsgqer05tfq3cv3cmtl.png')
-		expect(thumbnailFor('Alien Blaster')).toBe('3se22q9g3ocaw8h7snlsf4bmr.png')
-		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('4gtpx2u7pldhk1e143mbxo5ro.png')
-		expect(thumbnailFor('Cryptid Camera Skin')).toBe('7yjasveeo5kctct8dhredhzlb.png')
+		expect(thumbnailFor('Apple')).toBe('store/backpack/food.png')
+		expect(thumbnailFor('Root Beer')).toBe('store/backpack/food.png')
+		expect(thumbnailFor('Assorted Donuts')).toBe('store/backpack/food.png')
+		expect(thumbnailFor('87 Flavor Cake')).toBe('store/backpack/food.png')
+		expect(thumbnailFor('Blue Pulse Potion')).toBe('store/backpack/potion.png')
+		expect(thumbnailFor('Alien Blaster')).toBe('store/backpack/weapon.png')
+		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('store/backpack/weapon.png')
+		expect(thumbnailFor('Cryptid Camera Skin')).toBe('store/backpack/camera.png')
 		expect(thumbnailFor('2-Star Unique Box')).toBe('store/backpack/unique-box-2.png')
 		const fiveStarBox = currentStore.StoreItems.find(
 			(item) => item.GiftDrop.FriendlyName === '5-Star Unique Box'
@@ -2908,10 +2918,10 @@ describe('econ endpoints', () => {
 		)
 		expect(backpackRows).toHaveLength(331)
 		expect(
-			backpackRows.filter(({ GiftDrop }) =>
-				/^[a-z0-9]{25}\.png$/i.test(GiftDrop.ThumbnailImageName ?? '')
-			).length
-		).toBeGreaterThan(250)
+			backpackRows.every(({ GiftDrop }) =>
+				GiftDrop.ThumbnailImageName?.startsWith('store/backpack/')
+			)
+		).toBe(true)
 
 		// The id does not change within a snapshot: an old-build client buys an sf3 item
 		// from sf3 at sf3's price. (The 2025 capture is a different snapshot — the real API

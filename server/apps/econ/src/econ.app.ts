@@ -214,7 +214,7 @@ const consumableDefinitionsByDesc = new Map(
 	consumableDefinitions.map((definition) => [definition.ConsumableItemDesc, definition])
 )
 
-/** Model/configuration fields the 2025 client uses after resolving a consumable desc. */
+/** Model/configuration and local preview fields for a resolved consumable desc. */
 function consumablePreviewFor(desc: unknown): Record<string, unknown> | undefined {
 	if (typeof desc !== 'string' || desc === '') return undefined
 	const definition = consumableDefinitionsByDesc.get(desc)
@@ -226,7 +226,11 @@ function consumablePreviewFor(desc: unknown): Record<string, unknown> | undefine
 		ConsumableToolName: definition.ConsumableToolName,
 		IsRRO: definition.IsRRO,
 		RoomieCategory: definition.RoomieCategory,
-		ThumbnailImageName: definition.ThumbnailImageName,
+		ThumbnailImageName:
+			backpackThumbnailFor(
+				{ ConsumableItemDesc: definition.ConsumableItemDesc },
+				definition.FriendlyName.toLowerCase()
+			) ?? definition.ThumbnailImageName,
 	}
 }
 
@@ -918,9 +922,10 @@ const THUMBNAIL_BY_2025_CAI_NAME = new Map(
 )
 
 /**
- * Fallback art for backpack entries without an item-specific thumbnail key. Store rows
- * with 25-character image keys retain those keys and the img worker resolves them from
- * the canonical image host. Gift boxes keep their bundled 2025-client art.
+ * Local art for backpack entries. The archived 2025 store points consumables and equipment
+ * at original Rec Room image hashes, but those images now resolve to the transparent miss
+ * pixel. Serve bundled category art instead so the client does not show its generic flame
+ * placeholder. Avatar clothing keeps its item-specific thumbnails.
  */
 function backpackThumbnailFor(drop: any, name: string): string | undefined {
 	const starBox = name.match(/^([0-5])[- ]*star unique box$/)
@@ -929,6 +934,7 @@ function backpackThumbnailFor(drop: any, name: string): string | undefined {
 
 	if (typeof drop.ConsumableItemDesc === 'string' && drop.ConsumableItemDesc.trim() !== '') {
 		if (/\b(?:potion|hair dye)\b/.test(name)) return 'store/backpack/potion.png'
+		if (/\b(?:camera film|film)\b/.test(name)) return 'store/backpack/camera.png'
 		if (
 			/\b(?:blaster|launcher|gun|rifle|pistol|grenade|bomb|cannon|thrower|slingshot|staff|blade|sword)\b/.test(
 				name
@@ -936,7 +942,7 @@ function backpackThumbnailFor(drop: any, name: string): string | undefined {
 		)
 			return 'store/backpack/weapon.png'
 		if (
-			/\b(?:apple|cake|donut|pizza|popcorn|pretzel|sushi|chocolate|candy|nacho|ham|tomato|latte|tea|cola|bubbly|beer|mochi|dango|onigiri|turkey leg|cheese)\b/.test(
+			/\b(?:apple|cake|donuts?|pizza|popcorn|pretzel|sushi|chocolate|candy|nacho|ham|tomato|latte|tea|cola|bubbly|beer|mochi|dango|onigiri|turkey leg|cheese)\b/.test(
 				name
 			)
 		)
@@ -1059,11 +1065,6 @@ function enrichWithThumbnails(
 				? next.ThumbnailImageName
 				: existingThumb
 		const backpackThumb = name ? backpackThumbnailFor(drop, name) : undefined
-		const hasItemSpecificStoreThumbnail =
-			typeof preferredThumb === 'string' && /^[a-z0-9]{25}\.png$/i.test(preferredThumb)
-		const usesBundledBoxArt =
-			backpackThumb === 'store/backpack/gift-box.png' ||
-			backpackThumb?.startsWith('store/backpack/unique-box-') === true
 		if (name) {
 			const downloadableId = drop.AvatarItemInfo?.DownloadableAvatarItemId
 			const recovered2025Thumb =
@@ -1073,11 +1074,7 @@ function enrichWithThumbnails(
 			if (recovered2025Thumb && existingThumb !== recovered2025Thumb) {
 				next.ThumbnailImageName = recovered2025Thumb
 				changed = true
-			} else if (
-				backpackThumb &&
-				(usesBundledBoxArt || !hasItemSpecificStoreThumbnail) &&
-				existingThumb !== backpackThumb
-			) {
+			} else if (backpackThumb && preferredThumb !== backpackThumb) {
 				next.ThumbnailImageName = backpackThumb
 				changed = true
 			} else if (
@@ -3325,11 +3322,21 @@ const app = new Hono<App>({ strict: false })
 		describeRoute({
 			tags: ['Consumables'],
 			summary: 'All consumable definitions',
-			description:
-				'Public item definitions, including the Unity model configuration and thumbnail name used by the 2025 client.',
+				description:
+					'Public item definitions, including the Unity model configuration and local thumbnail fallback used by the 2025 client.',
 			responses: { 200: json(JsonArray, 'Consumable item definitions') },
 		}),
-		(c) => c.json(consumableDefinitions)
+		(c) =>
+			c.json(
+				consumableDefinitions.map((definition) => ({
+					...definition,
+					ThumbnailImageName:
+						backpackThumbnailFor(
+							{ ConsumableItemDesc: definition.ConsumableItemDesc },
+							definition.FriendlyName.toLowerCase()
+						) ?? definition.ThumbnailImageName,
+				}))
+			)
 	)
 	.post(
 		'/api/consumables/v1/query/bulk',
