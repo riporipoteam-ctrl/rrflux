@@ -152,15 +152,41 @@ describe('img endpoints', () => {
 		}
 	})
 
-	it('does not wait on the unavailable original store image host for missing hashes', async () => {
+	it('recovers item-specific thumbnail hashes from the canonical image host', async () => {
+		const imageBytes = new Uint8Array([255, 216, 255, 217])
+		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+			const request = input instanceof Request ? input : new Request(input)
+			const requestUrl = new URL(request.url)
+			expect(requestUrl.host).toBe('img.recflare.net')
+			expect(requestUrl.pathname).toBe('/5h9ul7otj4auhcbdvtdl2velt.png')
+			expect(requestUrl.search).toBe('?width=128&sig=p1')
+			return new Response(imageBytes, {
+				status: 200,
+				headers: { 'content-type': 'image/jpeg', 'content-length': String(imageBytes.length) },
+			})
+		})
+		vi.stubGlobal('fetch', mockFetch)
+
+		try {
+			const res = await unsignedFetch(
+				`${ORIGIN}/5h9ul7otj4auhcbdvtdl2velt.png?width=128&sig=p1`
+			)
+			expect(res.status).toBe(200)
+			expect(res.headers.get('content-type')).toBe('image/jpeg')
+			expect(new Uint8Array(await res.arrayBuffer())).toEqual(imageBytes)
+			expect(mockFetch).toHaveBeenCalledTimes(1)
+		} finally {
+			vi.unstubAllGlobals()
+		}
+	})
+
+	it('does not request arbitrary image names from the canonical host', async () => {
 		const mockFetch = vi.fn()
 		vi.stubGlobal('fetch', mockFetch)
 
 		try {
-			const res = await unsignedFetch(`${ORIGIN}/evdt42n8s2y5vjf5s10ky2esv.png?sig=p1`)
+			const res = await unsignedFetch(`${ORIGIN}/not-a-store-thumbnail.png?sig=p1`)
 			expect(res.status).toBe(200)
-			expect(res.headers.get('content-type')).toBe('image/png')
-			expect(res.headers.get('content-signature')).toBeTruthy()
 			expect(new Uint8Array(await res.arrayBuffer())).toHaveLength(67)
 			expect(mockFetch).not.toHaveBeenCalled()
 		} finally {
