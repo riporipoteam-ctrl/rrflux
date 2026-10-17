@@ -3151,20 +3151,27 @@ describe('econ endpoints', () => {
 		// platform (or spelling the key `BalanceType`, which the client's decoder drops) invents
 		// a second balance beside the real one. That is what showed a live player 34,100 tokens
 		// after spending 900 of 17,500, then 33,200 once the body's -900 landed.
-		expect(await drainFrames()).toEqual([
-			{
-				accountId: 20,
-				notificationType: NotificationType.StorefrontBalancePurchase,
-				payload: {
-					// 1400 = CommercePurchase; -2 = NonPurchasedNotUsableInP2P, the only bucket we use.
-					BalanceAddType: 1400,
-					Delta: -SF3_ITEM.price,
-					Balance: 10000 - SF3_ITEM.price,
-					Platform: -2,
-					CurrencyType: 2,
-				},
-			},
+		const frames = await drainFrames()
+		expect(frames.map((frame) => frame.notificationType)).toEqual([
+			NotificationType.GiftPackageReceivedImmediate,
+			NotificationType.StorefrontBalancePurchase,
 		])
+		expect(frames[0]).toMatchObject({
+			accountId: 20,
+			payload: { Id: gift.Id, AvatarItemDesc: gift.AvatarItemDesc },
+		})
+		expect(frames[1]).toEqual({
+			accountId: 20,
+			notificationType: NotificationType.StorefrontBalancePurchase,
+			payload: {
+				// 1400 = CommercePurchase; -2 = NonPurchasedNotUsableInP2P, the only bucket we use.
+				BalanceAddType: 1400,
+				Delta: -SF3_ITEM.price,
+				Balance: 10000 - SF3_ITEM.price,
+				Platform: -2,
+				CurrencyType: 2,
+			},
+		})
 
 		// The balance endpoint reflects the debit (the resulting total, 500 - the price).
 		const bal = await exports.default.fetch(`${ORIGIN}/api/storefronts/v4/balance/2`, {
@@ -3804,12 +3811,14 @@ describe('econ endpoints', () => {
 		expect(res.status).toBe(200)
 		const [gift] = await pendingGifts('333')
 		expect(gift?.FromPlayerId).toBe(333)
-		// No hub gift frame: the buyer read the box out of the response.
-		expect(
-			(await drainFrames()).filter(
-				(f) => f.notificationType === NotificationType.GiftPackageReceivedImmediate
-			)
-		).toEqual([])
+		// The immediate frame triggers the same arrival animation used for received gifts.
+		const received = (await drainFrames()).find(
+			(f) => f.notificationType === NotificationType.GiftPackageReceivedImmediate
+		)
+		expect(received).toMatchObject({
+			accountId: 333,
+			payload: { Id: gift?.Id, FromPlayerId: 333 },
+		})
 	})
 
 	test('POST /api/storefronts/v2/buyItem 404s for an unknown item', async () => {
@@ -3990,21 +3999,31 @@ describe('econ endpoints', () => {
 		expect(box.BalanceType).toBe(-2)
 		expect(value.BalanceUpdates[1].Data.GiftPackage!.AvatarItemDesc).not.toBe('')
 
-		// ONE frame for the whole bag, setting the account-wide bucket to the resulting total —
-		// the same total the body reports, so the two agree instead of compounding.
-		expect(await drainFrames()).toEqual([
-			{
-				accountId: 90,
-				notificationType: NotificationType.StorefrontBalancePurchase,
-				payload: {
-					BalanceAddType: 1400,
-					Delta: -(300 + SF3_ITEM.price),
-					Balance: 10000 - 300 - SF3_ITEM.price,
-					Platform: -2,
-					CurrencyType: 2,
-				},
-			},
+		// Two box arrival frames plus ONE balance frame for the whole bag.
+		const frames = await drainFrames()
+		const arrivals = frames.filter(
+			(frame) => frame.notificationType === NotificationType.GiftPackageReceivedImmediate
+		)
+		expect(frames.map((frame) => frame.notificationType)).toEqual([
+			NotificationType.GiftPackageReceivedImmediate,
+			NotificationType.GiftPackageReceivedImmediate,
+			NotificationType.StorefrontBalancePurchase,
 		])
+		expect(arrivals.map((frame) => frame.accountId)).toEqual([90, 90])
+		expect(arrivals.map((frame) => (frame.payload as { Id: number }).Id)).toEqual(
+			value.BalanceUpdates.map((update) => update.Data.GiftPackage!.Id)
+		)
+		expect(frames.find((frame) => frame.notificationType === NotificationType.StorefrontBalancePurchase)).toEqual({
+			accountId: 90,
+			notificationType: NotificationType.StorefrontBalancePurchase,
+			payload: {
+				BalanceAddType: 1400,
+				Delta: -(300 + SF3_ITEM.price),
+				Balance: 10000 - 300 - SF3_ITEM.price,
+				Platform: -2,
+				CurrencyType: 2,
+			},
+		})
 		expect(
 			await getBalance(env.DB, 90, CurrencyType.RecCenterTokens, DEFAULT_STARTING_TOKENS)
 		).toBe(10000 - 300 - SF3_ITEM.price)
@@ -4208,12 +4227,16 @@ describe('econ endpoints', () => {
 		expect(box?.FromPlayerId).toBe(960)
 		expect(box?.GiftContext).toBe(500)
 		expect(box?.Message).toBe('from the bag')
-		// The bag's response is the buyer's; the receiver is told over the hub instead.
-		const received = (await drainFrames()).find(
+		// Both boxes are announced over the hub so the buyer and receiver see their arrival flow.
+		const arrivals = (await drainFrames()).filter(
 			(f) => f.notificationType === NotificationType.GiftPackageReceivedImmediate
 		)
-		expect(received?.accountId).toBe(207)
-		expect(received?.payload).toMatchObject({ Id: box?.Id, FromPlayerId: 960, GiftContext: 500 })
+		expect(arrivals.map((frame) => frame.accountId)).toEqual([960, 207])
+		expect(arrivals[0]?.payload).toMatchObject({
+			Id: own?.Data.GiftPackage?.Id,
+			FromPlayerId: 1,
+		})
+		expect(arrivals[1]?.payload).toMatchObject({ Id: box?.Id, FromPlayerId: 960, GiftContext: 500 })
 	})
 
 	// ---- custom avatar items in the bag --------------------------------------------------

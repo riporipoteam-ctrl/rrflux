@@ -5689,9 +5689,10 @@ app
 				'check as `UpdateAndGetSubscription`) may pay anywhere from that down to 10% off, since their',
 				'client applies the discount itself and not to every item — debits the buyer atomically,',
 				'grants the item (into the inventory or',
-				'consumable table), and returns a gift box. A `Gift` block routes the item — and its',
-				'box — to the player it names, who is handed it over the hub as',
-				'`GiftPackageReceivedImmediate`; the caller always pays, and `Anonymous` hides them',
+				'consumable table), and returns and announces a gift box as',
+				'`GiftPackageReceivedImmediate` so the client can play the box-arrival flow. A `Gift`',
+				'block routes the item — and its box — to the player it names; the caller always pays,',
+				'and `Anonymous` hides them',
 				'from the box rather than withholding it. `Balance` in the response is the CHANGE (negated',
 				'price), not the new total. Pushes a StorefrontBalancePurchase socket frame that SETS the',
 				'buyer’s account-wide bucket to the RESULTING total, so the frame, this body and a',
@@ -5791,13 +5792,10 @@ app
 				giftContext,
 			})
 
-			// The buyer reads their own box out of the response below, but a gift's receiver has
-			// no response to read — they may not even be online. Hand them the box the way every
-			// other server-handed box arrives, so it pops in front of them instead of waiting for
-			// their client's next `GET /api/avatar/v2/gifts`.
-			if (receiverId !== id) {
-				await pushGiftReceived(c, receiverId, granted, message, fromPlayerId, giftContext)
-			}
+			// The response also lists the buyer's box, but the 2025 client needs the immediate
+			// notification to play the box arrival/open flow. Send that same event to self-buyers
+			// and gift recipients; the client deduplicates the response and push by GiftPackage Id.
+			await pushGiftReceived(c, receiverId, granted, message, fromPlayerId, giftContext)
 
 			// Push the spend to the buyer (`id` — the caller is who was charged) so their client
 			// updates without waiting for a `GET /balance` re-fetch. StorefrontBalancePurchase
@@ -6089,10 +6087,10 @@ app
 					fromPlayerId,
 					giftContext,
 				})
-				// The bag's own response carries only the buyer's boxes, so a gifted line is
-				// announced to its receiver the same way buyItem's is. `BypassGiftPackages` skipped
-				// the box entirely, and there is nothing to announce.
-				if (receiverId !== id && !skipGiftBox) {
+				// The response carries every box, but the client needs the immediate notification
+				// to play its arrival/open flow for self-purchases as well as gifts. Skip only when
+				// BypassGiftPackages omitted the box entirely.
+				if (!skipGiftBox) {
 					await pushGiftReceived(c, receiverId, granted, message, fromPlayerId, giftContext)
 				}
 				packages.set(
