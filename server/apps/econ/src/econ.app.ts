@@ -890,6 +890,52 @@ const THUMBNAIL_BY_2025_CAI_NAME = new Map(
 )
 
 /**
+ * The 2025 storefront capture still points backpack items at the original Rec Room image
+ * CDN. Those hashes have no bytes in the local image store, so the image worker correctly
+ * returns its transparent missing-image PNG. Use bundled 2025-client category art for
+ * non-avatar backpack rows until their original item thumbnails are available locally.
+ */
+function backpackThumbnailFor(drop: any, name: string): string | undefined {
+	const starBox = name.match(/^([0-5])[- ]*star unique box$/)
+	if (starBox) return `store/backpack/unique-box-${starBox[1]}.png`
+	if (drop.IsQuery === true) return 'store/backpack/gift-box.png'
+
+	if (typeof drop.ConsumableItemDesc === 'string' && drop.ConsumableItemDesc.trim() !== '') {
+		if (/\b(?:potion|hair dye)\b/.test(name)) return 'store/backpack/potion.png'
+		if (
+			/\b(?:blaster|launcher|gun|rifle|pistol|grenade|bomb|cannon|thrower|slingshot|staff|blade|sword)\b/.test(
+				name
+			)
+		)
+			return 'store/backpack/weapon.png'
+		if (
+			/\b(?:apple|cake|donut|pizza|popcorn|pretzel|sushi|chocolate|candy|nacho|ham|tomato|latte|tea|cola|bubbly|beer|mochi|dango|onigiri|turkey leg|cheese)\b/.test(
+				name
+			)
+		)
+			return 'store/backpack/food.png'
+		return 'store/backpack/consumable.png'
+	}
+
+	if (typeof drop.EquipmentModificationGuid === 'string' && drop.EquipmentModificationGuid !== '') {
+		const prefab =
+			typeof drop.EquipmentPrefabName === 'string' ? drop.EquipmentPrefabName.toLowerCase() : ''
+		if (prefab.includes('sharecamera')) return 'store/backpack/camera.png'
+		if (prefab.includes('makerpen')) return 'store/backpack/maker-pen.png'
+		if (
+			prefab.includes('paintball') ||
+			prefab.includes('grenade') ||
+			prefab.includes('questshield') ||
+			prefab.includes('questsword')
+		)
+			return 'store/backpack/weapon.png'
+		return 'store/backpack/equipment.png'
+	}
+
+	return undefined
+}
+
+/**
  * The catalog's real opaque `AvatarItemDesc` by normalized FriendlyName, built from the
  * captured avatar-item catalog. Used to repair storefront GiftDrops whose `AvatarItemDesc`
  * is a human-readable description ("A SciFi skin for your bucket...") instead of the
@@ -961,8 +1007,12 @@ function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
 				(typeof downloadableId === 'string' &&
 					THUMBNAIL_BY_2025_CAI_ID.get(downloadableId.toLowerCase())) ||
 				THUMBNAIL_BY_2025_CAI_NAME.get(name)
+			const backpackThumb = backpackThumbnailFor(drop, name)
 			if (recovered2025Thumb && existingThumb !== recovered2025Thumb) {
 				next.ThumbnailImageName = recovered2025Thumb
+				changed = true
+			} else if (backpackThumb && existingThumb !== backpackThumb) {
+				next.ThumbnailImageName = backpackThumb
 				changed = true
 			} else if (!existingThumb || typeof existingThumb !== 'string' || existingThumb.trim() === '') {
 				// Look up the catalog thumbnail by FriendlyName. (The old code keyed
