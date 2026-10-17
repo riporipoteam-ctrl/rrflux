@@ -1,4 +1,4 @@
-// Flux Rec Setup & Launcher — light, branded progress UI v1.0.27.
+// Flux Rec Setup & Launcher — dark, branded progress UI.
 //
 // Full redesign:
 // - Borderless window, rounded corners, drop shadow, custom title bar
@@ -101,19 +101,19 @@ mod imp {
 
     // Palette (COLORREF = 0x00BBGGRR).
     // Neutral surfaces keep installation state readable at a glance.
-    const BG: COLORREF = COLORREF(0x00F8F5F2); // #F2F5F8
-    const BG_TITLE: COLORREF = COLORREF(0x00FFFFFF); // #FFFFFF title bar
-    const BG_SIDE: COLORREF = COLORREF(0x00F1E9E3); // #E3E9F1
-    const BG_CARD: COLORREF = COLORREF(0x00FFFFFF); // #FFFFFF cards
-    const BLUE: COLORREF = COLORREF(0x00EB6E28); // #286EEB
-    const BLUE_LIGHT: COLORREF = COLORREF(0x00FFC76F); // #6FC7FF highlight
-    const BLUE_DIM: COLORREF = COLORREF(0x00D6E9FF); // light blue tint
-    const WHITE: COLORREF = COLORREF(0x002A1E13); // #131E2A dark text
-    const GRAY: COLORREF = COLORREF(0x007A6858); // #58687A secondary text
-    const DIM: COLORREF = COLORREF(0x00A8AEB8); // #B8AEA8 dim text
-    const TRACK: COLORREF = COLORREF(0x00F0EBE8); // #E8EBF0 progress track
-    const BORDER: COLORREF = COLORREF(0x00E8E4E1); // #E1E4E8 card border
-    const GREEN: COLORREF = COLORREF(0x0028A745); // #28A745 checkmarks
+    const BG: COLORREF = COLORREF(0x001B110C); // #0C111B
+    const BG_TITLE: COLORREF = COLORREF(0x00231710); // #101723
+    const BG_SIDE: COLORREF = COLORREF(0x002B1D15); // #151D2B
+    const BG_CARD: COLORREF = COLORREF(0x0035251B); // #1B2535
+    const BLUE: COLORREF = COLORREF(0x00FFAB4A); // #4AABFF
+    const BLUE_LIGHT: COLORREF = COLORREF(0x00FFC889); // #89C8FF highlight
+    const BLUE_DIM: COLORREF = COLORREF(0x00593E27); // #273E59
+    const WHITE: COLORREF = COLORREF(0x00FBF7F4); // #F4F7FB primary text
+    const GRAY: COLORREF = COLORREF(0x00D3C3B7); // #B7C3D3 secondary text
+    const DIM: COLORREF = COLORREF(0x009A8373); // #73839A dim text
+    const TRACK: COLORREF = COLORREF(0x0045352A); // #2A3545 progress track
+    const BORDER: COLORREF = COLORREF(0x004C3A2C); // #2C3A4C card border
+    const GREEN: COLORREF = COLORREF(0x0093D462); // #62D493 checkmarks
     const PURE_WHITE: COLORREF = COLORREF(0x00FFFFFF); // actual white (on colored bg)
 
     // Setup sidebar steps: (title, subtitle).

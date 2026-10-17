@@ -83,6 +83,26 @@ const SCREENSHOT_NAMES: &[&str] = &[
 #[cfg(windows)]
 const FLUXREC_LOGO_PNG: &[u8] = include_bytes!("../assets/fluxrec-logo.png");
 
+/// Release tags retain their historic internal prefix for updater compatibility.
+/// Keep that implementation detail out of every user-facing version label.
+fn display_update_version(tag: &str) -> &str {
+    tag.strip_prefix("recflare-installer-")
+        .unwrap_or(tag)
+        .trim_start_matches('v')
+}
+
+#[cfg(test)]
+mod release_label_tests {
+    use super::display_update_version;
+
+    #[test]
+    fn updater_label_hides_internal_release_prefix() {
+        assert_eq!(display_update_version("recflare-installer-v1.0.31"), "1.0.31");
+        assert_eq!(display_update_version("v1.0.31"), "1.0.31");
+        assert_eq!(display_update_version("1.0.31"), "1.0.31");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Non-Windows stubs.
 // ---------------------------------------------------------------------------
@@ -112,8 +132,8 @@ pub fn run_splash_gui(theme: Theme, rx: Receiver<()>) {
 #[cfg(windows)]
 mod imp {
     use super::{
-        premultiply_channel, LibraryConfig, Theme, View, FLUXREC_LOGO_PNG, SCREENSHOTS,
-        SCREENSHOT_NAMES,
+        display_update_version, premultiply_channel, LibraryConfig, Theme, View, FLUXREC_LOGO_PNG,
+        SCREENSHOTS, SCREENSHOT_NAMES,
     };
     use crate::library::{LibCmd, LibMsg};
     use std::ffi::c_void;
@@ -173,19 +193,19 @@ mod imp {
     };
 
     const DARK: Palette = Palette {
-        bg: COLORREF(0x00170E0B),       // #0B0E17
-        bg_title: COLORREF(0x0019110D), // #0D1119
-        bg_side: COLORREF(0x001F1411),  // #11141F
-        bg_card: COLORREF(0x00281B16),  // #161B28
-        bg_hover: COLORREF(0x00302622), // #222630 hover
+        bg: COLORREF(0x001B110C),       // #0C111B
+        bg_title: COLORREF(0x00231710), // #101723
+        bg_side: COLORREF(0x002B1D15),  // #151D2B
+        bg_card: COLORREF(0x0035251B),  // #1B2535
+        bg_hover: COLORREF(0x00443220), // #203244 hover
         text: COLORREF(0x00FFFFFF),
-        text_dim: COLORREF(0x00B2A39A), // #9AA3B2
-        accent: COLORREF(0x00FF9B2E),
-        accent_dark: COLORREF(0x00CC7A1F),
-        track: COLORREF(0x003A2A23),
-        border: COLORREF(0x003D2B23),
-        banner_top: COLORREF(0x00FF9B2E),
-        banner_bot: COLORREF(0x00803008),
+        text_dim: COLORREF(0x00D3C3B7), // #B7C3D3
+        accent: COLORREF(0x00FFAB4A), // #4AABFF
+        accent_dark: COLORREF(0x00D78332), // #3283D7
+        track: COLORREF(0x0045352A), // #2A3545
+        border: COLORREF(0x004C3A2C), // #2C3A4C
+        banner_top: COLORREF(0x00FFAB4A),
+        banner_bot: COLORREF(0x008F572A),
     };
 
     fn pal(theme: Theme) -> &'static Palette {
@@ -1121,7 +1141,7 @@ mod imp {
         fill_rect(mem, &title_r, p.bg_title)?;
         draw_text(
             mem,
-            "FLUX REC  /  CONTROL CENTER",
+            "FLUX REC  ·  GAME LIBRARY",
             20,
             12,
             300,
@@ -1170,15 +1190,15 @@ mod imp {
 
         // Compact status chip in the command strip.
         let live_label = if st.checking {
-            "CHECKING"
+            "Checking"
         } else if st.update_available {
-            "UPDATE READY"
+            "Update ready"
         } else if st.install_required {
-            "INSTALL NEEDED"
+            "Install needed"
         } else if !st.check_error.is_empty() {
-            "CHECK FAILED"
+            "Check failed"
         } else {
-            "READY"
+            "Ready"
         };
         let top_status = RECT {
             left: WIN_W - 268,
@@ -1391,7 +1411,7 @@ mod imp {
 
         draw_text(
             hdc,
-            "FLUX REC  /  2025 CLIENT",
+            "2025 GAME BUILD",
             content_x,
             TITLE_H + 12,
             400,
@@ -1506,7 +1526,7 @@ mod imp {
         )?;
         draw_text(
             hdc,
-            "THE COMMUNITY IS YOURS",
+            "A 2025 Rec Room community",
             banner.left + 110,
             banner.top + 72,
             340,
@@ -1701,18 +1721,16 @@ mod imp {
             false,
         )?;
         let update_sub = if st.checking {
-            "Checking the latest Flux Rec release…".to_string()
+            "Checking for the latest game update…".to_string()
         } else if st.update_available {
             format!(
-                "Version {} installs when you launch the game.",
-                st.update_version
-                    .trim_start_matches("recflare-installer-v")
-                    .trim_start_matches('v')
+                "Version {} installs when you press Play.",
+                display_update_version(&st.update_version)
             )
         } else if !st.check_error.is_empty() {
-            "Check failed. Flux Rec can still launch; retry here.".to_string()
+            "Update check failed. You can still try launching; retry here.".to_string()
         } else {
-            "A fresh check runs before every launch.".to_string()
+            "Updates are checked before every launch.".to_string()
         };
         draw_text(
             hdc,
@@ -2010,10 +2028,7 @@ mod imp {
         } else if st.install_required {
             "Ready to install".to_string()
         } else if st.update_available {
-            let version = st
-                .update_version
-                .trim_start_matches("recflare-installer-v")
-                .trim_start_matches('v');
+            let version = display_update_version(&st.update_version);
             format!("Update v{version} available")
         } else if st.ready {
             "Ready to play — updates are checked when you press Play".to_string()
