@@ -1,10 +1,10 @@
-//! Ripo Team Launcher v1.0.31 — game library UI.
+//! Ripo Team Launcher v1.0.33 — game store UI.
 //!
 //! A game-library style launcher (inspired by Steam/EGS):
-//! - Sidebar with Ripo Team branding, Library/Settings nav.
+//! - Sidebar with Ripo Team branding, Store/Settings nav.
 //! - Flux Rec game card: banner, logo, description, live player count,
 //!   PLAY button, uninstall.
-//! - Settings: light/dark theme toggle (default: dark).
+//! - Settings: light/dark theme toggle (default: light).
 //! - PLAY flow: update check -> install update if needed -> launch game ->
 //!   close library -> "Launching..." splash.
 //!
@@ -34,7 +34,7 @@ mod alpha_tests {
     }
 }
 
-/// UI theme. New installations start with Dark; users can change it in Settings.
+/// UI theme. New installations start with Light; users can change it in Settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Theme {
     Light,
@@ -306,7 +306,7 @@ mod imp {
                 style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(wnd_proc),
                 hInstance: hinst.into(),
-                hIcon: LoadIconW(Some(hinst.into()), PCWSTR(1usize as *const u16))
+                hIcon: LoadIconW(hinst, PCWSTR(1usize as *const u16))
                     .unwrap_or_default(),
                 hCursor: LoadCursorW(None, IDC_ARROW).map_err(|_| ())?,
                 hbrBackground: HBRUSH(std::ptr::null_mut()),
@@ -492,7 +492,7 @@ mod imp {
                 style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(splash_proc),
                 hInstance: hinst.into(),
-                hIcon: LoadIconW(Some(hinst.into()), PCWSTR(1usize as *const u16))
+                hIcon: LoadIconW(hinst, PCWSTR(1usize as *const u16))
                     .unwrap_or_default(),
                 hCursor: LoadCursorW(None, IDC_ARROW).map_err(|_| ())?,
                 hbrBackground: HBRUSH(std::ptr::null_mut()),
@@ -1270,7 +1270,7 @@ mod imp {
         )?;
         draw_text(
             mem,
-            "GAME LIBRARY",
+            "RIPO TEAM GAMES",
             80,
             TITLE_H + 43,
             114,
@@ -1284,7 +1284,7 @@ mod imp {
         draw_nav(
             mem,
             &rects.nav_library,
-            "Overview",
+            "Store",
             st.view == View::Library,
             st.hover == Hot::NavLibrary,
             p,
@@ -1432,7 +1432,7 @@ mod imp {
 
         draw_text(
             hdc,
-            "2025 GAME BUILD",
+            "RIPO TEAM STORE  ·  2025 CLIENT",
             content_x,
             TITLE_H + 12,
             400,
@@ -1447,7 +1447,7 @@ mod imp {
         } else if st.update_available {
             "Update available"
         } else {
-            "Ready to play"
+            "Flux Rec is ready"
         };
         draw_text(
             hdc,
@@ -1463,7 +1463,7 @@ mod imp {
         )?;
         draw_text(
             hdc,
-            "Launch your game and keep the client up to date.",
+            "Browse Ripo Team games. Flux Rec is available.",
             content_x + 464,
             TITLE_H + 34,
             420,
@@ -1572,7 +1572,7 @@ mod imp {
 
         draw_text(
             hdc,
-            "Your game",
+            "Flux Rec",
             card.left + 24,
             banner.bottom + 18,
             360,

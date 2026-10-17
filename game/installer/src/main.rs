@@ -28,12 +28,13 @@
 //      steam_appid.txt = 471710 + steam_interfaces.txt. If Goldberg fails,
 //      a minimal Flux Rec stub DLL (no VC++ dependency) is used instead.
 //      No Steam client installed, none needed.
-//   6. Create Start Menu + desktop shortcuts (Windows only), using the blue
-//      Flux Rec .ico.
+//   6. Create Ripo Team Launcher and Flux Rec shortcuts (Windows only), each
+//      using its own brand icon.
 //
 // Exit 0 on success, 1 with an ERROR line on failure.
 // Usage: FluxRec-Setup [--dir <path>] [--ns-host <url>] [--photon-rt <id>] [--photon-voice <id>] [--photon-chat <id>]
-//        FluxRec-Setup --play [--dir <path>]      (launcher mode: update check, then launch the game)
+//        FluxRec-Setup --play [--dir <path>]      (open the Ripo Team game store)
+//        FluxRec-Setup --launch-game [--dir <path>] (check updates, then launch Flux Rec)
 //        FluxRec-Setup --updated [--dir <path>]  (spawned by the launcher: install, then launch the game)
 
 use futures_util::StreamExt;
@@ -837,8 +838,8 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
         }
     };
     // Install the launcher entry point next to the game: a copy of this
-    // setup binary. The shortcuts point at it with `--play`, so every
-    // launch goes through the update check + pretty window first.
+    // setup binary. The launcher shortcut uses `--play` to open the library;
+    // the Flux Rec shortcut uses `--launch-game` to update and start directly.
     // Fail-soft: if the copy fails we fall back to the old direct target.
     // v1.0.0: the launcher is now "Ripo Team Launcher".
     let launcher_exe = dir.join("RipoTeamLauncher.exe");
@@ -902,12 +903,14 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
             }
         }
     };
-    // Use the launcher copy (stable or versioned) when one is available. Only
-    // first installs with no usable copy fall back directly to the game.
-    let (target, args): (PathBuf, &str) = match launcher_target {
-        Some(path) => (path, "--play"),
-        None => (exe, "+forcemode:screen"),
-    };
+    // The Ripo Team shortcut opens the game library, while the Flux Rec
+    // shortcut is a direct game entry that runs repair and the live update
+    // check before starting the client.
+    let (launcher_target, launcher_args, game_target, game_args): (PathBuf, &str, PathBuf, &str) =
+        match launcher_target {
+            Some(path) => (path.clone(), "--play", path, "--launch-game"),
+            None => (exe.clone(), "+forcemode:screen", exe.clone(), "+forcemode:screen"),
+        };
     #[cfg(windows)]
     {
         let appdata = std::env::var("APPDATA").map_err(|e| e.to_string())?;
@@ -927,25 +930,58 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
             "{appdata}\\Microsoft\\Windows\\Start Menu\\Programs\\Flux Rec.lnk"
         ));
         let old_desktop_lnk = PathBuf::from(format!("{desktop_dir}\\Flux Rec.lnk"));
-        // Ripo Team icon for both launcher shortcuts (fail-soft: generic icon if the
-        // write fails).
-        let icon_path = dir.join("ripo-team.ico");
-        if let Err(e) = assets::write_ripo_team_icon_ico(&icon_path) {
-            eprintln!("[shortcut] WARNING: icon write failed ({}).", e);
+        // Keep the studio shortcut branded Ripo Team and the game shortcut
+        // branded Flux Rec.
+        let team_icon_path = dir.join("ripo-team.ico");
+        if let Err(e) = assets::write_ripo_team_icon_ico(&team_icon_path) {
+            eprintln!("[shortcut] WARNING: Ripo Team icon write failed ({}).", e);
         }
-        create_shortcut(&start_menu, &target, args, dir, Some(&icon_path))?;
-        create_shortcut(&desktop_lnk, &target, args, dir, Some(&icon_path))?;
-        // The previous version created the same launcher under the game name.
-        // Remove those stale launcher shortcuts after their replacements exist.
-        let _ = std::fs::remove_file(old_start_menu);
-        let _ = std::fs::remove_file(old_desktop_lnk);
+        let game_icon_path = dir.join("fluxrec.ico");
+        if let Err(e) = assets::write_icon_ico(&game_icon_path) {
+            eprintln!("[shortcut] WARNING: Flux Rec icon write failed ({}).", e);
+        }
+        create_shortcut(
+            &start_menu,
+            &launcher_target,
+            launcher_args,
+            dir,
+            Some(&team_icon_path),
+        )?;
+        create_shortcut(
+            &desktop_lnk,
+            &launcher_target,
+            launcher_args,
+            dir,
+            Some(&team_icon_path),
+        )?;
+        create_shortcut(
+            &old_start_menu,
+            &game_target,
+            game_args,
+            dir,
+            Some(&game_icon_path),
+        )?;
+        create_shortcut(
+            &old_desktop_lnk,
+            &game_target,
+            game_args,
+            dir,
+            Some(&game_icon_path),
+        )?;
     }
     #[cfg(not(windows))]
     {
         create_shortcut(
             &PathBuf::from("Ripo Team Launcher.lnk"),
-            &target,
-            args,
+            &launcher_target,
+            launcher_args,
+            dir,
+            None,
+        )?;
+        create_shortcut(
+            &PathBuf::from("Flux Rec.lnk"),
+            &game_target,
+            game_args,
             dir,
             None,
         )?;
@@ -1969,6 +2005,7 @@ fn main() {
     let mut voice_arg: Option<String> = None;
     let mut chat_arg: Option<String> = None;
     let mut play_mode = false;
+    let mut launch_game_mode = false;
     let mut updated_mode = false;
     let mut silent_mode = false;
     let mut args = std::env::args().skip(1);
@@ -1984,6 +2021,7 @@ fn main() {
             "--photon-voice" => voice_arg = args.next(),
             "--photon-chat" => chat_arg = args.next(),
             "--play" => play_mode = true,
+            "--launch-game" => launch_game_mode = true,
             "--updated" => updated_mode = true,
             // v0.1.18: skip all interactive prompts (the Defender exclusion
             // guide). For scripted/headless installs where no one can click
@@ -2006,9 +2044,12 @@ fn main() {
     let photon_voice = resolve_value(voice_arg, "FLUXREC_PHOTON_VOICE", PHOTON_VOICE_DEFAULT);
     let photon_chat = resolve_value(chat_arg, "FLUXREC_PHOTON_CHAT", PHOTON_CHAT_DEFAULT);
 
-    // Launcher mode (the desktop shortcut target): update check, then game.
+    // The game shortcut checks and installs updates, then starts Flux Rec.
+    // The Ripo Team shortcut opens the game store/library UI.
+    if launch_game_mode {
+        launcher::run_launcher(&dir, &ns_host, &photon_rt, &photon_voice, &photon_chat);
+    }
     // Never returns.
-    // v1.0.0: --play now opens the Ripo Team Launcher library UI.
     if play_mode {
         library::run_library(&dir, &ns_host, &photon_rt, &photon_voice, &photon_chat);
     }
@@ -2046,6 +2087,10 @@ fn main() {
             }
         }
     }
+
+    // Remember whether this is a first install so setup can open the game
+    // library after it creates the launcher's shortcuts.
+    let had_game_install = find_game_exe(&dir).is_some();
 
     // Install mode: pretty window + hidden console from here on.
     //
@@ -2103,6 +2148,18 @@ fn main() {
     }
     progress.done();
     let _ = gui_thread.join();
+    // On the first interactive install, finish in the Ripo Team game store.
+    // Silent and auto-update runs stay headless / return to their caller.
+    if !updated_mode && !silent_mode && !had_game_install {
+        let launcher = dir.join("RipoTeamLauncher.exe");
+        if launcher.is_file() {
+            let launcher_path = launcher.to_string_lossy();
+            let _ = stealth::hidden_command(&launcher_path)
+                .arg("--play")
+                .current_dir(&dir)
+                .spawn();
+        }
+    }
     println!("DONE — launch Flux Rec from the Start Menu or desktop shortcut.");
 }
 

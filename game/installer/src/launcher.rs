@@ -1,7 +1,7 @@
-//! `--play` launcher mode: the Flux Rec entry point.
+//! `--launch-game` mode: the direct Flux Rec entry point.
 //!
 //! The desktop/Start Menu shortcut points at the installed
-//! `FluxRecLauncher.exe` (a copy of the setup binary) with `--play`.
+//! `RipoTeamLauncher.exe` (a copy of the setup binary) with `--launch-game`.
 //! Launch flow, all behind the little Flux Rec window (the console stays
 //! hidden the whole time):
 //!
@@ -53,7 +53,7 @@ fn ensure_recnet_hosts_entry() {
     }
 }
 
-/// `--play` entry point. Never returns (exits the process).
+/// `--launch-game` entry point. Never returns (exits the process).
 pub fn run_launcher(
     dir: &Path,
     ns_host: &str,
@@ -147,8 +147,8 @@ pub fn run_launcher(
         r.block_on(crate::bepinex::sync_plugin_from_mirror(dir, &progress));
     }
 
-    // --play and repair automatically instead of ever letting the game hit
-    // the broken state.
+    // Continue to the client only after repairing this state; never let the
+    // game hit the broken state.
     //
     // 1d. AV self-heal (defender.rs, 2026-09-24): Windows Security
     // quarantined a game file on Armin's PC, hanging the game at
