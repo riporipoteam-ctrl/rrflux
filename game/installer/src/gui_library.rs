@@ -1,10 +1,10 @@
-//! Ripo Team Launcher v1.0.31 — game library UI.
+//! Ripo Team Launcher v1.0.33 — game store UI.
 //!
 //! A game-library style launcher (inspired by Steam/EGS):
-//! - Sidebar with Ripo Team branding, Library/Settings nav.
+//! - Sidebar with Ripo Team branding, Store/Settings nav.
 //! - Flux Rec game card: banner, logo, description, live player count,
 //!   PLAY button, uninstall.
-//! - Settings: light/dark theme toggle (default: dark).
+//! - Settings: light/dark theme toggle (default: light).
 //! - PLAY flow: update check -> install update if needed -> launch game ->
 //!   close library -> "Launching..." splash.
 //!
@@ -34,7 +34,7 @@ mod alpha_tests {
     }
 }
 
-/// UI theme. New installations start with Dark; users can change it in Settings.
+/// UI theme. New installations start with Light; users can change it in Settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Theme {
     Light,
@@ -82,6 +82,28 @@ const SCREENSHOT_NAMES: &[&str] = &[
 // v1.0.5: the real Flux Rec logo (not the drawn approximation).
 #[cfg(windows)]
 const FLUXREC_LOGO_PNG: &[u8] = include_bytes!("../assets/fluxrec-logo.png");
+#[cfg(windows)]
+const RIPO_TEAM_LOGO_PNG: &[u8] = include_bytes!("../assets/ripo-team-logo.png");
+
+/// Release tags retain their historic internal prefix for updater compatibility.
+/// Keep that implementation detail out of every user-facing version label.
+fn display_update_version(tag: &str) -> &str {
+    tag.strip_prefix("recflare-installer-")
+        .unwrap_or(tag)
+        .trim_start_matches('v')
+}
+
+#[cfg(test)]
+mod release_label_tests {
+    use super::display_update_version;
+
+    #[test]
+    fn updater_label_hides_internal_release_prefix() {
+        assert_eq!(display_update_version("recflare-installer-v1.0.31"), "1.0.31");
+        assert_eq!(display_update_version("v1.0.31"), "1.0.31");
+        assert_eq!(display_update_version("1.0.31"), "1.0.31");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Non-Windows stubs.
@@ -112,13 +134,13 @@ pub fn run_splash_gui(theme: Theme, rx: Receiver<()>) {
 #[cfg(windows)]
 mod imp {
     use super::{
-        premultiply_channel, LibraryConfig, Theme, View, FLUXREC_LOGO_PNG, SCREENSHOTS,
-        SCREENSHOT_NAMES,
+        display_update_version, premultiply_channel, LibraryConfig, Theme, View, FLUXREC_LOGO_PNG,
+        SCREENSHOTS, SCREENSHOT_NAMES, RIPO_TEAM_LOGO_PNG,
     };
     use crate::library::{LibCmd, LibMsg};
     use std::ffi::c_void;
     use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-    use windows::core::w;
+    use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::*;
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::System::LibraryLoader::*;
@@ -173,19 +195,19 @@ mod imp {
     };
 
     const DARK: Palette = Palette {
-        bg: COLORREF(0x00170E0B),       // #0B0E17
-        bg_title: COLORREF(0x0019110D), // #0D1119
-        bg_side: COLORREF(0x001F1411),  // #11141F
-        bg_card: COLORREF(0x00281B16),  // #161B28
-        bg_hover: COLORREF(0x00302622), // #222630 hover
+        bg: COLORREF(0x001B110C),       // #0C111B
+        bg_title: COLORREF(0x00231710), // #101723
+        bg_side: COLORREF(0x002B1D15),  // #151D2B
+        bg_card: COLORREF(0x0035251B),  // #1B2535
+        bg_hover: COLORREF(0x00443220), // #203244 hover
         text: COLORREF(0x00FFFFFF),
-        text_dim: COLORREF(0x00B2A39A), // #9AA3B2
-        accent: COLORREF(0x00FF9B2E),
-        accent_dark: COLORREF(0x00CC7A1F),
-        track: COLORREF(0x003A2A23),
-        border: COLORREF(0x003D2B23),
-        banner_top: COLORREF(0x00FF9B2E),
-        banner_bot: COLORREF(0x00803008),
+        text_dim: COLORREF(0x00D3C3B7), // #B7C3D3
+        accent: COLORREF(0x00FFAB4A), // #4AABFF
+        accent_dark: COLORREF(0x00D78332), // #3283D7
+        track: COLORREF(0x0045352A), // #2A3545
+        border: COLORREF(0x004C3A2C), // #2C3A4C
+        banner_top: COLORREF(0x00FFAB4A),
+        banner_bot: COLORREF(0x008F572A),
     };
 
     fn pal(theme: Theme) -> &'static Palette {
@@ -246,6 +268,8 @@ mod imp {
         carousel_tick: u32,             // for auto-advance
         // v1.0.5: real Flux Rec logo bitmap
         logo_bitmap: HBITMAP,
+        // Launcher shell mark. Game views keep using `logo_bitmap` above.
+        team_logo_bitmap: HBITMAP,
         // v1.0.5: update check error message (empty if none)
         check_error: String,
     }
@@ -282,6 +306,8 @@ mod imp {
                 style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(wnd_proc),
                 hInstance: hinst.into(),
+                hIcon: LoadIconW(hinst, PCWSTR(1usize as *const u16))
+                    .unwrap_or_default(),
                 hCursor: LoadCursorW(None, IDC_ARROW).map_err(|_| ())?,
                 hbrBackground: HBRUSH(std::ptr::null_mut()),
                 lpszClassName: cls,
@@ -314,6 +340,7 @@ mod imp {
                 carousel_bitmaps: Vec::new(),
                 carousel_tick: 0,
                 logo_bitmap: HBITMAP(std::ptr::null_mut()),
+                team_logo_bitmap: HBITMAP(std::ptr::null_mut()),
                 check_error: String::new(),
             });
 
@@ -327,6 +354,7 @@ mod imp {
             }
             // v1.0.5: decode the real Flux Rec logo (128x128).
             state.logo_bitmap = png_to_bitmap(FLUXREC_LOGO_PNG, 128, 128);
+            state.team_logo_bitmap = png_to_bitmap(RIPO_TEAM_LOGO_PNG, 128, 128);
             let state_ptr = Box::into_raw(state);
 
             // Center on screen.
@@ -338,7 +366,7 @@ mod imp {
             let hwnd = CreateWindowExW(
                 WS_EX_APPWINDOW,
                 cls,
-                w!("Flux Rec Control Center"),
+                w!("Ripo Team Launcher"),
                 WS_POPUP | WS_VISIBLE,
                 x,
                 y,
@@ -350,7 +378,15 @@ mod imp {
                 Some(state_ptr as *const c_void),
             )
             .map_err(|_| {
-                let _ = Box::from_raw(state_ptr);
+                let failed_state = Box::from_raw(state_ptr);
+                for bitmap in [failed_state.logo_bitmap, failed_state.team_logo_bitmap] {
+                    if !bitmap.is_invalid() {
+                        let _ = DeleteObject(bitmap);
+                    }
+                }
+                for bitmap in failed_state.carousel_bitmaps {
+                    let _ = DeleteObject(bitmap);
+                }
             })?;
 
             // Rounded corners.
@@ -456,6 +492,8 @@ mod imp {
                 style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(splash_proc),
                 hInstance: hinst.into(),
+                hIcon: LoadIconW(hinst, PCWSTR(1usize as *const u16))
+                    .unwrap_or_default(),
                 hCursor: LoadCursorW(None, IDC_ARROW).map_err(|_| ())?,
                 hbrBackground: HBRUSH(std::ptr::null_mut()),
                 lpszClassName: cls,
@@ -1121,7 +1159,7 @@ mod imp {
         fill_rect(mem, &title_r, p.bg_title)?;
         draw_text(
             mem,
-            "FLUX REC  /  CONTROL CENTER",
+            "RIPO TEAM LAUNCHER",
             20,
             12,
             300,
@@ -1170,15 +1208,15 @@ mod imp {
 
         // Compact status chip in the command strip.
         let live_label = if st.checking {
-            "CHECKING"
+            "Checking"
         } else if st.update_available {
-            "UPDATE READY"
+            "Update ready"
         } else if st.install_required {
-            "INSTALL NEEDED"
+            "Install needed"
         } else if !st.check_error.is_empty() {
-            "CHECK FAILED"
+            "Check failed"
         } else {
-            "READY"
+            "Ready"
         };
         let top_status = RECT {
             left: WIN_W - 268,
@@ -1213,29 +1251,32 @@ mod imp {
         };
         fill_rect(mem, &side_r, p.bg_side)?;
 
-        // Brand mark + wordmark.
-        draw_logo(mem, 24, TITLE_H + 20, 36, p.accent)?;
+        // The launcher carries the studio mark; the game card below keeps the
+        // Flux Rec logo and the 2025 build label.
+        if draw_logo_bitmap(mem, st.team_logo_bitmap, 18, TITLE_H + 14, 54).is_err() {
+            draw_text(mem, "RT", 20, TITLE_H + 26, 50, 24, p.accent, 17, true, true)?;
+        }
         draw_text(
             mem,
-            "FLUX REC",
-            72,
-            TITLE_H + 24,
-            150,
+            "Ripo Team",
+            80,
+            TITLE_H + 22,
+            114,
             22,
             p.text,
-            15,
+            14,
             true,
             false,
         )?;
         draw_text(
             mem,
-            "2025 GAME BUILD",
-            72,
-            TITLE_H + 46,
-            150,
+            "RIPO TEAM GAMES",
+            80,
+            TITLE_H + 43,
+            114,
             18,
             p.text_dim,
-            12,
+            10,
             false,
             false,
         )?;
@@ -1243,7 +1284,7 @@ mod imp {
         draw_nav(
             mem,
             &rects.nav_library,
-            "Overview",
+            "Store",
             st.view == View::Library,
             st.hover == Hot::NavLibrary,
             p,
@@ -1391,7 +1432,7 @@ mod imp {
 
         draw_text(
             hdc,
-            "FLUX REC  /  2025 CLIENT",
+            "RIPO TEAM STORE  ·  2025 CLIENT",
             content_x,
             TITLE_H + 12,
             400,
@@ -1406,7 +1447,7 @@ mod imp {
         } else if st.update_available {
             "Update available"
         } else {
-            "Ready to play"
+            "Flux Rec is ready"
         };
         draw_text(
             hdc,
@@ -1422,7 +1463,7 @@ mod imp {
         )?;
         draw_text(
             hdc,
-            "Launch your game and keep the client up to date.",
+            "Browse Ripo Team games. Flux Rec is available.",
             content_x + 464,
             TITLE_H + 34,
             420,
@@ -1506,7 +1547,7 @@ mod imp {
         )?;
         draw_text(
             hdc,
-            "THE COMMUNITY IS YOURS",
+            "A 2025 Rec Room community",
             banner.left + 110,
             banner.top + 72,
             340,
@@ -1531,7 +1572,7 @@ mod imp {
 
         draw_text(
             hdc,
-            "Your game",
+            "Flux Rec",
             card.left + 24,
             banner.bottom + 18,
             360,
@@ -1701,18 +1742,16 @@ mod imp {
             false,
         )?;
         let update_sub = if st.checking {
-            "Checking the latest Flux Rec release…".to_string()
+            "Checking for the latest game update…".to_string()
         } else if st.update_available {
             format!(
-                "Version {} installs when you launch the game.",
-                st.update_version
-                    .trim_start_matches("recflare-installer-v")
-                    .trim_start_matches('v')
+                "Version {} installs when you press Play.",
+                display_update_version(&st.update_version)
             )
         } else if !st.check_error.is_empty() {
-            "Check failed. Flux Rec can still launch; retry here.".to_string()
+            "Update check failed. You can still try launching; retry here.".to_string()
         } else {
-            "A fresh check runs before every launch.".to_string()
+            "Updates are checked before every launch.".to_string()
         };
         draw_text(
             hdc,
@@ -2010,10 +2049,7 @@ mod imp {
         } else if st.install_required {
             "Ready to install".to_string()
         } else if st.update_available {
-            let version = st
-                .update_version
-                .trim_start_matches("recflare-installer-v")
-                .trim_start_matches('v');
+            let version = display_update_version(&st.update_version);
             format!("Update v{version} available")
         } else if st.ready {
             "Ready to play — updates are checked when you press Play".to_string()
@@ -2591,7 +2627,7 @@ mod imp {
         }
         draw_text(
             hdc,
-            &format!("Flux Rec launcher v{}  ·  Ripo Team", st.version),
+            &format!("Ripo Team Launcher v{}", st.version),
             left + 2,
             WIN_H - 38,
             right - left,
@@ -3043,6 +3079,9 @@ mod imp {
                     // v1.0.5: free logo bitmap.
                     if !(*ptr).logo_bitmap.is_invalid() {
                         let _ = DeleteObject((*ptr).logo_bitmap);
+                    }
+                    if !(*ptr).team_logo_bitmap.is_invalid() {
+                        let _ = DeleteObject((*ptr).team_logo_bitmap);
                     }
                 }
                 PostQuitMessage(0);

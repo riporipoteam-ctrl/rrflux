@@ -20,6 +20,10 @@ pub static LOGO_BMP_BYTES: &[u8] = include_bytes!("../assets/logo.bmp");
 /// required there, an embedded byte slice is not enough.
 pub static ICON_ICO_BYTES: &[u8] = include_bytes!("../assets/fluxrec.ico");
 
+/// The Ripo Team mark used for the multi-game launcher shell and shortcut.
+pub static RIPO_TEAM_LOGO_PNG: &[u8] = include_bytes!("../assets/ripo-team-logo.png");
+pub static RIPO_TEAM_ICON_ICO_BYTES: &[u8] = include_bytes!("../assets/ripo-team.ico");
+
 /// Carousel slide images (800x450 24-bit BMP) for the installer slideshow.
 /// Slide 1 is the welcome slide (drawn programmatically with the logo);
 /// slides 2-5 are real Rec Room game screenshots with tutorial text.
@@ -34,4 +38,9 @@ pub static SLIDE5_BMP_BYTES: &[u8] = include_bytes!("../assets/slide5.bmp");
 /// install before assigning the path to a shortcut's icon location.
 pub fn write_icon_ico(dest: &std::path::Path) -> std::io::Result<()> {
     std::fs::write(dest, ICON_ICO_BYTES)
+}
+
+/// Write the Ripo Team launcher icon for Windows shortcuts.
+pub fn write_ripo_team_icon_ico(dest: &std::path::Path) -> std::io::Result<()> {
+    std::fs::write(dest, RIPO_TEAM_ICON_ICO_BYTES)
 }

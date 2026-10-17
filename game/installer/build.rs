@@ -1,8 +1,8 @@
 //! Windows resource embedding for FluxRec-Setup.exe.
 //!
-//! On Windows CI this embeds `fluxrec.ico` as the executable's icon plus
+//! On Windows CI this embeds `ripo-team.ico` as the launcher's icon plus
 //! version metadata (product name, file description, version), so the setup
-//! file shows the blue Flux Rec icon in Explorer and its Properties dialog
+//! file shows the Ripo Team mark in Explorer and its Properties dialog
 //! instead of the default Rust placeholder.
 //!
 //! On any non-Windows host/target this is a silent no-op, so `cargo check`
@@ -27,9 +27,9 @@ fn main() {
         | (nums[3] as u64);
 
     let mut res = winres::WindowsResource::new();
-    res.set_icon("fluxrec.ico");
-    res.set("FileDescription", "Flux Rec Setup");
-    res.set("ProductName", "Flux Rec");
+    res.set_icon("ripo-team.ico");
+    res.set("FileDescription", "Ripo Team Launcher Setup");
+    res.set("ProductName", "Ripo Team Launcher");
     res.set("CompanyName", "Ripo Team");
     res.set("LegalCopyright", "Ripo Team");
     res.set_version_info(winres::VersionInfo::FILEVERSION, ver);
