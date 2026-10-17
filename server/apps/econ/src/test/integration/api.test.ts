@@ -2429,6 +2429,53 @@ describe('econ endpoints', () => {
 		expect(await res.json()).toEqual([])
 	})
 
+	test('serves 2025 consumable definitions and resolves real model configurations in bulk', async () => {
+		const allResponse = await exports.default.fetch(
+			`${ORIGIN}/api/consumables/v1/all?supportedVersion=2`
+		)
+		expect(allResponse.status).toBe(200)
+		const definitions = (await allResponse.json()) as Array<{
+			ConfigurationData: string | null
+			ConsumableItemDesc: string
+			FriendlyName: string
+			ThumbnailImageName: string | null
+		}>
+		expect(definitions.length).toBeGreaterThanOrEqual(500)
+
+		const apple = definitions.find((definition) => definition.FriendlyName === 'Apple')!
+		const appleConfiguration = JSON.parse(apple.ConfigurationData!) as {
+			UnityAssetData: { UnityAssetId: string; ReferencedUnityAssetIds: string[] }
+		}
+		expect(appleConfiguration.UnityAssetData.UnityAssetId).toBe(
+			'52106138-cc33-4bd1-86fa-91adf31aca95'
+		)
+		expect(appleConfiguration.UnityAssetData.ReferencedUnityAssetIds).toHaveLength(3)
+		expect(apple.ThumbnailImageName).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
+
+		const potion = definitions.find((definition) => definition.FriendlyName === 'Blue Pulse Potion')!
+		expect(potion.ConfigurationData).toBeTruthy()
+		expect(potion.ThumbnailImageName).toBeTruthy()
+
+		const form = new URLSearchParams()
+		form.append('descriptors', apple.ConsumableItemDesc)
+		form.append('descriptors', potion.ConsumableItemDesc)
+		form.append('descriptors', 'not-a-real-consumable')
+		const bulkResponse = await exports.default.fetch(
+			`${ORIGIN}/api/consumables/v1/query/bulk`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: form.toString(),
+			}
+		)
+		expect(bulkResponse.status).toBe(200)
+		const resolved = (await bulkResponse.json()) as typeof definitions
+		expect(resolved.map((definition) => definition.ConsumableItemDesc)).toEqual([
+			apple.ConsumableItemDesc,
+			potion.ConsumableItemDesc,
+		])
+	})
+
 	test('POST /api/consumables/v1/consume reduces the count and deletes the row at zero', async () => {
 		// Seed account 313 with two Supreme Pizza instances (counts 3 and 1).
 		await grantConsumable(env.DB, 313, 'Supreme Pizza', 3)

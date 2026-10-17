@@ -4641,6 +4641,26 @@ describe('Econ service proxies', () => {
 		expect(detail.status).toBe(200)
 		expect(await detail.json()).toEqual({ forwarded: '/api/items/purchaseInfos' })
 
+		const definitions = await app.fetch(
+			new Request(`${ORIGIN}/api/consumables/v1/all?supportedVersion=2`),
+			fakeEnv
+		)
+		expect(definitions.status).toBe(200)
+		expect(await definitions.json()).toEqual({ forwarded: '/api/consumables/v1/all' })
+
+		const descriptors = new URLSearchParams()
+		descriptors.append('descriptors', 'apple-desc')
+		const lookup = await app.fetch(
+			new Request(`${ORIGIN}/api/consumables/v1/query/bulk`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: descriptors.toString(),
+			}),
+			fakeEnv
+		)
+		expect(lookup.status).toBe(200)
+		expect(await lookup.json()).toEqual({ forwarded: '/api/consumables/v1/query/bulk' })
+
 		const inventory = await app.fetch(
 			new Request(`${ORIGIN}/api/consumables/v2/getUnlocked`, {
 				headers: { Authorization: 'Bearer test-token' },
@@ -4655,6 +4675,18 @@ describe('Econ service proxies', () => {
 				method: 'POST',
 				authorization: 'Bearer test-token',
 				body: payload,
+			},
+			{
+				url: 'https://proxy.internal/api/consumables/v1/all?supportedVersion=2',
+				method: 'GET',
+				authorization: null,
+				body: '',
+			},
+			{
+				url: 'https://proxy.internal/api/consumables/v1/query/bulk',
+				method: 'POST',
+				authorization: null,
+				body: 'descriptors=apple-desc',
 			},
 			{
 				url: 'https://proxy.internal/api/consumables/v2/getUnlocked',
