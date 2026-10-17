@@ -140,7 +140,7 @@ mod imp {
     use crate::library::{LibCmd, LibMsg};
     use std::ffi::c_void;
     use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-    use windows::core::w;
+    use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::*;
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::System::LibraryLoader::*;
@@ -306,6 +306,8 @@ mod imp {
                 style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(wnd_proc),
                 hInstance: hinst.into(),
+                hIcon: LoadIconW(Some(hinst.into()), PCWSTR(1usize as *const u16))
+                    .unwrap_or_default(),
                 hCursor: LoadCursorW(None, IDC_ARROW).map_err(|_| ())?,
                 hbrBackground: HBRUSH(std::ptr::null_mut()),
                 lpszClassName: cls,
@@ -490,6 +492,8 @@ mod imp {
                 style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(splash_proc),
                 hInstance: hinst.into(),
+                hIcon: LoadIconW(Some(hinst.into()), PCWSTR(1usize as *const u16))
+                    .unwrap_or_default(),
                 hCursor: LoadCursorW(None, IDC_ARROW).map_err(|_| ())?,
                 hbrBackground: HBRUSH(std::ptr::null_mut()),
                 lpszClassName: cls,

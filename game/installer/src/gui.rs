@@ -201,6 +201,7 @@ mod imp {
             style: CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW,
             lpfnWndProc: Some(wnd_proc),
             hInstance: hinstance,
+            hIcon: LoadIconW(Some(hinstance), PCWSTR(1usize as *const u16)).unwrap_or_default(),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             hbrBackground: bg_brush,
             lpszClassName: class_name,
