@@ -2876,6 +2876,11 @@ describe('econ endpoints', () => {
 		const fiveStarBox = currentStore.StoreItems.find(
 			(item) => item.GiftDrop.FriendlyName === '5-Star Unique Box'
 		)!
+		expect(currentStore.StoreItems.indexOf(fiveStarBox)).toBe(
+			currentStore.StoreItems.findIndex(
+				(item) => item.GiftDrop.FriendlyName === '4-Star Unique Box'
+			) + 1
+		)
 		expect(fiveStarBox.PurchasableItemId).toBe(540)
 		expect(fiveStarBox.GiftDrop.GiftDropId).toBe(1979)
 		expect(fiveStarBox.GiftDrop.Rarity).toBe(50)

@@ -1126,6 +1126,11 @@ function withFiveStarUniqueBox(items: StoreItem[]): StoreItem[] {
 	}
 	const template = items.find(({ GiftDrop: drop }) => drop.FriendlyName === '4-Star Unique Box')
 	if (!template) return items
+	const insertAfter = items.reduce(
+		(lastIndex, item, index) =>
+			item.GiftDrop.FriendlyName === '4-Star Unique Box' ? index : lastIndex,
+		-1
+	)
 
 	const item: StoreItem = {
 		...template,
@@ -1153,7 +1158,8 @@ function withFiveStarUniqueBox(items: StoreItem[]): StoreItem[] {
 		IsFeatured: false,
 		PurchasableItemId: 540,
 	}
-	return [...items, ...enrichWithThumbnails([item], true)]
+	const [fiveStar] = enrichWithThumbnails([item], true)
+	return [...items.slice(0, insertAfter + 1), fiveStar, ...items.slice(insertAfter + 1)]
 }
 
 interface StoreItem {
