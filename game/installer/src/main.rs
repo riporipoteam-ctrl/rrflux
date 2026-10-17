@@ -923,6 +923,10 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         let desktop_dir = String::from_utf8_lossy(&desktop.stdout).trim().to_string();
         let desktop_lnk = PathBuf::from(format!("{desktop_dir}\\Ripo Team Launcher.lnk"));
+        let old_start_menu = PathBuf::from(format!(
+            "{appdata}\\Microsoft\\Windows\\Start Menu\\Programs\\Flux Rec.lnk"
+        ));
+        let old_desktop_lnk = PathBuf::from(format!("{desktop_dir}\\Flux Rec.lnk"));
         // Ripo Team icon for both launcher shortcuts (fail-soft: generic icon if the
         // write fails).
         let icon_path = dir.join("ripo-team.ico");
@@ -931,6 +935,10 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
         }
         create_shortcut(&start_menu, &target, args, dir, Some(&icon_path))?;
         create_shortcut(&desktop_lnk, &target, args, dir, Some(&icon_path))?;
+        // The previous version created the same launcher under the game name.
+        // Remove those stale launcher shortcuts after their replacements exist.
+        let _ = std::fs::remove_file(old_start_menu);
+        let _ = std::fs::remove_file(old_desktop_lnk);
     }
     #[cfg(not(windows))]
     {
