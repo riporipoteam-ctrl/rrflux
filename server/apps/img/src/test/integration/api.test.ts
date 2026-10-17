@@ -138,7 +138,7 @@ describe('img endpoints', () => {
 
 	it('serves flat bundled store thumbnails without encoded path separators', async () => {
 		for (const key of ['food', 'potion', 'unique-box-5']) {
-			const res = await SELF.fetch(`${ORIGIN}/store-backpack-${key}.png?width=256&sig=p1`)
+			const res = await SELF.fetch(`${ORIGIN}/store-backpack-${key}-v2.png?width=256&sig=p1`)
 			expect(res.status, key).toBe(200)
 			expect(res.headers.get('content-type'), key).toBe('image/png')
 			expect(res.headers.get('content-signature'), key).toBeTruthy()

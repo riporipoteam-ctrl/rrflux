@@ -2453,7 +2453,7 @@ describe('econ endpoints', () => {
 			}>
 			expect(list).toHaveLength(1)
 			expect(list[0]).toMatchObject({ ConsumableItemDesc: desc, ConsumableItemId: 1616 })
-			expect(list[0].ThumbnailImageName).toBe('store-backpack-food.png')
+			expect(list[0].ThumbnailImageName).toBe('store-backpack-food-v2.png')
 			expect(JSON.parse(list[0].ConfigurationData).UnityAssetData.UnityAssetId).toBe(
 				'52106138-cc33-4bd1-86fa-91adf31aca95'
 			)
@@ -2491,18 +2491,18 @@ describe('econ endpoints', () => {
 			'52106138-cc33-4bd1-86fa-91adf31aca95'
 		)
 		expect(appleConfiguration.UnityAssetData.ReferencedUnityAssetIds).toHaveLength(3)
-		expect(apple.ThumbnailImageName).toBe('store-backpack-food.png')
+		expect(apple.ThumbnailImageName).toBe('store-backpack-food-v2.png')
 		expect(
 			definitions.find((definition) => definition.FriendlyName === 'Root Beer')?.ThumbnailImageName
-		).toBe('store-backpack-food.png')
+		).toBe('store-backpack-food-v2.png')
 		expect(
 			definitions.find((definition) => definition.FriendlyName === 'Assorted Donuts')
 				?.ThumbnailImageName
-		).toBe('store-backpack-food.png')
+		).toBe('store-backpack-food-v2.png')
 
 		const potion = definitions.find((definition) => definition.FriendlyName === 'Blue Pulse Potion')!
 		expect(potion.ConfigurationData).toBeTruthy()
-		expect(potion.ThumbnailImageName).toBe('store-backpack-potion.png')
+		expect(potion.ThumbnailImageName).toBe('store-backpack-potion-v2.png')
 
 		const form = new URLSearchParams()
 		form.append('descriptors', apple.ConsumableItemDesc)
@@ -2874,15 +2874,15 @@ describe('econ endpoints', () => {
 				.ThumbnailImageName
 		expect(thumbnailFor('PaintballSet Shoes')).toBe('avatar/bkte1bx9xwngkf63cfbzj2wei.png')
 		expect(thumbnailFor('Creator Expo 2025 Hoodie')).toBe('avatar/b98w6cpkgsf9mcfyfq27jqxl4.png')
-		expect(thumbnailFor('Apple')).toBe('store-backpack-food.png')
-		expect(thumbnailFor('Root Beer')).toBe('store-backpack-food.png')
-		expect(thumbnailFor('Assorted Donuts')).toBe('store-backpack-food.png')
-		expect(thumbnailFor('87 Flavor Cake')).toBe('store-backpack-food.png')
-		expect(thumbnailFor('Blue Pulse Potion')).toBe('store-backpack-potion.png')
-		expect(thumbnailFor('Alien Blaster')).toBe('store-backpack-weapon.png')
-		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('store-backpack-weapon.png')
-		expect(thumbnailFor('Cryptid Camera Skin')).toBe('store-backpack-camera.png')
-		expect(thumbnailFor('2-Star Unique Box')).toBe('store-backpack-unique-box-2.png')
+		expect(thumbnailFor('Apple')).toBe('store-backpack-food-v2.png')
+		expect(thumbnailFor('Root Beer')).toBe('store-backpack-food-v2.png')
+		expect(thumbnailFor('Assorted Donuts')).toBe('store-backpack-food-v2.png')
+		expect(thumbnailFor('87 Flavor Cake')).toBe('store-backpack-food-v2.png')
+		expect(thumbnailFor('Blue Pulse Potion')).toBe('store-backpack-potion-v2.png')
+		expect(thumbnailFor('Alien Blaster')).toBe('store-backpack-weapon-v2.png')
+		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('store-backpack-weapon-v2.png')
+		expect(thumbnailFor('Cryptid Camera Skin')).toBe('store-backpack-camera-v2.png')
+		expect(thumbnailFor('2-Star Unique Box')).toBe('store-backpack-unique-box-2-v2.png')
 		const fiveStarBox = currentStore.StoreItems.find(
 			(item) => item.GiftDrop.FriendlyName === '5-Star Unique Box'
 		)!
@@ -2896,7 +2896,7 @@ describe('econ endpoints', () => {
 		expect(fiveStarBox.GiftDrop.Rarity).toBe(50)
 		expect(fiveStarBox.Prices).toEqual([{ CurrencyType: 2, Price: 1100 }])
 		expect(fiveStarBox.SubscriberPrices).toEqual([{ CurrencyType: 2, Price: 990 }])
-		expect(fiveStarBox.GiftDrop.ThumbnailImageName).toBe('store-backpack-unique-box-5.png')
+		expect(fiveStarBox.GiftDrop.ThumbnailImageName).toBe('store-backpack-unique-box-5-v2.png')
 		const appleDrop = currentStore.StoreItems.find(
 			(item) => item.GiftDrop.FriendlyName === 'Apple'
 		)!.GiftDrop
