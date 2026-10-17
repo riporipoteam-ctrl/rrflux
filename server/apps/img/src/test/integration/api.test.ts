@@ -124,14 +124,13 @@ describe('img endpoints', () => {
 		expect(new Uint8Array(await res.arrayBuffer())).toHaveLength(67)
 	})
 
-	it('recovers missing store thumbnails from the canonical image host', async () => {
+	it('recovers a valid avatar PNG from the canonical image host', async () => {
 		const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])
 		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
 			const request = input instanceof Request ? input : new Request(input)
 			const requestUrl = new URL(request.url)
 			expect(requestUrl.host).toBe('img.recflare.net')
 			expect(requestUrl.pathname).toBe('/avatar/recovered-thumbnail.png')
-			expect(requestUrl.search).toBe('?width=128&sig=p1')
 			return new Response(imageBytes, {
 				status: 200,
 				headers: { 'content-type': 'image/png', 'content-length': String(imageBytes.length) },
@@ -152,43 +151,49 @@ describe('img endpoints', () => {
 		}
 	})
 
-	it('recovers item-specific thumbnail hashes from the canonical image host', async () => {
-		const imageBytes = new Uint8Array([255, 216, 255, 217])
-		const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
-			const request = input instanceof Request ? input : new Request(input)
-			const requestUrl = new URL(request.url)
-			expect(requestUrl.host).toBe('img.recflare.net')
-			expect(requestUrl.pathname).toBe('/5h9ul7otj4auhcbdvtdl2velt.png')
-			expect(requestUrl.search).toBe('?width=128&sig=p1')
-			return new Response(imageBytes, {
+	it('rejects the canonical JPEG placeholder for missing 2025 store PNGs', async () => {
+		const mockFetch = vi.fn(async () =>
+			new Response(new Uint8Array(3_988), {
 				status: 200,
-				headers: { 'content-type': 'image/jpeg', 'content-length': String(imageBytes.length) },
+				headers: { 'content-type': 'image/jpeg', 'content-length': '3988' },
 			})
-		})
+		)
 		vi.stubGlobal('fetch', mockFetch)
 
 		try {
-			const res = await unsignedFetch(
-				`${ORIGIN}/5h9ul7otj4auhcbdvtdl2velt.png?width=128&sig=p1`
-			)
-			expect(res.status).toBe(200)
-			expect(res.headers.get('content-type')).toBe('image/jpeg')
-			expect(new Uint8Array(await res.arrayBuffer())).toEqual(imageBytes)
-			expect(mockFetch).toHaveBeenCalledTimes(1)
+			for (const key of [
+				'5h9ul7otj4auhcbdvtdl2velt.png',
+				'evdt42n8s2y5vjf5s10ky2esv.png',
+			]) {
+				const res = await unsignedFetch(`${ORIGIN}/${key}?width=128&sig=p1`)
+				expect(res.status, key).toBe(200)
+				expect(res.headers.get('content-type'), key).toBe('image/png')
+				expect(new Uint8Array(await res.arrayBuffer()), key).toHaveLength(67)
+			}
+			expect(mockFetch).toHaveBeenCalledTimes(2)
 		} finally {
 			vi.unstubAllGlobals()
 		}
 	})
 
-	it('does not request arbitrary image names from the canonical host', async () => {
-		const mockFetch = vi.fn()
+	it('falls through to a stored item PNG when the canonical host returns its JPEG placeholder', async () => {
+		const key = '5h9ul7otj4auhcbdvtdl2velt.png'
+		const storedPng = new Uint8Array([...PNG_MAGIC, 1, 2, 3, 4])
+		await putBlob(env, 'IMAGES', key, storedPng.buffer, { contentType: 'image/png' })
+		const mockFetch = vi.fn(async () =>
+			new Response(new Uint8Array(3_988), {
+				status: 200,
+				headers: { 'content-type': 'image/jpeg', 'content-length': '3988' },
+			})
+		)
 		vi.stubGlobal('fetch', mockFetch)
 
 		try {
-			const res = await unsignedFetch(`${ORIGIN}/not-a-store-thumbnail.png?sig=p1`)
+			const res = await unsignedFetch(`${ORIGIN}/${key}`)
 			expect(res.status).toBe(200)
-			expect(new Uint8Array(await res.arrayBuffer())).toHaveLength(67)
-			expect(mockFetch).not.toHaveBeenCalled()
+			expect(res.headers.get('content-type')).toBe('image/png')
+			expect(new Uint8Array(await res.arrayBuffer())).toEqual(storedPng)
+			expect(mockFetch).toHaveBeenCalledTimes(1)
 		} finally {
 			vi.unstubAllGlobals()
 		}

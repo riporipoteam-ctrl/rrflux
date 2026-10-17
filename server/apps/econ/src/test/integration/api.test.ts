@@ -2449,9 +2449,11 @@ describe('econ endpoints', () => {
 				ConsumableItemDesc: string
 				ConsumableItemId: number
 				ConfigurationData: string
+				ThumbnailImageName: string
 			}>
 			expect(list).toHaveLength(1)
 			expect(list[0]).toMatchObject({ ConsumableItemDesc: desc, ConsumableItemId: 1616 })
+			expect(list[0].ThumbnailImageName).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
 			expect(JSON.parse(list[0].ConfigurationData).UnityAssetData.UnityAssetId).toBe(
 				'52106138-cc33-4bd1-86fa-91adf31aca95'
 			)
