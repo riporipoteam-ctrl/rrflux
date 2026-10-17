@@ -45,7 +45,7 @@ jobs:
 
       - name: Run focused store and consumable preview tests
         working-directory: server/apps/econ
-        run: pnpm run test -- src/test/integration/api.test.ts --testNamePattern='GET /api/consumables/v2/getUnlocked includes the matching 2025 model configuration|storefront 3 defaults anonymous browsing to sf3-2025 and retains build-aware legacy behavior|sf3-2025 is the authentic 2025 Watch-store capture'
+        run: pnpm exec vitest run src/test/integration/api.test.ts --testNamePattern='GET /api/consumables/v2/getUnlocked includes the matching 2025 model configuration|storefront 3 defaults anonymous browsing to sf3-2025 and retains build-aware legacy behavior|sf3-2025 is the authentic 2025 Watch-store capture'
 
       - name: Typecheck econ worker
         working-directory: server/apps/econ
