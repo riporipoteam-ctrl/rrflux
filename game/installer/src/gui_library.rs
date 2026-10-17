@@ -1,4 +1,4 @@
-//! Ripo Team Launcher v1.0.30 — game library UI.
+//! Ripo Team Launcher v1.0.31 — game library UI.
 //!
 //! A game-library style launcher (inspired by Steam/EGS):
 //! - Sidebar with Ripo Team branding, Library/Settings nav.
@@ -1217,7 +1217,7 @@ mod imp {
         draw_logo(mem, 24, TITLE_H + 20, 36, p.accent)?;
         draw_text(
             mem,
-            "RIPO TEAM",
+            "FLUX REC",
             72,
             TITLE_H + 24,
             150,
@@ -1229,7 +1229,7 @@ mod imp {
         )?;
         draw_text(
             mem,
-            "2025 CLIENT",
+            "2025 GAME BUILD",
             72,
             TITLE_H + 46,
             150,
@@ -1660,7 +1660,7 @@ mod imp {
         round_rect_outline(hdc, &update_card, 18, p.border)?;
         draw_text(
             hdc,
-            "INSTALL & UPDATE",
+            "AUTOMATIC UPDATES",
             update_card.left + 18,
             update_card.top + 16,
             220,
@@ -1681,6 +1681,13 @@ mod imp {
         } else {
             "Ready to play"
         };
+        let update_color = if !st.check_error.is_empty() {
+            COLORREF(0x005050D8)
+        } else if st.update_available || st.install_required {
+            p.accent
+        } else {
+            p.text
+        };
         draw_text(
             hdc,
             update_label,
@@ -1688,25 +1695,28 @@ mod imp {
             update_card.top + 42,
             update_card.right - update_card.left - 36,
             25,
-            if st.update_available || st.install_required {
-                p.accent
-            } else {
-                p.text
-            },
+            update_color,
             16,
             true,
             false,
         )?;
-        let update_sub = if st.update_available {
-            st.update_version.trim_start_matches("recflare-installer-v")
+        let update_sub = if st.checking {
+            "Checking the latest Flux Rec release…".to_string()
+        } else if st.update_available {
+            format!(
+                "Version {} installs when you launch the game.",
+                st.update_version
+                    .trim_start_matches("recflare-installer-v")
+                    .trim_start_matches('v')
+            )
         } else if !st.check_error.is_empty() {
-            "Could not check updates. Try again."
+            "Check failed. Flux Rec can still launch; retry here.".to_string()
         } else {
-            "Updates are checked before the game launches."
+            "A fresh check runs before every launch.".to_string()
         };
         draw_text(
             hdc,
-            update_sub,
+            &update_sub,
             update_card.left + 18,
             update_card.top + 74,
             update_card.right - update_card.left - 36,
@@ -1750,7 +1760,7 @@ mod imp {
             (
                 &rects.check_updates,
                 "Check for updates",
-                "Run a live release check",
+                "Check the latest setup release",
                 Hot::CheckForUpdates,
             ),
             (
