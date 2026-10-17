@@ -1,17 +1,27 @@
-name: Verify Econ Store regression tests
+name: Verify 2025 store preview regressions
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/verify-econ-store.yml'
+      - 'server/apps/econ/src/econ.app.ts'
+      - 'server/apps/econ/src/test/integration/api.test.ts'
+      - 'server/apps/econ/static/consumables.json'
+      - 'server/apps/econ/static/storefronts/sf2.json'
+      - 'server/apps/econ/static/storefronts/sf3-2025.json'
   push:
     branches: [main]
     paths:
       - '.github/workflows/verify-econ-store.yml'
       - 'server/apps/econ/src/econ.app.ts'
       - 'server/apps/econ/src/test/integration/api.test.ts'
+      - 'server/apps/econ/static/consumables.json'
       - 'server/apps/econ/static/storefronts/sf2.json'
+      - 'server/apps/econ/static/storefronts/sf3-2025.json'
 
 jobs:
   test:
-    name: Econ storefront integration test
+    name: 2025 store preview integration test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -33,6 +43,10 @@ jobs:
         working-directory: server
         run: pnpm install --no-frozen-lockfile
 
-      - name: Run Econ API integration tests
+      - name: Run focused store and consumable preview tests
         working-directory: server/apps/econ
-        run: pnpm run test -- src/test/integration/api.test.ts
+        run: pnpm exec vitest run src/test/integration/api.test.ts --testNamePattern='GET /api/consumables/v2/getUnlocked includes the matching 2025 model configuration|storefront 3 defaults anonymous browsing to sf3-2025 and retains build-aware legacy behavior|sf3-2025 is the authentic 2025 Watch-store capture'
+
+      - name: Typecheck econ worker
+        working-directory: server/apps/econ
+        run: pnpm run check:types

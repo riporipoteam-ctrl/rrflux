@@ -214,6 +214,21 @@ const consumableDefinitionsByDesc = new Map(
 	consumableDefinitions.map((definition) => [definition.ConsumableItemDesc, definition])
 )
 
+/** Model/configuration fields the 2025 client uses after resolving a consumable desc. */
+function consumablePreviewFor(desc: unknown): Record<string, unknown> | undefined {
+	if (typeof desc !== 'string' || desc === '') return undefined
+	const definition = consumableDefinitionsByDesc.get(desc)
+	if (!definition) return undefined
+	return {
+		ConsumableItemId: definition.ConsumableItemId,
+		ConfigurationData: definition.ConfigurationData,
+		ConfigurationVersion: definition.ConfigurationVersion,
+		ConsumableToolName: definition.ConsumableToolName,
+		IsRRO: definition.IsRRO,
+		RoomieCategory: definition.RoomieCategory,
+	}
+}
+
 // Carousel with REAL Rec Room item thumbnails (not AI images) - IDs must exist in toptoday
 const adCarouselItems = [
 	{
@@ -809,6 +824,13 @@ interface StoreGiftDrop {
 	/** Not on any captured entry; nothing here reads or sets one. */
 	TagList?: string
 	ConsumableItemDesc: string
+	/** Available model configuration for 2025 consumable previews, resolved by desc. */
+	ConsumableItemId?: number
+	ConfigurationData?: string | null
+	ConfigurationVersion?: number
+	ConsumableToolName?: string | null
+	IsRRO?: boolean
+	RoomieCategory?: number
 	AvatarItemDesc: string
 	/** A UGC item's guid. Not on any captured entry — the captures predate them. */
 	CustomAvatarItemId?: string | null
@@ -983,7 +1005,10 @@ const DESC_BY_NAME: Map<string, string> = (() => {
  * boxes (contents are rolled at grant time) and equipment (resolved by
  * `EquipmentModificationGuid`) keep their captured descs.
  */
-function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
+function enrichWithThumbnails(
+	items: StoreItem[],
+	includeConsumablePreview = false
+): StoreItem[] {
 	// Keep the storefront DTO field-for-field compatible with the client. It reads
 	// ThumbnailImageName and requests https://rec.net/{name}; the game patch rewrites
 	// that dead host to our img worker. The client rejects the non-native
@@ -1003,6 +1028,20 @@ function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
 		if (next.Tooltip == null) {
 			next.Tooltip = ''
 			changed = true
+		}
+		// Carry the consumable's Unity model configuration on the storefront DTO itself.
+		// The 2025 client does not request the standalone v1 definitions routes while
+		// browsing; it resolves the selected gift-drop from this storefront response.
+		const consumablePreview = includeConsumablePreview
+			? consumablePreviewFor(drop.ConsumableItemDesc)
+			: undefined
+		if (consumablePreview) {
+			for (const [key, value] of Object.entries(consumablePreview)) {
+				if (next[key] !== value) {
+					next[key] = value
+					changed = true
+				}
+			}
 		}
 		// Keep existing native thumbnail names; fill missing names from the catalog.
 		const existingThumb = drop.ThumbnailImageName
@@ -1040,6 +1079,55 @@ function enrichWithThumbnails(items: StoreItem[]): StoreItem[] {
 		if (!changed) return item
 		return { ...item, GiftDrop: next }
 	})
+}
+
+/**
+ * The captured 2025 Watch store omits the 5-Star Unique Box even though the client build,
+ * reward rarity ladder, and shipped `unique-box-5.png` all support it. Expose it as a small
+ * project-side extension without changing the archived capture. IDs fill the gap between
+ * the captured 4-Star and 2-Star rows; price follows their 200/500/800 token progression.
+ */
+function withFiveStarUniqueBox(items: StoreItem[]): StoreItem[] {
+	if (
+		items.some(
+			({ GiftDrop: drop, PurchasableItemId }) =>
+				drop.FriendlyName === '5-Star Unique Box' ||
+				drop.GiftDropId === 1979 ||
+				PurchasableItemId === 540
+		)
+	) {
+		return items
+	}
+	const template = items.find(({ GiftDrop: drop }) => drop.FriendlyName === '4-Star Unique Box')
+	if (!template) return items
+
+	const item: StoreItem = {
+		...template,
+		GiftDrop: {
+			...template.GiftDrop,
+			GiftDropId: 1979,
+			FriendlyName: '5-Star Unique Box',
+			Tooltip: "Equal chance of getting each 5-star item that you don't own.",
+			IsQuery: true,
+			Unique: true,
+			Rarity: 50,
+			QueryRedirectRarity: 50,
+			Context: 0,
+			Currency: 0,
+			CurrencyType: 0,
+			ItemSetId: 44,
+			ItemSetFriendlyName: 'Star Boxes',
+		},
+		Prices: [{ CurrencyType: 2, Price: 1100 }],
+		SubscriberPrices: [{ CurrencyType: 2, Price: 990 }],
+		NewUntil: null,
+		AvailableAt: null,
+		AvailableUntil: null,
+		CanBeGifted: true,
+		IsFeatured: false,
+		PurchasableItemId: 540,
+	}
+	return [...items, ...enrichWithThumbnails([item], true)]
 }
 
 interface StoreItem {
@@ -1262,7 +1350,10 @@ async function loadCachedStorefrontResponse(c: Context<App>, path: string): Prom
 		// Same enrichment the listing routes apply (thumbnails + real catalog descs),
 		// so what is bought is what was browsed and the grant keys the inventory row
 		// by the catalog's AvatarItemDesc.
-		catalog.StoreItems = enrichWithThumbnails(catalog.StoreItems)
+		catalog.StoreItems = enrichWithThumbnails(catalog.StoreItems, path === '/sf3-2025.json')
+		if (path === '/sf3-2025.json') {
+			catalog.StoreItems = withFiveStarUniqueBox(catalog.StoreItems)
+		}
 	}
 	const response = new Response(JSON.stringify(catalog), {
 		headers: {
@@ -5219,7 +5310,15 @@ const app = new Hono<App>({ strict: false })
 		async (c) => {
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
-			return c.json(await getConsumables(c.env.DB, id))
+			const unlocked = await getConsumables(c.env.DB, id)
+			const build = await storefrontBuild(c)
+			if (build === null || build <= LEGACY_CLIENT_BUILD) return c.json(unlocked)
+			return c.json(
+				unlocked.map((item) => ({
+					...item,
+					...consumablePreviewFor(item.ConsumableItemDesc),
+				}))
+			)
 		}
 	)
 

@@ -2429,6 +2429,45 @@ describe('econ endpoints', () => {
 		expect(await res.json()).toEqual([])
 	})
 
+	test('GET /api/consumables/v2/getUnlocked includes the matching 2025 model configuration', async () => {
+		const accountId = 987654321
+		const desc = 'Ygp1Ldz9Y0i2l9c-Cch7WQ'
+		const cleanup = () =>
+			env.DB.prepare('DELETE FROM consumable WHERE account_id = ?1').bind(accountId).run()
+		await cleanup()
+		await env.DB.prepare(
+			'INSERT INTO consumable (account_id, consumable_item_desc, count, created_at) VALUES (?1, ?2, ?3, ?4)'
+		)
+			.bind(accountId, desc, 1, '2026-10-17T00:00:00.000Z')
+			.run()
+		try {
+			const res = await exports.default.fetch(`${ORIGIN}/api/consumables/v2/getUnlocked`, {
+				headers: await bearer(String(accountId), undefined, '20250718.01'),
+			})
+			expect(res.status).toBe(200)
+			const list = (await res.json()) as Array<{
+				ConsumableItemDesc: string
+				ConsumableItemId: number
+				ConfigurationData: string
+			}>
+			expect(list).toHaveLength(1)
+			expect(list[0]).toMatchObject({ ConsumableItemDesc: desc, ConsumableItemId: 1616 })
+			expect(JSON.parse(list[0].ConfigurationData).UnityAssetData.UnityAssetId).toBe(
+				'52106138-cc33-4bd1-86fa-91adf31aca95'
+			)
+
+			const legacy = await exports.default.fetch(`${ORIGIN}/api/consumables/v2/getUnlocked`, {
+				headers: await bearer(String(accountId), undefined, '20230414'),
+			})
+			expect(legacy.status).toBe(200)
+			const legacyList = (await legacy.json()) as Array<Record<string, unknown>>
+			expect(legacyList).toHaveLength(1)
+			expect(legacyList[0]).not.toHaveProperty('ConfigurationData')
+		} finally {
+			await cleanup()
+		}
+	})
+
 	test('serves 2025 consumable definitions and resolves real model configurations in bulk', async () => {
 		const allResponse = await exports.default.fetch(
 			`${ORIGIN}/api/consumables/v1/all?supportedVersion=2`
@@ -2739,10 +2778,19 @@ describe('econ endpoints', () => {
 			return (await res.json()) as {
 				StorefrontType: number
 				StoreItems: Array<{
+					PurchasableItemId: number
+					Prices: Array<{ CurrencyType: number; Price: number }>
+					SubscriberPrices?: Array<{ CurrencyType: number; Price: number }> | null
 					GiftDrop: {
 						FriendlyName: string
+						GiftDropId?: number
+						Rarity?: number
 						ThumbnailImageName?: string
 						ConsumableItemDesc?: string
+						ConsumableItemId?: number
+						ConfigurationData?: string | null
+						ConfigurationVersion?: number
+						ConsumableToolName?: string | null
 						EquipmentModificationGuid?: string
 						IsQuery?: boolean
 					}
@@ -2756,11 +2804,19 @@ describe('econ endpoints', () => {
 		// INCLUSIVE and that build keeps the captured sf3 exactly as it has always had it.
 		const legacy = await store(await at('20230414'))
 		expect(legacy.StoreItems).toHaveLength(sf3.StoreItems.length)
+		expect(
+			legacy.StoreItems.find((item) => item.GiftDrop.FriendlyName === 'Apple')?.GiftDrop
+				.ConsumableItemId
+		).toBeUndefined()
+		expect(
+			legacy.StoreItems.some((item) => item.GiftDrop.FriendlyName === '5-Star Unique Box')
+		).toBe(false)
 		// A same-day rebuild sorts by its DATE, not the `.NN` suffix.
 		expect((await store(await at('20230414.02'))).StoreItems).toHaveLength(sf3.StoreItems.length)
 
-		// Anonymous public browsing gets the current catalog when it cannot supply a build.
-		expect((await store({})).StoreItems).toHaveLength(sf32025.StoreItems.length)
+		// Anonymous public browsing gets the current catalog and the project's 5-star box
+		// extension when it cannot supply a build.
+		expect((await store({})).StoreItems).toHaveLength(sf32025.StoreItems.length + 1)
 		// A signed but unversioned token and malformed build remain on the legacy snapshot.
 		expect((await store(await bearer())).StoreItems).toHaveLength(sf3.StoreItems.length)
 		expect((await store(await at('not-a-build'))).StoreItems).toHaveLength(sf3.StoreItems.length)
@@ -2769,10 +2825,41 @@ describe('econ endpoints', () => {
 		for (const version of ['20230616', '20250424.01', '20250718.01']) {
 			const merged = await store(await at(version))
 			expect(merged.StorefrontType, version).toBe(3)
-			expect(merged.StoreItems.length, version).toBe(sf32025.StoreItems.length)
+			expect(merged.StoreItems.length, version).toBe(sf32025.StoreItems.length + 1)
 			expect(merged.StoreItems.length, version).toBeGreaterThan(sf3.StoreItems.length)
 		}
 		const currentStore = await store(await at('20250718.01'))
+		const definitionsResponse = await exports.default.fetch(
+			`${ORIGIN}/api/consumables/v1/all?supportedVersion=2`
+		)
+		expect(definitionsResponse.status).toBe(200)
+		const definitions = (await definitionsResponse.json()) as Array<{
+			ConsumableItemDesc: string
+			ConsumableItemId: number
+			ConfigurationData: string | null
+			ConfigurationVersion: number
+			ConsumableToolName: string | null
+			IsRRO: boolean
+			RoomieCategory: number
+		}>
+		const definitionsByDesc = new Map(
+			definitions.map((definition) => [definition.ConsumableItemDesc, definition])
+		)
+		const configuredStoreDrops = currentStore.StoreItems.flatMap(({ GiftDrop }) => {
+			const definition = definitionsByDesc.get(GiftDrop.ConsumableItemDesc ?? '')
+			return definition ? [{ drop: GiftDrop, definition }] : []
+		})
+		expect(configuredStoreDrops.length).toBeGreaterThan(100)
+		for (const { drop, definition } of configuredStoreDrops) {
+			expect(drop).toMatchObject({
+				ConsumableItemId: definition.ConsumableItemId,
+				ConfigurationData: definition.ConfigurationData,
+				ConfigurationVersion: definition.ConfigurationVersion,
+				ConsumableToolName: definition.ConsumableToolName,
+				IsRRO: definition.IsRRO,
+				RoomieCategory: definition.RoomieCategory,
+			})
+		}
 		const thumbnailFor = (name: string) =>
 			currentStore.StoreItems.find((item) => item.GiftDrop.FriendlyName === name)?.GiftDrop
 				.ThumbnailImageName
@@ -2784,13 +2871,35 @@ describe('econ endpoints', () => {
 		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('store/backpack/weapon.png')
 		expect(thumbnailFor('Cryptid Camera Skin')).toBe('store/backpack/camera.png')
 		expect(thumbnailFor('2-Star Unique Box')).toBe('store/backpack/unique-box-2.png')
+		const fiveStarBox = currentStore.StoreItems.find(
+			(item) => item.GiftDrop.FriendlyName === '5-Star Unique Box'
+		)!
+		expect(fiveStarBox.PurchasableItemId).toBe(540)
+		expect(fiveStarBox.GiftDrop.GiftDropId).toBe(1979)
+		expect(fiveStarBox.GiftDrop.Rarity).toBe(50)
+		expect(fiveStarBox.Prices).toEqual([{ CurrencyType: 2, Price: 1100 }])
+		expect(fiveStarBox.SubscriberPrices).toEqual([{ CurrencyType: 2, Price: 990 }])
+		expect(fiveStarBox.GiftDrop.ThumbnailImageName).toBe('store/backpack/unique-box-5.png')
+		const appleDrop = currentStore.StoreItems.find(
+			(item) => item.GiftDrop.FriendlyName === 'Apple'
+		)!.GiftDrop
+		expect(appleDrop.ConsumableItemId).toBe(1616)
+		expect(appleDrop.ConfigurationVersion).toBe(2)
+		expect(
+			JSON.parse(appleDrop.ConfigurationData!).UnityAssetData.UnityAssetId
+		).toBe('52106138-cc33-4bd1-86fa-91adf31aca95')
+		const potionDrop = currentStore.StoreItems.find(
+			(item) => item.GiftDrop.FriendlyName === 'Blue Pulse Potion'
+		)!.GiftDrop
+		expect(potionDrop.ConsumableToolName).toBe('[AvatarEffectPotionConsumableTool]')
+		expect(JSON.parse(potionDrop.ConfigurationData!).EffectKeys).toHaveLength(1)
 		const backpackRows = currentStore.StoreItems.filter(
 			({ GiftDrop }) =>
 				GiftDrop.ConsumableItemDesc ||
 				GiftDrop.EquipmentModificationGuid ||
 				GiftDrop.IsQuery === true
 		)
-		expect(backpackRows).toHaveLength(330)
+		expect(backpackRows).toHaveLength(331)
 		expect(
 			backpackRows.every(({ GiftDrop }) =>
 				GiftDrop.ThumbnailImageName?.startsWith('store/backpack/')
@@ -2802,6 +2911,42 @@ describe('econ endpoints', () => {
 		// reused PurchasableItemIds over time — so cross-snapshot id equality is not asserted.)
 		// The fixture costs 600, so account 42 is credited first.
 		await creditCurrency(env.DB, 42, CurrencyType.RecCenterTokens, 10000, DEFAULT_STARTING_TOKENS)
+		const fiveStarPurchase = await exports.default.fetch(
+			`${ORIGIN}/api/storefronts/v2/buyItem`,
+			{
+				method: 'POST',
+				headers: { ...(await at('20250718.01')), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					StorefrontType: 3,
+					PurchasableItemId: fiveStarBox.PurchasableItemId,
+					CurrencyType: 2,
+					RequestedPrice: fiveStarBox.Prices[0]!.Price,
+				}),
+			}
+		)
+		expect(fiveStarPurchase.status).toBe(200)
+		const fiveStarResult = (await fiveStarPurchase.json()) as {
+			Balance: number
+			BalanceUpdates: Array<{
+				Data: Array<{
+					Id: number
+					AvatarItemDesc: string
+					EquipmentModificationGuid: string
+					GiftRarity: number
+				}>
+			}>
+		}
+		expect(fiveStarResult.Balance).toBe(-1100)
+		expect(fiveStarResult.BalanceUpdates[0]?.Data[0]).toMatchObject({
+			GiftRarity: 50,
+		})
+		const fiveStarReward = fiveStarResult.BalanceUpdates[0]?.Data[0]
+		expect(
+			(fiveStarReward?.AvatarItemDesc ?? '') !== '' ||
+				(fiveStarReward?.EquipmentModificationGuid ?? '') !== ''
+		).toBe(true)
+		expect(fiveStarResult.BalanceUpdates[0]?.Data[0]?.Id).toBeGreaterThan(0)
+
 		const bowtie = await exports.default.fetch(`${ORIGIN}/api/storefronts/v2/buyItem`, {
 			method: 'POST',
 			headers: { ...(await at('20230414')), 'Content-Type': 'application/json' },
