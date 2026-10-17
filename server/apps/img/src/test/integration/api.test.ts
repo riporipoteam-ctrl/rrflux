@@ -26,6 +26,7 @@ function jpegSize(bytes: Uint8Array): { width: number; height: number } {
 
 // A tiny valid JPEG magic-number blob — enough to assert round-tripping.
 const IMAGE_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46])
+const PNG_MAGIC = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
 // Public half (SPKI DER, base64) of the dev IMG_SIGNING_KEY in wrangler.jsonc —
 // used to verify the Content-Signature header.
@@ -229,6 +230,40 @@ describe('img endpoints', () => {
 		expect(body.length).toBeGreaterThan(IMAGE_BYTES.length)
 		expect(body[0]).toBe(0xff)
 		expect(body[1]).toBe(0xd8)
+	})
+
+	it('serves the bundled 2025 backpack thumbnail fallbacks as real PNGs', async () => {
+		const keys = [
+			'store/backpack/food.png',
+			'store/backpack/potion.png',
+			'store/backpack/consumable.png',
+			'store/backpack/weapon.png',
+			'store/backpack/camera.png',
+			'store/backpack/maker-pen.png',
+			'store/backpack/equipment.png',
+			'store/backpack/gift-box.png',
+			...Array.from({ length: 6 }, (_, stars) => `store/backpack/unique-box-${stars}.png`),
+		]
+
+		for (const key of keys) {
+			const res = await SELF.fetch(`${ORIGIN}/${key}`)
+			expect(res.status, key).toBe(200)
+			expect(res.headers.get('content-type'), key).toMatch(/^image\/png/)
+			const bytes = new Uint8Array(await res.arrayBuffer())
+			expect(bytes.length, key).toBeGreaterThan(1000)
+			expect(bytes.slice(0, 8), key).toEqual(PNG_MAGIC)
+		}
+
+		const transformed = await unsignedFetch(`${ORIGIN}/store/backpack/potion.png?width=128&sig=p1`)
+		expect(transformed.status).toBe(200)
+		expect(transformed.headers.get('content-type')).toBe('image/png')
+		expect(transformed.headers.get('content-signature')).toBeTruthy()
+		const image = PhotonImage.new_from_byteslice(new Uint8Array(await transformed.arrayBuffer()))
+		try {
+			expect(image.get_width()).toBe(128)
+		} finally {
+			image.free()
+		}
 	})
 
 	it('returns 304 when If-None-Match matches the etag', async () => {
