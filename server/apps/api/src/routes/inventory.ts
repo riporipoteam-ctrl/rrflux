@@ -11,6 +11,27 @@ import type { App } from '../context'
 // account-scoped inventory rows, instead of acknowledging the request with an empty list.
 export const inventoryRoutes = new Hono<App>({ strict: false })
 	.get(
+		'/api/consumables/v1/all',
+		describeRoute({
+			tags: ['Inventory'],
+			summary: 'All consumable definitions',
+			description:
+				'Forwards the public consumable definitions to Econ, including the Unity model configuration used by the 2025 client.',
+			responses: { 200: json(JsonArray, 'Consumable item definitions') },
+		}),
+		proxyTo((env) => env.ECON)
+	)
+	.post(
+		'/api/consumables/v1/query/bulk',
+		describeRoute({
+			tags: ['Inventory'],
+			summary: 'Resolve consumable definitions in bulk',
+			description: 'Forwards a consumable descriptor lookup to Econ.',
+			responses: { 200: json(JsonArray, 'Matching consumable item definitions') },
+		}),
+		proxyTo((env) => env.ECON)
+	)
+	.get(
 		'/api/equipment/v2/getUnlocked',
 		describeRoute({
 			tags: ['Inventory'],

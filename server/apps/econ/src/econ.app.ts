@@ -41,6 +41,7 @@ import { BalanceAddType } from '../../notify/src/notification-payloads'
 import { NotificationType } from '../../notify/src/notification-types'
 import avatarItemCatalog from '../static/db/avatar-items.json'
 import store2025ThumbnailMap from '../static/db/2025-store-thumbnail-map.json'
+import consumableDefinitions from '../static/consumables.json'
 import defaultAvatarItems from '../static/default-avatar-items.json'
 import defaultAvatar from '../static/default-avatar.json'
 import defaultBaseAvatarItems from '../static/default-base-avatar-items.json'
@@ -208,6 +209,10 @@ import type { Equipment } from './equipment-db'
 import type { AvatarItem } from './inventory-db'
 import type { RoomConsumable } from './room-consumable-db'
 import type { RoomCurrency, RoomCurrencyPurchaseOffer } from './room-currency-db'
+
+const consumableDefinitionsByDesc = new Map(
+	consumableDefinitions.map((definition) => [definition.ConsumableItemDesc, definition])
+)
 
 // Carousel with REAL Rec Room item thumbnails (not AI images) - IDs must exist in toptoday
 const adCarouselItems = [
@@ -3188,6 +3193,59 @@ const app = new Hono<App>({ strict: false })
 
 	.onError(withOnError())
 	.notFound(withNotFound())
+
+	// Public consumable definitions used by the 2025 client to resolve backpack item
+	// thumbnails and Unity models. Keep the serialized ConfigurationData intact: it carries
+	// the Unity asset id and dependencies the client needs to load the actual model.
+	.get(
+		'/api/consumables/v1/all',
+		describeRoute({
+			tags: ['Consumables'],
+			summary: 'All consumable definitions',
+			description:
+				'Public item definitions, including the Unity model configuration and thumbnail name used by the 2025 client.',
+			responses: { 200: json(JsonArray, 'Consumable item definitions') },
+		}),
+		(c) => c.json(consumableDefinitions)
+	)
+	.post(
+		'/api/consumables/v1/query/bulk',
+		describeRoute({
+			tags: ['Consumables'],
+			summary: 'Resolve consumable definitions in bulk',
+			description:
+				'Returns known consumable definitions for the requested item descriptors, preserving request order.',
+			responses: { 200: json(JsonArray, 'Matching consumable item definitions') },
+		}),
+		async (c) => {
+			const contentType = c.req.header('content-type') ?? ''
+			let body: unknown
+			if (contentType.includes('application/json')) {
+				body = await c.req.json().catch(() => null)
+			} else {
+				body = await c.req.parseBody({ all: true }).catch(() => null)
+			}
+			const values = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+			const rawDescriptors =
+				values.descriptors ??
+				values['descriptors[]'] ??
+				values.Descriptors ??
+				values.ConsumableItemDesc ??
+				values.ConsumableItemDescs ??
+				values.ConsumableItemDescriptions
+			const descriptors = Array.isArray(rawDescriptors)
+				? rawDescriptors.filter((value): value is string => typeof value === 'string')
+				: typeof rawDescriptors === 'string'
+					? [rawDescriptors]
+					: []
+			return c.json(
+				descriptors.flatMap((descriptor) => {
+					const definition = consumableDefinitionsByDesc.get(descriptor)
+					return definition ? [definition] : []
+				})
+			)
+		}
+	)
 
 	// A batch lookup of LOCKED avatar items — the client posts the descs it wants the locked
 	// state for and expects the matching item records back, as a BARE ARRAY.
