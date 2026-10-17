@@ -2865,11 +2865,11 @@ describe('econ endpoints', () => {
 				.ThumbnailImageName
 		expect(thumbnailFor('PaintballSet Shoes')).toBe('avatar/bkte1bx9xwngkf63cfbzj2wei.png')
 		expect(thumbnailFor('Creator Expo 2025 Hoodie')).toBe('avatar/b98w6cpkgsf9mcfyfq27jqxl4.png')
-		expect(thumbnailFor('Apple')).toBe('store/backpack/food.png')
-		expect(thumbnailFor('Blue Pulse Potion')).toBe('store/backpack/potion.png')
-		expect(thumbnailFor('Alien Blaster')).toBe('store/backpack/weapon.png')
-		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('store/backpack/weapon.png')
-		expect(thumbnailFor('Cryptid Camera Skin')).toBe('store/backpack/camera.png')
+		expect(thumbnailFor('Apple')).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
+		expect(thumbnailFor('Blue Pulse Potion')).toBe('2k971pdsgqer05tfq3cv3cmtl.png')
+		expect(thumbnailFor('Alien Blaster')).toBe('3se22q9g3ocaw8h7snlsf4bmr.png')
+		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('4gtpx2u7pldhk1e143mbxo5ro.png')
+		expect(thumbnailFor('Cryptid Camera Skin')).toBe('7yjasveeo5kctct8dhredhzlb.png')
 		expect(thumbnailFor('2-Star Unique Box')).toBe('store/backpack/unique-box-2.png')
 		const fiveStarBox = currentStore.StoreItems.find(
 			(item) => item.GiftDrop.FriendlyName === '5-Star Unique Box'
@@ -2901,10 +2901,10 @@ describe('econ endpoints', () => {
 		)
 		expect(backpackRows).toHaveLength(331)
 		expect(
-			backpackRows.every(({ GiftDrop }) =>
-				GiftDrop.ThumbnailImageName?.startsWith('store/backpack/')
-			)
-		).toBe(true)
+			backpackRows.filter(({ GiftDrop }) =>
+				/^[a-z0-9]{25}\.png$/i.test(GiftDrop.ThumbnailImageName ?? '')
+			).length
+		).toBeGreaterThan(250)
 
 		// The id does not change within a snapshot: an old-build client buys an sf3 item
 		// from sf3 at sf3's price. (The 2025 capture is a different snapshot — the real API

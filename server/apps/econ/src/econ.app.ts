@@ -917,10 +917,9 @@ const THUMBNAIL_BY_2025_CAI_NAME = new Map(
 )
 
 /**
- * The 2025 storefront capture still points backpack items at the original Rec Room image
- * CDN. Those hashes have no bytes in the local image store, so the image worker correctly
- * returns its transparent missing-image PNG. Use bundled 2025-client category art for
- * non-avatar backpack rows until their original item thumbnails are available locally.
+ * Fallback art for backpack entries without an item-specific thumbnail key. Store rows
+ * with 25-character image keys retain those keys and the img worker resolves them from
+ * the canonical image host. Gift boxes keep their bundled 2025-client art.
  */
 function backpackThumbnailFor(drop: any, name: string): string | undefined {
 	const starBox = name.match(/^([0-5])[- ]*star unique box$/)
@@ -1045,17 +1044,26 @@ function enrichWithThumbnails(
 		}
 		// Keep existing native thumbnail names; fill missing names from the catalog.
 		const existingThumb = drop.ThumbnailImageName
+		const backpackThumb = name ? backpackThumbnailFor(drop, name) : undefined
+		const hasItemSpecificStoreThumbnail =
+			typeof existingThumb === 'string' && /^[a-z0-9]{25}\.png$/i.test(existingThumb)
+		const usesBundledBoxArt =
+			backpackThumb === 'store/backpack/gift-box.png' ||
+			backpackThumb?.startsWith('store/backpack/unique-box-') === true
 		if (name) {
 			const downloadableId = drop.AvatarItemInfo?.DownloadableAvatarItemId
 			const recovered2025Thumb =
 				(typeof downloadableId === 'string' &&
 					THUMBNAIL_BY_2025_CAI_ID.get(downloadableId.toLowerCase())) ||
 				THUMBNAIL_BY_2025_CAI_NAME.get(name)
-			const backpackThumb = backpackThumbnailFor(drop, name)
 			if (recovered2025Thumb && existingThumb !== recovered2025Thumb) {
 				next.ThumbnailImageName = recovered2025Thumb
 				changed = true
-			} else if (backpackThumb && existingThumb !== backpackThumb) {
+			} else if (
+				backpackThumb &&
+				(usesBundledBoxArt || !hasItemSpecificStoreThumbnail) &&
+				existingThumb !== backpackThumb
+			) {
 				next.ThumbnailImageName = backpackThumb
 				changed = true
 			} else if (!existingThumb || typeof existingThumb !== 'string' || existingThumb.trim() === '') {

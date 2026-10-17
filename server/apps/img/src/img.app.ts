@@ -27,15 +27,17 @@ const FALLBACK_ASSET_PATH = '/DefaultProfileImage.jpg'
 
 /** Prefix extensionless keys resolve under in the shared `recflare-cdn` bucket. */
 const CDN_IMAGE_PREFIX = 'image/'
-const CANONICAL_AVATAR_IMAGE_ORIGIN = 'https://img.recflare.net'
+const CANONICAL_IMAGE_ORIGIN = 'https://img.recflare.net'
 
-/** Fetch a first-party store thumbnail from its canonical CDN origin on local miss. */
-async function fetchCanonicalAvatarImage(c: Context<App>, key: string): Promise<Response | null> {
-	if (!key.startsWith('avatar/')) return null
+/** Fetch a first-party thumbnail from its canonical CDN origin on local miss. */
+async function fetchCanonicalImage(c: Context<App>, key: string): Promise<Response | null> {
+	const isAvatarImage = key.startsWith('avatar/')
+	const isStoreItemThumbnail = /^[a-z0-9]{25}\.png$/i.test(key)
+	if (!isAvatarImage && !isStoreItemThumbnail) return null
 
 	const url = new URL(c.req.url)
 	url.protocol = 'https:'
-	url.host = new URL(CANONICAL_AVATAR_IMAGE_ORIGIN).host
+		url.host = new URL(CANONICAL_IMAGE_ORIGIN).host
 
 	try {
 		const headers = new Headers(c.req.raw.headers)
@@ -594,10 +596,10 @@ app.get(
 		}
 
 		// Original store thumbnails are available on the canonical host. Check it
-		// before Firestore so the large first-party catalog loads without a local
-		// database miss for every card; non-avatar/user images remain local-first.
-		const canonicalAvatarImage = await fetchCanonicalAvatarImage(c, key)
-		if (canonicalAvatarImage) return canonicalAvatarImage
+		// before Firestore so catalog cards load without a database miss. Restrict
+		// this fallback to avatar paths and 25-character item-thumbnail keys.
+		const canonicalImage = await fetchCanonicalImage(c, key)
+		if (canonicalImage) return canonicalImage
 
 		// Conditional requests only make sense for the untransformed object: a
 		// resized response carries no etag, so the client can never send a matching
