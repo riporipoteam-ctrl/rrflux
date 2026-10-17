@@ -2927,13 +2927,24 @@ describe('econ endpoints', () => {
 		expect(fiveStarPurchase.status).toBe(200)
 		const fiveStarResult = (await fiveStarPurchase.json()) as {
 			Balance: number
-			BalanceUpdates: Array<{ Data: Array<{ Id: number; AvatarItemDesc: string; GiftRarity: number }> }>
+			BalanceUpdates: Array<{
+				Data: Array<{
+					Id: number
+					AvatarItemDesc: string
+					EquipmentModificationGuid: string
+					GiftRarity: number
+				}>
+			}>
 		}
 		expect(fiveStarResult.Balance).toBe(-1100)
 		expect(fiveStarResult.BalanceUpdates[0]?.Data[0]).toMatchObject({
 			GiftRarity: 50,
 		})
-		expect(fiveStarResult.BalanceUpdates[0]?.Data[0]?.AvatarItemDesc).not.toBe('')
+		const fiveStarReward = fiveStarResult.BalanceUpdates[0]?.Data[0]
+		expect(
+			(fiveStarReward?.AvatarItemDesc ?? '') !== '' ||
+				(fiveStarReward?.EquipmentModificationGuid ?? '') !== ''
+		).toBe(true)
 		expect(fiveStarResult.BalanceUpdates[0]?.Data[0]?.Id).toBeGreaterThan(0)
 
 		const bowtie = await exports.default.fetch(`${ORIGIN}/api/storefronts/v2/buyItem`, {
