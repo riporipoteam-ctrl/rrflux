@@ -82,6 +82,8 @@ const SCREENSHOT_NAMES: &[&str] = &[
 // v1.0.5: the real Flux Rec logo (not the drawn approximation).
 #[cfg(windows)]
 const FLUXREC_LOGO_PNG: &[u8] = include_bytes!("../assets/fluxrec-logo.png");
+#[cfg(windows)]
+const RIPO_TEAM_LOGO_PNG: &[u8] = include_bytes!("../assets/ripo-team-logo.png");
 
 /// Release tags retain their historic internal prefix for updater compatibility.
 /// Keep that implementation detail out of every user-facing version label.
@@ -133,7 +135,7 @@ pub fn run_splash_gui(theme: Theme, rx: Receiver<()>) {
 mod imp {
     use super::{
         display_update_version, premultiply_channel, LibraryConfig, Theme, View, FLUXREC_LOGO_PNG,
-        SCREENSHOTS, SCREENSHOT_NAMES,
+        SCREENSHOTS, SCREENSHOT_NAMES, RIPO_TEAM_LOGO_PNG,
     };
     use crate::library::{LibCmd, LibMsg};
     use std::ffi::c_void;
@@ -266,6 +268,8 @@ mod imp {
         carousel_tick: u32,             // for auto-advance
         // v1.0.5: real Flux Rec logo bitmap
         logo_bitmap: HBITMAP,
+        // Launcher shell mark. Game views keep using `logo_bitmap` above.
+        team_logo_bitmap: HBITMAP,
         // v1.0.5: update check error message (empty if none)
         check_error: String,
     }
@@ -334,6 +338,7 @@ mod imp {
                 carousel_bitmaps: Vec::new(),
                 carousel_tick: 0,
                 logo_bitmap: HBITMAP(std::ptr::null_mut()),
+                team_logo_bitmap: HBITMAP(std::ptr::null_mut()),
                 check_error: String::new(),
             });
 
@@ -347,6 +352,7 @@ mod imp {
             }
             // v1.0.5: decode the real Flux Rec logo (128x128).
             state.logo_bitmap = png_to_bitmap(FLUXREC_LOGO_PNG, 128, 128);
+            state.team_logo_bitmap = png_to_bitmap(RIPO_TEAM_LOGO_PNG, 128, 128);
             let state_ptr = Box::into_raw(state);
 
             // Center on screen.
@@ -358,7 +364,7 @@ mod imp {
             let hwnd = CreateWindowExW(
                 WS_EX_APPWINDOW,
                 cls,
-                w!("Flux Rec Control Center"),
+                w!("Ripo Team Launcher"),
                 WS_POPUP | WS_VISIBLE,
                 x,
                 y,
@@ -370,7 +376,15 @@ mod imp {
                 Some(state_ptr as *const c_void),
             )
             .map_err(|_| {
-                let _ = Box::from_raw(state_ptr);
+                let failed_state = Box::from_raw(state_ptr);
+                for bitmap in [failed_state.logo_bitmap, failed_state.team_logo_bitmap] {
+                    if !bitmap.is_invalid() {
+                        let _ = DeleteObject(bitmap);
+                    }
+                }
+                for bitmap in failed_state.carousel_bitmaps {
+                    let _ = DeleteObject(bitmap);
+                }
             })?;
 
             // Rounded corners.
@@ -1141,7 +1155,7 @@ mod imp {
         fill_rect(mem, &title_r, p.bg_title)?;
         draw_text(
             mem,
-            "FLUX REC  ·  GAME LIBRARY",
+            "RIPO TEAM LAUNCHER",
             20,
             12,
             300,
@@ -1233,29 +1247,32 @@ mod imp {
         };
         fill_rect(mem, &side_r, p.bg_side)?;
 
-        // Brand mark + wordmark.
-        draw_logo(mem, 24, TITLE_H + 20, 36, p.accent)?;
+        // The launcher carries the studio mark; the game card below keeps the
+        // Flux Rec logo and the 2025 build label.
+        if draw_logo_bitmap(mem, st.team_logo_bitmap, 18, TITLE_H + 14, 54).is_err() {
+            draw_text(mem, "RT", 20, TITLE_H + 26, 50, 24, p.accent, 17, true, true)?;
+        }
         draw_text(
             mem,
-            "FLUX REC",
-            72,
-            TITLE_H + 24,
-            150,
+            "Ripo Team",
+            80,
+            TITLE_H + 22,
+            114,
             22,
             p.text,
-            15,
+            14,
             true,
             false,
         )?;
         draw_text(
             mem,
-            "2025 GAME BUILD",
-            72,
-            TITLE_H + 46,
-            150,
+            "GAME LIBRARY",
+            80,
+            TITLE_H + 43,
+            114,
             18,
             p.text_dim,
-            12,
+            10,
             false,
             false,
         )?;
@@ -2606,7 +2623,7 @@ mod imp {
         }
         draw_text(
             hdc,
-            &format!("Flux Rec launcher v{}  ·  Ripo Team", st.version),
+            &format!("Ripo Team Launcher v{}", st.version),
             left + 2,
             WIN_H - 38,
             right - left,
@@ -3058,6 +3075,9 @@ mod imp {
                     // v1.0.5: free logo bitmap.
                     if !(*ptr).logo_bitmap.is_invalid() {
                         let _ = DeleteObject((*ptr).logo_bitmap);
+                    }
+                    if !(*ptr).team_logo_bitmap.is_invalid() {
+                        let _ = DeleteObject((*ptr).team_logo_bitmap);
                     }
                 }
                 PostQuitMessage(0);

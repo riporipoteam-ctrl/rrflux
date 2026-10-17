@@ -187,8 +187,8 @@ mod imp {
             GuiMode::Launcher => w!("FluxRecLauncherGui"),
         };
         let title: PCWSTR = match mode {
-            GuiMode::Setup => w!("Flux Rec Setup"),
-            GuiMode::Launcher => w!("Flux Rec"),
+            GuiMode::Setup => w!("Ripo Team Launcher Setup"),
+            GuiMode::Launcher => w!("Ripo Team Launcher"),
         };
 
         let hinstance = HINSTANCE(GetModuleHandleW(None).map_err(|_| ())?.0);
@@ -527,11 +527,11 @@ mod imp {
                     if pt_in(pt, close_r) {
                         let (title, body) = match mode {
                             GuiMode::Setup => (
-                                w!("Flux Rec Setup"),
+                                w!("Ripo Team Launcher Setup"),
                                 w!("Close this window? Setup will continue in the background."),
                             ),
                             GuiMode::Launcher => (
-                                w!("Flux Rec"),
+                                w!("Ripo Team Launcher"),
                                 w!("Close this window? Flux Rec will continue starting in the background."),
                             ),
                         };
@@ -793,8 +793,8 @@ mod imp {
             let _ = DeleteObject(pen);
         }
         let title = match s.mode {
-            GuiMode::Setup => "Flux Rec Setup",
-            GuiMode::Launcher => "Flux Rec",
+            GuiMode::Setup => "Ripo Team Launcher Setup",
+            GuiMode::Launcher => "Ripo Team Launcher",
         };
         let rc = RECT {
             left: 20,

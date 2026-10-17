@@ -912,7 +912,7 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
     {
         let appdata = std::env::var("APPDATA").map_err(|e| e.to_string())?;
         let start_menu = PathBuf::from(format!(
-            "{appdata}\\Microsoft\\Windows\\Start Menu\\Programs\\Flux Rec.lnk"
+            "{appdata}\\Microsoft\\Windows\\Start Menu\\Programs\\Ripo Team Launcher.lnk"
         ));
         let desktop = stealth::hidden_command("powershell")
             .args([
@@ -922,11 +922,11 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
             .output()
             .map_err(|e| e.to_string())?;
         let desktop_dir = String::from_utf8_lossy(&desktop.stdout).trim().to_string();
-        let desktop_lnk = PathBuf::from(format!("{desktop_dir}\\Flux Rec.lnk"));
-        // Blue logo icon for both shortcuts (fail-soft: generic icon if the
+        let desktop_lnk = PathBuf::from(format!("{desktop_dir}\\Ripo Team Launcher.lnk"));
+        // Ripo Team icon for both launcher shortcuts (fail-soft: generic icon if the
         // write fails).
-        let icon_path = dir.join("fluxrec.ico");
-        if let Err(e) = assets::write_icon_ico(&icon_path) {
+        let icon_path = dir.join("ripo-team.ico");
+        if let Err(e) = assets::write_ripo_team_icon_ico(&icon_path) {
             eprintln!("[shortcut] WARNING: icon write failed ({}).", e);
         }
         create_shortcut(&start_menu, &target, args, dir, Some(&icon_path))?;
@@ -934,7 +934,13 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
     }
     #[cfg(not(windows))]
     {
-        create_shortcut(&PathBuf::from("Flux Rec.lnk"), &target, args, dir, None)?;
+        create_shortcut(
+            &PathBuf::from("Ripo Team Launcher.lnk"),
+            &target,
+            args,
+            dir,
+            None,
+        )?;
     }
     Ok(())
 }
