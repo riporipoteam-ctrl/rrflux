@@ -957,7 +957,7 @@ function backpackThumbnailFor(drop: any, name: string): string | undefined {
 		)
 			return 'store-backpack-weapon-v2.png'
 		if (
-			/\b(?:apple|cake|donuts?|pizza|popcorn|pretzel|sushi|chocolate|candy|nacho|ham|tomato|latte|tea|cola|bubbly|beer|mochi|dango|onigiri|turkey leg|cheese)\b/.test(
+			/\b(?:apples?|cakes?|donuts?|pizzas?|popcorn|pretzels?|sushi|chocolate|candy|nachos?|ham|tomatoes?|latte|tea|cola|bubbly|beer|mochi|dango|onigiri|turkey legs?|cheese)\b/.test(
 				name
 			)
 		)
