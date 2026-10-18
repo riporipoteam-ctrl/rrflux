@@ -870,7 +870,7 @@ mod imp {
         let previous_mode = SetStretchBltMode(hdc, HALFTONE);
         let _ = StretchBlt(hdc, x, y, w, h, mem, 0, 0, s.game_art_w, s.game_art_h, SRCCOPY);
         if previous_mode != 0 {
-            let _ = SetStretchBltMode(hdc, previous_mode);
+            let _ = SetStretchBltMode(hdc, STRETCH_BLT_MODE(previous_mode));
         }
         let _ = SelectObject(mem, old);
         let _ = DeleteDC(mem);
