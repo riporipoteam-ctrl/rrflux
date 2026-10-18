@@ -29,6 +29,16 @@ pub enum LibCmd {
     OpenInstallFolder,
     /// User changed the theme. The GUI applies it live; we persist it.
     SetTheme(gui_library::Theme),
+    /// Verify and repair the files this launcher can authoritatively restore.
+    VerifyFiles,
+    /// The player completed the first-run launcher welcome.
+    CompleteOnboarding,
+    /// Open Flux Social's existing sign-in page in the default browser.
+    OpenFluxLogin,
+    /// Open Flux Social's existing account creation page in the default browser.
+    OpenFluxSignup,
+    /// Open Flux Social's account-link page in the default browser.
+    OpenFluxSettings,
     /// User closed the window.
     Close,
 }
@@ -48,6 +58,8 @@ pub enum LibMsg {
     CheckFailed(String),
     /// Live player count; `None` means the request failed, not zero players.
     PlayerCount(Option<u32>),
+    /// Result of an explicit core-file verification and repair pass.
+    VerificationFinished { message: String, repaired: bool },
     /// Progress update during update-download/install (reuses GuiMsg shape).
     Progress {
         percent: u8,
@@ -63,6 +75,26 @@ fn state_dir() -> PathBuf {
     std::env::var("LOCALAPPDATA")
         .map(|l| PathBuf::from(l).join("RipoTeamLauncher"))
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+const ONBOARDING_MARKER: &str = "launcher-onboarding-v1";
+
+fn is_onboarding_complete(value: &str) -> bool {
+    value.trim() == ONBOARDING_MARKER
+}
+
+fn onboarding_complete() -> bool {
+    std::fs::read_to_string(state_dir().join("onboarding.txt"))
+        .map(|value| is_onboarding_complete(&value))
+        .unwrap_or(false)
+}
+
+fn save_onboarding_complete() {
+    let path = state_dir().join("onboarding.txt");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, ONBOARDING_MARKER);
 }
 
 /// Last time we did the slow network checks (update check, plugin sync,
@@ -114,7 +146,7 @@ fn theme_from_setting(setting: &str) -> gui_library::Theme {
 
 #[cfg(test)]
 mod theme_tests {
-    use super::theme_from_setting;
+    use super::{is_onboarding_complete, theme_from_setting, ONBOARDING_MARKER};
     use crate::gui_library::Theme;
 
     #[test]
@@ -127,6 +159,62 @@ mod theme_tests {
     fn saved_theme_choice_is_respected() {
         assert_eq!(theme_from_setting("light\n"), Theme::Light);
         assert_eq!(theme_from_setting("dark\n"), Theme::Dark);
+    }
+
+    #[test]
+    fn onboarding_marker_is_versioned_and_requires_an_exact_match() {
+        assert!(is_onboarding_complete(ONBOARDING_MARKER));
+        assert!(is_onboarding_complete("launcher-onboarding-v1\n"));
+        assert!(!is_onboarding_complete(""));
+        assert!(!is_onboarding_complete("launcher-onboarding-v0"));
+    }
+}
+
+#[cfg(test)]
+mod repair_tests {
+    use super::{smart_repair, LibMsg};
+    use std::sync::mpsc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn smart_repair_restores_modified_launcher_owned_binaries() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "fluxrec-core-repair-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Recroom_Release.exe"), b"MZtest").unwrap();
+        std::fs::write(dir.join("2025Patch.dll"), b"modified patch").unwrap();
+        std::fs::write(dir.join("Injector.exe"), b"modified injector").unwrap();
+        std::fs::write(dir.join("2025patch.ini"), b"[config]\n").unwrap();
+        for index in 0..110 {
+            std::fs::write(dir.join(format!("game-file-{index}.dat")), b"x").unwrap();
+        }
+        let (tx, _rx) = mpsc::channel::<LibMsg>();
+
+        let result = smart_repair(
+            &dir,
+            "ns.example.test",
+            "photon.example.test",
+            "voice.example.test",
+            "chat.example.test",
+            &tx,
+        );
+
+        assert_eq!(result, Ok(true));
+        assert_eq!(
+            std::fs::read(dir.join("2025Patch.dll")).unwrap(),
+            include_bytes!("../assets/2025Patch.dll")
+        );
+        assert_eq!(
+            std::fs::read(dir.join("Injector.exe")).unwrap(),
+            include_bytes!("../assets/Injector.exe")
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
 
@@ -236,6 +324,7 @@ pub fn run_library(
         theme,
         version: version.clone(),
         install_dir: dir.to_path_buf(),
+        show_onboarding: !onboarding_complete(),
         cmd_tx: cmd_tx.clone(),
     };
     let gui_thread = std::thread::spawn(move || {
@@ -268,8 +357,39 @@ pub fn run_library(
             Ok(LibCmd::OpenInstallFolder) => {
                 let _ = std::process::Command::new("explorer.exe").arg(dir).spawn();
             }
+            Ok(LibCmd::VerifyFiles) => {
+                let verify_dir = dir.to_path_buf();
+                let verify_ns = ns_host.to_string();
+                let verify_rt = photon_rt.to_string();
+                let verify_voice = photon_voice.to_string();
+                let verify_chat = photon_chat.to_string();
+                let verify_tx = msg_tx.clone();
+                std::thread::spawn(move || {
+                    let (message, repaired) = verify_and_repair_core_files(
+                        &verify_dir,
+                        &verify_ns,
+                        &verify_rt,
+                        &verify_voice,
+                        &verify_chat,
+                        &verify_tx,
+                    );
+                    let _ = verify_tx.send(LibMsg::VerificationFinished { message, repaired });
+                });
+            }
             Ok(LibCmd::SetTheme(t)) => {
                 save_theme(t);
+            }
+            Ok(LibCmd::CompleteOnboarding) => {
+                save_onboarding_complete();
+            }
+            Ok(LibCmd::OpenFluxLogin) => {
+                crate::launcher::open_url_in_browser("https://flux.sitey.my/login");
+            }
+            Ok(LibCmd::OpenFluxSignup) => {
+                crate::launcher::open_url_in_browser("https://flux.sitey.my/signup");
+            }
+            Ok(LibCmd::OpenFluxSettings) => {
+                crate::launcher::open_url_in_browser("https://flux.sitey.my/settings?link=fluxrec");
             }
             Ok(LibCmd::Close) | Err(_) => {
                 let _ = msg_tx.send(LibMsg::CloseGui);
@@ -427,12 +547,14 @@ fn smart_repair(
         let injector = dir.join("Injector.exe");
         let patch_ini = dir.join("2025patch.ini");
 
-        if !patch_dll.is_file() {
+        let patch_hash = format!("{:x}", md5::compute(PATCH_DLL));
+        if !crate::file_ok(&patch_dll, Some(&patch_hash), Some(PATCH_DLL.len() as u64)) {
             println!("[smart-repair] restoring 2025Patch.dll from embedded");
             let _ = std::fs::write(&patch_dll, PATCH_DLL);
             repaired += 1;
         }
-        if !injector.is_file() {
+        let injector_hash = format!("{:x}", md5::compute(INJECTOR));
+        if !crate::file_ok(&injector, Some(&injector_hash), Some(INJECTOR.len() as u64)) {
             println!("[smart-repair] restoring Injector.exe from embedded");
             let _ = std::fs::write(&injector, INJECTOR);
             repaired += 1;
@@ -529,6 +651,132 @@ fn has_valid_mz(path: &Path) -> bool {
         }
     }
     false
+}
+
+/// Verify the files the launcher can authoritatively restore. Game asset
+/// bundles do not have a complete signed manifest in this build, so this
+/// deliberately limits itself to known launcher-managed components.
+fn verify_and_repair_core_files(
+    dir: &Path,
+    ns_host: &str,
+    photon_rt: &str,
+    photon_voice: &str,
+    photon_chat: &str,
+    msg_tx: &Sender<LibMsg>,
+) -> (String, bool) {
+    if crate::find_game_exe(dir).is_none() {
+        return ("Flux Rec is not installed at this location.".to_string(), false);
+    }
+
+    const PATCH_DLL: &[u8] = include_bytes!("../assets/2025Patch.dll");
+    const INJECTOR: &[u8] = include_bytes!("../assets/Injector.exe");
+    let patch_dll_was_healthy = crate::file_ok(
+        &dir.join("2025Patch.dll"),
+        Some(&format!("{:x}", md5::compute(PATCH_DLL))),
+        Some(PATCH_DLL.len() as u64),
+    );
+    let injector_was_healthy = crate::file_ok(
+        &dir.join("Injector.exe"),
+        Some(&format!("{:x}", md5::compute(INJECTOR))),
+        Some(INJECTOR.len() as u64),
+    );
+    let patch_ini_was_present = dir.join("2025patch.ini").is_file();
+    let bypass_was_healthy = matches!(
+        crate::bypass::verify(dir),
+        crate::bypass::BypassState::Ok(_)
+    );
+    let exe = match crate::find_game_exe(dir) {
+        Some(path) => path,
+        None => return ("Flux Rec game executable is missing.".to_string(), false),
+    };
+    if !has_valid_mz(&exe) {
+        return (
+            "The game executable is damaged. Reinstall the game to restore it safely.".to_string(),
+            false,
+        );
+    }
+
+    let file_count = count_files(dir);
+    if file_count < 100 {
+        return (
+            "The install is incomplete. Run the installer to restore the game files.".to_string(),
+            false,
+        );
+    }
+
+    if let Err(error) = smart_repair(dir, ns_host, photon_rt, photon_voice, photon_chat, msg_tx) {
+        return (format!("Core file check failed: {error}"), false);
+    }
+    let progress_tx = msg_tx.clone();
+    let (progress, progress_rx) = crate::progress::channel();
+    std::thread::spawn(move || {
+        for update in progress_rx {
+            let _ = progress_tx.send(LibMsg::Progress {
+                percent: update.percent,
+                stage: update.stage,
+                detail: update.detail,
+            });
+        }
+    });
+
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return (format!("Could not start file repair: {error}"), false);
+        }
+    };
+    let client = match reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => return (format!("Could not prepare file repair: {error}"), false),
+    };
+
+    let patch_was_healthy = crate::bepinex::verify_for_launcher(dir).is_ok();
+    let mut repaired = !patch_dll_was_healthy || !injector_was_healthy || !patch_ini_was_present;
+    if !patch_was_healthy {
+        match runtime.block_on(crate::bepinex::repair_for_launcher(
+            &client,
+            dir,
+            ns_host,
+            photon_rt,
+            photon_voice,
+            photon_chat,
+            &progress,
+        )) {
+            Ok(()) => repaired = true,
+            Err(error) => return (format!("Could not repair the game patch: {error}"), false),
+        }
+    }
+    if !bypass_was_healthy {
+        match runtime.block_on(crate::bypass::repair_bypass(&client, dir, &progress)) {
+            Ok(_) => repaired = true,
+            Err(error) => return (format!("Could not repair the game launch files: {error}"), false),
+        }
+    }
+    match runtime.block_on(crate::apply_logo_bundle(&client, dir, &progress)) {
+        Ok(branding_repaired) => repaired |= branding_repaired,
+        Err(error) => {
+            return (
+                format!("Core files checked, but branding repair failed: {error}"),
+                repaired,
+            )
+        }
+    }
+
+    if let Err(error) = crate::verify_install(dir) {
+        return (format!("Some required files are still missing: {error}"), repaired);
+    }
+    let message = if repaired {
+        "Launcher-managed core files were repaired and checked. This build cannot verify every game asset because it has no complete asset hash manifest.".to_string()
+    } else {
+        "Launcher-managed core files passed verification. This build cannot verify every game asset because it has no complete asset hash manifest.".to_string()
+    };
+    (message, repaired)
 }
 
 /// PLAY was clicked: run the full pre-launch sequence (verify, repair,

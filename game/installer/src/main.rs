@@ -1027,7 +1027,7 @@ pub(crate) async fn apply_logo_bundle(
     client: &reqwest::Client,
     dir: &Path,
     progress: &progress::Progress,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     // v0.6.6: 2025 client uses Recroom_Release_Data, not RecRoom_Data.
     // Check both to support 2025 and 2026 layouts.
     let aa_dir = {
@@ -1048,9 +1048,10 @@ pub(crate) async fn apply_logo_bundle(
 
     if !aa_dir.exists() {
         println!("[logo] Addressables dir not found (fresh layout?), skipping.");
-        return Ok(());
+        return Ok(false);
     }
 
+    let mut changed = false;
     // Apply each of the 5 patched logo bundles.
     for (idx, (filename, expected_md5, expected_size)) in LOGO_BUNDLES.iter().enumerate() {
         // v1.0.21: The game stores decompressed .bundle files, not .gz.
@@ -1151,8 +1152,9 @@ pub(crate) async fn apply_logo_bundle(
             return Err(e.to_string());
         }
         println!("[logo] Applied {} (Flux Rec branding).", filename);
+        changed = true;
     }
-    Ok(())
+    Ok(changed)
 }
 
 pub(crate) async fn run_install(

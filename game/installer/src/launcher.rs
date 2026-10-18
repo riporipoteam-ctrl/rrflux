@@ -104,7 +104,7 @@ pub fn run_launcher(
         let loader_state = crate::bepinex::verify_for_launcher(dir);
         if let Err(reason) = loader_state {
             println!("[launcher] 2025Patch broken ({reason}) — repairing.");
-            progress.set_status("Repairing 2025Patch…", 8);
+            progress.set_status("Repairing game launch support…", 8);
             let client = reqwest::Client::builder()
                 .user_agent("FluxRec-Setup/0.2.0")
                 .connect_timeout(Duration::from_secs(30))
@@ -129,7 +129,7 @@ pub fn run_launcher(
             };
             if !repaired {
                 progress.set_status(
-                    "2025Patch repair failed — please re-run FluxRec-Setup.",
+                    "Game support repair failed — please run Ripo Team Launcher setup again.",
                     100,
                 );
                 std::thread::sleep(Duration::from_secs(6));
@@ -382,7 +382,7 @@ fn prompt_flux_account_link() {
 
 /// Open a URL in the default browser. Fire-and-forget: failures are ignored.
 #[cfg(windows)]
-fn open_url_in_browser(url: &str) {
+pub(crate) fn open_url_in_browser(url: &str) {
     use windows::core::{w, HSTRING, PCWSTR};
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -400,7 +400,7 @@ fn open_url_in_browser(url: &str) {
 }
 
 #[cfg(not(windows))]
-fn open_url_in_browser(_url: &str) {}
+pub(crate) fn open_url_in_browser(_url: &str) {}
 
 /// Spawn the game with no console window. v0.3.0: 2025 client flow —
 /// start `Injector.exe` FIRST (it waits for the game process, then injects

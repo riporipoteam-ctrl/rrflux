@@ -102,6 +102,7 @@ mod imp {
     const BLUE: COLORREF = COLORREF(0x00FF9B2E); // Ripo blue, shared with the launcher shell
     const BLUE_LIGHT: COLORREF = COLORREF(0x00FFB869);
     const BLUE_DIM: COLORREF = COLORREF(0x00FFEEDC);
+    const GAME_ORANGE: COLORREF = COLORREF(0x003986F2); // Flux Rec game accent
     const WHITE: COLORREF = COLORREF(0x002D241E); // primary text
     const GRAY: COLORREF = COLORREF(0x00675A50); // secondary text
     const DIM: COLORREF = COLORREF(0x00978A7E); // muted text
@@ -1362,6 +1363,8 @@ mod imp {
 
         // Full-height art panel with a branded caption band.
         draw_game_art(hdc, s, margin, top, art_w, panel_h);
+        rr_fill(hdc, margin + 24, top + 22, 106, 28, 14, GAME_ORANGE);
+        text_center(hdc, s.f_tiny, PURE_WHITE, "FLUX REC", margin + 77, top + 27, 96, 18);
         rr_fill(hdc, margin, bottom - 174, art_w, 174, 0, COLORREF(0x00241A13));
         draw_logo(hdc, s, margin + 28, bottom - 128, 64);
         text_at(hdc, s.f_title, PURE_WHITE, "Flux Rec", margin + 108, bottom - 132);
@@ -1381,6 +1384,7 @@ mod imp {
         let pad = 28;
         let inner_x = panel_x + pad;
         let inner_w = panel_w - pad * 2;
+        rr_fill(hdc, inner_x, top + 14, inner_w, 3, 2, BLUE);
         text_at(hdc, s.f_tiny, BLUE, "RIPO TEAM LAUNCHER  /  SETUP", inner_x, top + 28);
         text_at(hdc, s.f_title, WHITE, "Getting Flux Rec ready", inner_x, top + 56);
         text_at(hdc, s.f_small, GRAY, "Download, install and verify", inner_x, top + 102);
@@ -1627,6 +1631,8 @@ mod imp {
         let panel_w = s.win_w - margin - panel_x;
 
         draw_game_art(hdc, s, margin, top, art_w, panel_h);
+        rr_fill(hdc, margin + 22, top + 20, 106, 28, 14, GAME_ORANGE);
+        text_center(hdc, s.f_tiny, PURE_WHITE, "FLUX REC", margin + 75, top + 25, 96, 18);
         rr_fill(hdc, margin, bottom - 134, art_w, 134, 0, COLORREF(0x00241A13));
         draw_logo(hdc, s, margin + 24, bottom - 104, 54);
         text_at(hdc, s.f_h2, PURE_WHITE, "Flux Rec", margin + 94, bottom - 103);
@@ -1639,6 +1645,7 @@ mod imp {
         let pad = 28;
         let inner_x = panel_x + pad;
         let inner_w = panel_w - pad * 2;
+        rr_fill(hdc, inner_x, top + 14, inner_w, 3, 2, BLUE);
         text_at(hdc, s.f_tiny, BLUE, "RIPO TEAM LAUNCHER  /  AUTO UPDATE", inner_x, top + 30);
         let state = if s.finished {
             "Update complete"
@@ -1680,10 +1687,17 @@ mod imp {
             RECT { left: inner_x, top: bar_y + 24, right: panel_x + panel_w - pad, bottom: bar_y + 48 },
         );
 
-        let steps = ["Check files", "Apply update", "Start game"];
+        // Match setup's vertical progress rail so the updater feels like the
+        // same product flow, with room for clear descriptions at narrow sizes.
+        let steps = [
+            ("Check files", "Compare the installed build with the latest release"),
+            ("Apply update", "Download and verify changed files when needed"),
+            ("Start game", "Open Flux Rec when checks finish"),
+        ];
         let step_y = top + 264;
-        for (i, label) in steps.iter().enumerate() {
-            let y = step_y + i as i32 * 78;
+        let step_spacing = ((panel_h - 356) / steps.len() as i32).clamp(58, 74);
+        for (i, (label, description)) in steps.iter().enumerate() {
+            let y = step_y + i as i32 * step_spacing;
             let threshold = [0, 35, 85][i];
             let next_threshold = [35, 85, 100][i];
             let step = if s.finished || s.percent >= next_threshold {
@@ -1693,53 +1707,11 @@ mod imp {
             } else {
                 StepState::Todo
             };
-            let color = match step {
-                StepState::Done => GREEN,
-                StepState::Active => BLUE,
-                StepState::Todo => TRACK,
-            };
-            let cx = inner_x + 14;
-            let cy = y + 15;
-            let pen = CreatePen(PS_SOLID, 2, color);
-            if !pen.is_invalid() {
-                let old_pen = SelectObject(hdc, pen);
-                if step == StepState::Done {
-                    let brush = CreateSolidBrush(color);
-                    let old_brush = SelectObject(hdc, brush);
-                    let _ = Ellipse(hdc, cx - 11, cy - 11, cx + 11, cy + 11);
-                    let _ = SelectObject(hdc, old_brush);
-                    let _ = DeleteObject(brush);
-                    text_center(hdc, s.f_tiny, PURE_WHITE, "✓", cx, cy - 9, 28, 18);
-                } else {
-                    let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-                    let _ = Ellipse(hdc, cx - 11, cy - 11, cx + 11, cy + 11);
-                    let _ = SelectObject(hdc, old_brush);
-                }
-                let _ = SelectObject(hdc, old_pen);
-                let _ = DeleteObject(pen);
-            }
-            text_at(hdc, s.f_body, if step == StepState::Todo { DIM } else { WHITE }, label, inner_x + 38, y + 5);
-            let description = match i {
-                0 => "Compare the installed build with the latest release",
-                1 => "Download and verify changed files when needed",
-                _ => "Open Flux Rec when checks finish",
-            };
-            text_ellipsis(
-                hdc,
-                s.f_tiny,
-                GRAY,
-                description,
-                RECT { left: inner_x + 38, top: y + 29, right: panel_x + panel_w - pad, bottom: y + 50 },
-            );
-            if i < 2 {
-                let pen = CreatePen(PS_SOLID, 1, TRACK);
-                if !pen.is_invalid() {
-                    let old = SelectObject(hdc, pen);
-                    let _ = MoveToEx(hdc, cx, cy + 12, None);
-                    let _ = LineTo(hdc, cx, y + 77);
-                    let _ = SelectObject(hdc, old);
-                    let _ = DeleteObject(pen);
-                }
+            draw_step(hdc, s, inner_x + 14, y, (i + 1) as i32, label, description, step);
+            if i < steps.len() - 1 {
+                let line_x = inner_x + 14;
+                let line_y = y + 48;
+                rr_fill(hdc, line_x - 1, line_y, 2, (step_spacing - 42).max(8), 1, TRACK);
             }
         }
         text_at(hdc, s.f_tiny, DIM, &format!("Launcher v{}", env!("CARGO_PKG_VERSION")), inner_x, bottom - 30);
