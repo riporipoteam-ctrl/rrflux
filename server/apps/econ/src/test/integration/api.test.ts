@@ -2521,6 +2521,12 @@ describe('econ endpoints', () => {
 			apple.ConsumableItemDesc,
 			potion.ConsumableItemDesc,
 		])
+		expect(
+			resolved.find((definition) => definition.ConsumableItemDesc === apple.ConsumableItemDesc)
+		).toMatchObject({ ThumbnailImageName: 'store-backpack-food-v2.png' })
+		expect(
+			resolved.find((definition) => definition.ConsumableItemDesc === potion.ConsumableItemDesc)
+		).toMatchObject({ ThumbnailImageName: 'store-backpack-potion-v2.png' })
 	})
 
 	test('POST /api/consumables/v1/consume reduces the count and deletes the row at zero', async () => {
@@ -3361,7 +3367,10 @@ describe('econ endpoints', () => {
 		const buy = async () =>
 			exports.default.fetch(`${ORIGIN}/api/storefronts/v2/buyItem`, {
 				method: 'POST',
-				headers: { ...(await bearer('25', undefined, '20250718.01')), 'Content-Type': 'application/json' },
+				headers: {
+					...(await bearer('25', undefined, '20250718.01')),
+					'Content-Type': 'application/json',
+				},
 				body: JSON.stringify({
 					StorefrontType: 300,
 					PurchasableItemId: 2266,
@@ -3814,7 +3823,13 @@ describe('econ endpoints', () => {
 
 	test('POST /api/storefronts/v2/buyItem retries a gift arrival after a transient hub reset', async () => {
 		const buyerId = 999101
-		await creditCurrency(env.DB, buyerId, CurrencyType.RecCenterTokens, 10000, DEFAULT_STARTING_TOKENS)
+		await creditCurrency(
+			env.DB,
+			buyerId,
+			CurrencyType.RecCenterTokens,
+			10000,
+			DEFAULT_STARTING_TOKENS
+		)
 		await drainFrames()
 		await (
 			env.RECFLARE_NOTIFICATIONS_HUB.getByName('global') as unknown as {
@@ -7062,4 +7077,3 @@ describe('plus token reload', () => {
 		expect(() => plusReloadSql(100, -1)).toThrow('non-negative integer')
 	})
 })
-

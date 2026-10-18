@@ -226,12 +226,18 @@ function consumablePreviewFor(desc: unknown): Record<string, unknown> | undefine
 		ConsumableToolName: definition.ConsumableToolName,
 		IsRRO: definition.IsRRO,
 		RoomieCategory: definition.RoomieCategory,
-		ThumbnailImageName:
-			backpackThumbnailFor(
-				{ ConsumableItemDesc: definition.ConsumableItemDesc },
-				definition.FriendlyName.toLowerCase()
-			) ?? definition.ThumbnailImageName,
+		ThumbnailImageName: consumableThumbnailFor(definition),
 	}
+}
+
+/** Keep the same usable local thumbnail on every route that returns a consumable. */
+function consumableThumbnailFor(definition: (typeof consumableDefinitions)[number]) {
+	return (
+		backpackThumbnailFor(
+			{ ConsumableItemDesc: definition.ConsumableItemDesc },
+			definition.FriendlyName.toLowerCase()
+		) ?? definition.ThumbnailImageName
+	)
 }
 
 // Carousel with REAL Rec Room item thumbnails (not AI images) - IDs must exist in toptoday
@@ -3471,11 +3477,7 @@ const app = new Hono<App>({ strict: false })
 			c.json(
 				consumableDefinitions.map((definition) => ({
 					...definition,
-					ThumbnailImageName:
-						backpackThumbnailFor(
-							{ ConsumableItemDesc: definition.ConsumableItemDesc },
-							definition.FriendlyName.toLowerCase()
-						) ?? definition.ThumbnailImageName,
+					ThumbnailImageName: consumableThumbnailFor(definition),
 				}))
 			)
 	)
@@ -3512,7 +3514,9 @@ const app = new Hono<App>({ strict: false })
 			return c.json(
 				descriptors.flatMap((descriptor) => {
 					const definition = consumableDefinitionsByDesc.get(descriptor)
-					return definition ? [definition] : []
+					return definition
+						? [{ ...definition, ThumbnailImageName: consumableThumbnailFor(definition) }]
+						: []
 				})
 			)
 		}
@@ -7238,4 +7242,3 @@ app.get(
 )
 
 export default app
-
