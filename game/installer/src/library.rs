@@ -27,6 +27,8 @@ pub enum LibCmd {
     CheckForUpdates,
     /// Open the configured game install directory in Explorer.
     OpenInstallFolder,
+    /// Select and persist a new Flux Rec install directory.
+    SetInstallDir(PathBuf),
     /// User changed the theme. The GUI applies it live; we persist it.
     SetTheme(gui_library::Theme),
     /// Verify and repair the files this launcher can authoritatively restore.
@@ -47,19 +49,28 @@ pub enum LibCmd {
 pub enum LibMsg {
     /// Pre-launch checks finished: ready to play, with update info.
     Ready {
+        generation: u64,
         update_available: bool,
         update_version: String,
     },
     /// Checks are running (fast path).
-    Checking,
+    Checking { generation: u64 },
     /// No game executable exists yet; the primary action should say Install.
-    InstallRequired,
+    InstallRequired { generation: u64 },
     /// Check failed but the game can still launch (fail-soft).
-    CheckFailed(String),
+    CheckFailed { generation: u64, message: String },
+    /// A new install directory was validated and persisted.
+    InstallDirChanged { path: PathBuf, generation: u64 },
+    /// The requested install directory could not be applied.
+    InstallDirChangeFailed(String),
     /// Live player count; `None` means the request failed, not zero players.
     PlayerCount(Option<u32>),
     /// Result of an explicit core-file verification and repair pass.
-    VerificationFinished { message: String, repaired: bool },
+    VerificationFinished {
+        generation: u64,
+        message: String,
+        repaired: bool,
+    },
     /// Progress update during update-download/install (reuses GuiMsg shape).
     Progress {
         percent: u8,
@@ -99,13 +110,14 @@ fn save_onboarding_complete() {
 
 /// Last time we did the slow network checks (update check, plugin sync,
 /// logo bundles). Cached for 1 hour so launching stays fast.
-fn last_check_path() -> PathBuf {
-    state_dir().join("last_check.txt")
+fn last_check_path(dir: &Path) -> PathBuf {
+    let key = format!("{:x}", md5::compute(dir.to_string_lossy().to_lowercase().as_bytes()));
+    state_dir().join(format!("last_check_{key}.txt"))
 }
 
 /// Returns true if the network checks were done recently (< 1 hour ago).
-pub fn network_check_fresh() -> bool {
-    let p = last_check_path();
+pub fn network_check_fresh(dir: &Path) -> bool {
+    let p = last_check_path(dir);
     let content = std::fs::read_to_string(&p).unwrap_or_default();
     let ts: u64 = content.trim().parse().unwrap_or(0);
     if ts == 0 {
@@ -119,8 +131,8 @@ pub fn network_check_fresh() -> bool {
 }
 
 /// Record that we just did the network checks.
-pub fn mark_network_check() {
-    let p = last_check_path();
+pub fn mark_network_check(dir: &Path) {
+    let p = last_check_path(dir);
     if let Some(parent) = p.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -218,6 +230,63 @@ mod repair_tests {
     }
 }
 
+#[cfg(test)]
+mod install_dir_tests {
+    use super::validate_install_dir;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!(
+            "fluxrec-install-dir-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn accepts_empty_target_and_existing_flux_rec_install() {
+        let current = scratch_dir("current");
+        let empty_target = scratch_dir("empty");
+        let game_target = scratch_dir("game");
+        std::fs::write(game_target.join("Recroom_Release.exe"), b"test").unwrap();
+
+        assert_eq!(
+            validate_install_dir(&empty_target, &current),
+            std::fs::canonicalize(&empty_target).map_err(|error| error.to_string())
+        );
+        assert_eq!(
+            validate_install_dir(&game_target, &current),
+            std::fs::canonicalize(&game_target).map_err(|error| error.to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(current);
+        let _ = std::fs::remove_dir_all(empty_target);
+        let _ = std::fs::remove_dir_all(game_target);
+    }
+
+    #[test]
+    fn rejects_unrelated_nonempty_folder_but_allows_current_path() {
+        let current = scratch_dir("current");
+        let unrelated = scratch_dir("unrelated");
+        std::fs::write(unrelated.join("notes.txt"), b"keep this").unwrap();
+
+        assert!(validate_install_dir(&unrelated, &current).is_err());
+        assert_eq!(
+            validate_install_dir(&current, &current),
+            std::fs::canonicalize(&current).map_err(|error| error.to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(current);
+        let _ = std::fs::remove_dir_all(unrelated);
+    }
+}
+
 /// Persist the theme.
 pub fn save_theme(t: gui_library::Theme) {
     let p = state_dir().join("theme.txt");
@@ -229,6 +298,62 @@ pub fn save_theme(t: gui_library::Theme) {
         gui_library::Theme::Light => "light",
     };
     let _ = std::fs::write(&p, s);
+}
+
+fn path_identity(path: &Path) -> String {
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    resolved
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_lowercase()
+}
+
+fn validate_install_dir(selected: &Path, current: &Path) -> Result<PathBuf, String> {
+    let selected = std::fs::canonicalize(selected)
+        .map_err(|_| "Choose an existing folder for Flux Rec.".to_string())?;
+    if !selected.is_dir() {
+        return Err("The selected location is not a folder.".to_string());
+    }
+    if path_identity(&selected) == path_identity(current)
+        || crate::find_game_exe(&selected).is_some()
+    {
+        return Ok(selected);
+    }
+
+    let has_launcher_files = [
+        "2025Patch.dll",
+        "Injector.exe",
+        "2025patch.ini",
+        "Recroom_Release_Data",
+    ]
+    .iter()
+    .any(|name| selected.join(name).exists());
+    if has_launcher_files {
+        return Ok(selected);
+    }
+
+    let mut entries = std::fs::read_dir(&selected)
+        .map_err(|_| "The selected folder could not be read.".to_string())?;
+    if entries.next().is_none() {
+        return Ok(selected);
+    }
+    Err("Choose an empty folder or an existing Flux Rec install folder.".to_string())
+}
+
+/// Store the selected folder in the same file used by future game-shortcut launches.
+fn persist_install_dir(dir: &Path) -> Result<(), String> {
+    let local_appdata = std::env::var_os("LOCALAPPDATA")
+        .ok_or_else(|| "Windows did not provide a LOCALAPPDATA folder.".to_string())?;
+    let file = PathBuf::from(local_appdata)
+        .join("FluxRec")
+        .join("install_dir.txt");
+    let parent = file
+        .parent()
+        .ok_or_else(|| "Could not locate the install settings folder.".to_string())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not save the install location: {error}"))?;
+    std::fs::write(&file, format!("{}\n", dir.display()))
+        .map_err(|error| format!("Could not save the install location: {error}"))
 }
 
 /// Fetch the live player count (fail-soft: None on any error).
@@ -318,12 +443,14 @@ pub fn run_library(
 
     let theme = load_theme();
     let version = env!("CARGO_PKG_VERSION").to_string();
+    let mut install_dir = dir.to_path_buf();
+    let mut install_dir_generation = 0u64;
 
     // GUI thread: the library window.
     let gui_config = gui_library::LibraryConfig {
         theme,
         version: version.clone(),
-        install_dir: dir.to_path_buf(),
+        install_dir: install_dir.clone(),
         show_onboarding: !onboarding_complete(),
         cmd_tx: cmd_tx.clone(),
     };
@@ -332,33 +459,59 @@ pub fn run_library(
     });
 
     // Worker thread: fast pre-launch checks + player count.
-    let dir_w = dir.to_path_buf();
+    let dir_w = install_dir.clone();
     let ns_w = ns_host.to_string();
     let msg_tx_w = msg_tx.clone();
     std::thread::spawn(move || {
-        worker_checks(&dir_w, &ns_w, &msg_tx_w);
+        worker_checks(&dir_w, &ns_w, 0, &msg_tx_w);
     });
 
     // Main thread: route GUI commands.
     loop {
         match cmd_rx.recv() {
             Ok(LibCmd::Play) => {
-                do_play(dir, ns_host, photon_rt, photon_voice, photon_chat, &msg_tx);
+                do_play(&install_dir, ns_host, photon_rt, photon_voice, photon_chat, &msg_tx);
                 // do_play never returns (launches or exits)
             }
             Ok(LibCmd::Uninstall) => {
-                do_uninstall(dir, &msg_tx);
+                do_uninstall(&install_dir, &msg_tx);
             }
             Ok(LibCmd::CheckForUpdates) => {
-                let check_dir = dir.to_path_buf();
+                let check_dir = install_dir.clone();
+                let generation = install_dir_generation;
                 let check_tx = msg_tx.clone();
-                std::thread::spawn(move || force_update_check(&check_dir, &check_tx));
+                std::thread::spawn(move || force_update_check(&check_dir, generation, &check_tx));
             }
             Ok(LibCmd::OpenInstallFolder) => {
-                let _ = std::process::Command::new("explorer.exe").arg(dir).spawn();
+                let _ = std::process::Command::new("explorer.exe").arg(&install_dir).spawn();
+            }
+            Ok(LibCmd::SetInstallDir(selected)) => {
+                match validate_install_dir(&selected, &install_dir)
+                    .and_then(|validated| persist_install_dir(&validated).map(|()| validated))
+                {
+                    Ok(validated) => {
+                        install_dir = validated;
+                        install_dir_generation = install_dir_generation.wrapping_add(1);
+                        let _ = msg_tx.send(LibMsg::InstallDirChanged {
+                            path: install_dir.clone(),
+                            generation: install_dir_generation,
+                        });
+                        let check_dir = install_dir.clone();
+                        let generation = install_dir_generation;
+                        let check_ns = ns_host.to_string();
+                        let check_tx = msg_tx.clone();
+                        std::thread::spawn(move || {
+                            worker_checks(&check_dir, &check_ns, generation, &check_tx);
+                        });
+                    }
+                    Err(message) => {
+                        let _ = msg_tx.send(LibMsg::InstallDirChangeFailed(message));
+                    }
+                }
             }
             Ok(LibCmd::VerifyFiles) => {
-                let verify_dir = dir.to_path_buf();
+                let verify_dir = install_dir.clone();
+                let generation = install_dir_generation;
                 let verify_ns = ns_host.to_string();
                 let verify_rt = photon_rt.to_string();
                 let verify_voice = photon_voice.to_string();
@@ -373,7 +526,11 @@ pub fn run_library(
                         &verify_chat,
                         &verify_tx,
                     );
-                    let _ = verify_tx.send(LibMsg::VerificationFinished { message, repaired });
+                    let _ = verify_tx.send(LibMsg::VerificationFinished {
+                        generation,
+                        message,
+                        repaired,
+                    });
                 });
             }
             Ok(LibCmd::SetTheme(t)) => {
@@ -383,13 +540,17 @@ pub fn run_library(
                 save_onboarding_complete();
             }
             Ok(LibCmd::OpenFluxLogin) => {
-                crate::launcher::open_url_in_browser("https://flux.sitey.my/login");
+                crate::launcher::open_url_in_browser(
+                    "https://flux.sitey.my/login?next=%2Fflux-rec%3Flink%3Dfluxrec",
+                );
             }
             Ok(LibCmd::OpenFluxSignup) => {
-                crate::launcher::open_url_in_browser("https://flux.sitey.my/signup");
+                crate::launcher::open_url_in_browser(
+                    "https://flux.sitey.my/signup?next=%2Fflux-rec%3Flink%3Dfluxrec",
+                );
             }
             Ok(LibCmd::OpenFluxSettings) => {
-                crate::launcher::open_url_in_browser("https://flux.sitey.my/settings?link=fluxrec");
+                crate::launcher::open_url_in_browser("https://flux.sitey.my/flux-rec?link=fluxrec");
             }
             Ok(LibCmd::Close) | Err(_) => {
                 let _ = msg_tx.send(LibMsg::CloseGui);
@@ -402,8 +563,8 @@ pub fn run_library(
 
 /// Background checks: verify the install is sane, check for updates (cached),
 /// fetch the player count. All fail-soft.
-fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
-    let _ = msg_tx.send(LibMsg::Checking);
+fn worker_checks(dir: &Path, _ns_host: &str, generation: u64, msg_tx: &Sender<LibMsg>) {
+    let _ = msg_tx.send(LibMsg::Checking { generation });
 
     // Player count is independent and can take several seconds offline; do
     // not hold the install/update readiness state behind that request.
@@ -416,13 +577,14 @@ fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
     // The PLAY button will run the full install.
     let game_exe = crate::find_game_exe(dir);
     if game_exe.is_none() {
-        let _ = msg_tx.send(LibMsg::InstallRequired);
+        let _ = msg_tx.send(LibMsg::InstallRequired { generation });
         return;
     }
 
     // Update check: skip the network if we checked recently.
-    if network_check_fresh() {
+    if network_check_fresh(dir) {
         let _ = msg_tx.send(LibMsg::Ready {
+            generation,
             update_available: false,
             update_version: String::new(),
         });
@@ -441,24 +603,27 @@ fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
         Err(_) => crate::updater::UpdateDecision::CheckFailed,
     };
     if !matches!(&decision, crate::updater::UpdateDecision::CheckFailed) {
-        mark_network_check();
+        mark_network_check(dir);
     }
 
     match decision {
         crate::updater::UpdateDecision::Available { version, .. } => {
             let _ = msg_tx.send(LibMsg::Ready {
+                generation,
                 update_available: true,
                 update_version: version,
             });
         }
         // v1.0.5: tell the UI the check failed so it can warn the user.
         crate::updater::UpdateDecision::CheckFailed => {
-            let _ = msg_tx.send(LibMsg::CheckFailed(
-                "Couldn't reach GitHub to check for updates. Check your connection.".to_string(),
-            ));
+            let _ = msg_tx.send(LibMsg::CheckFailed {
+                generation,
+                message: "Couldn't reach GitHub to check for updates. Check your connection.".to_string(),
+            });
         }
         _ => {
             let _ = msg_tx.send(LibMsg::Ready {
+                generation,
                 update_available: false,
                 update_version: String::new(),
             });
@@ -467,8 +632,8 @@ fn worker_checks(dir: &Path, _ns_host: &str, msg_tx: &Sender<LibMsg>) {
 }
 
 /// Run a user-requested live update check without the launch-time one-hour cache.
-fn force_update_check(dir: &Path, msg_tx: &Sender<LibMsg>) {
-    let _ = msg_tx.send(LibMsg::Checking);
+fn force_update_check(dir: &Path, generation: u64, msg_tx: &Sender<LibMsg>) {
+    let _ = msg_tx.send(LibMsg::Checking { generation });
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build();
@@ -478,26 +643,30 @@ fn force_update_check(dir: &Path, msg_tx: &Sender<LibMsg>) {
             runtime.block_on(crate::updater::check_for_updates(dir, &progress))
         }
         Err(_) => {
-            let _ = msg_tx.send(LibMsg::CheckFailed(
-                "Couldn't start the update check. Flux Rec can still be launched.".to_string(),
-            ));
+            let _ = msg_tx.send(LibMsg::CheckFailed {
+                generation,
+                message: "Couldn't start the update check. Flux Rec can still be launched.".to_string(),
+            });
             return;
         }
     };
     match decision {
         crate::updater::UpdateDecision::Available { version, .. } => {
             let _ = msg_tx.send(LibMsg::Ready {
+                generation,
                 update_available: true,
                 update_version: version,
             });
         }
         crate::updater::UpdateDecision::CheckFailed => {
-            let _ = msg_tx.send(LibMsg::CheckFailed(
-                "Couldn't reach GitHub to check for updates. Check your connection.".to_string(),
-            ));
+            let _ = msg_tx.send(LibMsg::CheckFailed {
+                generation,
+                message: "Couldn't reach GitHub to check for updates. Check your connection.".to_string(),
+            });
         }
         _ => {
             let _ = msg_tx.send(LibMsg::Ready {
+                generation,
                 update_available: false,
                 update_version: String::new(),
             });
@@ -915,7 +1084,7 @@ fn do_play(
                     version,
                     download_url,
                 } => {
-                    mark_network_check();
+                    mark_network_check(dir);
                     send(84, &format!("Update {version} found — installing…"));
                     let dest = std::env::temp_dir().join("RipoTeamLauncher-update.exe");
                     let downloaded = {
@@ -962,7 +1131,7 @@ fn do_play(
                         "Update check unavailable — launching installed version…",
                     );
                 }
-                crate::updater::UpdateDecision::UpToDate => mark_network_check(),
+                crate::updater::UpdateDecision::UpToDate => mark_network_check(dir),
             }
         } else {
             send(

@@ -51,21 +51,15 @@ const CLIENT_ZIP_MD5: &str = "6820e89bff41906ded7f5c066027f1d6";
 // v0.3.0: 2025 client migration — BepInEx removed.
 const PATCH2025_URL: &str = "https://github.com/recflare/patch-2025/releases/download/v0.0.8/2025Patch-v0.0.8-x64.zip";
 // (v0.3.0: 2025Patch files are embedded — see patch2025.rs.)
-/// Flux Rec logo bundles: 5 patched Addressables bundles with the blue Flux
-/// logo replacing Rec Room branding (loading screens, splash, UI icons).
-/// Hosted on our Hugging Face dataset; each verified by MD5 before use,
-/// then copied over the stock bundle. Backups are kept as .stock files.
+/// Flux Rec branding bundles that replace the client logo, including the
+/// loading-screen logo. Each file is verified by MD5 before replacing the
+/// stock bundle; backups are kept as `.stock` files.
 const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
     // (filename, md5, size)
-    // Note: 063b6b6653aa642616fd21d3d4701899.bundle and 2b731967c40860818dbeadf308b851f5.bundle
-    // were removed — their URLs 404 on the mirror, causing slow startup waits.
     // v1.0.16: 6d3223da354de646ab79d5660dcac9d2.bundle is gzipped on HF
     // (4.1MB vs 19MB) — download the .gz, decompress, verify.
     // The RecRoomLogo texture (256x256) now has the correct transparent blue Flux Rec logo.
     // The old MD5 (2a94ec3a...) had the wrong circular logo.
-    // v1.0.2: 94e46740de5686a7dc4491ef7d58c517.bundle was the WRONG file
-    // (contains Rec Room face + graduation photo, not the logo).
-    ("94e46740de5686a7dc4491ef7d58c517.bundle", "5647509ee0fb46807927603931491225", 986_601),
     ("6d3223da354de646ab79d5660dcac9d2.bundle.gz", "c5d71893019bbfc5804eb6ea5b92e4f9", 4_274_707),
     ("91aca73acb86d6607f0efa1f803348be.bundle", "765b3f625814ca86f8948eceb2f3440b", 62_928_907),
 ];
@@ -1052,7 +1046,9 @@ pub(crate) async fn apply_logo_bundle(
     }
 
     let mut changed = false;
-    // Apply each of the 5 patched logo bundles.
+    // Apply each published branding bundle. The list deliberately contains
+    // only assets currently present in `logo-patch-v5`; a missing URL must not
+    // prevent the real loading-screen logo bundle from being applied.
     for (idx, (filename, expected_md5, expected_size)) in LOGO_BUNDLES.iter().enumerate() {
         // v1.0.21: The game stores decompressed .bundle files, not .gz.
         // Strip .gz from the filename to find the actual target.

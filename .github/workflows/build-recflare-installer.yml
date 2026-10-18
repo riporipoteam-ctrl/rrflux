@@ -60,7 +60,7 @@ jobs:
           # skipped release creation in v0.1.4.
           gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --prerelease --title "Ripo Team Launcher - Flux Rec v$ver" --notes "Ripo Team Launcher setup for the 2025 Flux Rec client, with refreshed setup, launcher, and automatic update screens."
+            gh release create $tag --prerelease --title "Ripo Team Launcher - Flux Rec v$ver" --notes "Ripo Team Launcher setup for Flux Rec, with redesigned setup, library, and automatic update screens."
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
           }
           gh release upload $tag "game\installer\target\release\FluxRec-Setup.exe" --clobber

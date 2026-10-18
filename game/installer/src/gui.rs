@@ -1348,53 +1348,101 @@ mod imp {
     }
 
     unsafe fn draw_setup_redesigned(hdc: HDC, s: &GuiState) {
-        // Setup is an editorial split screen: real game art establishes the
-        // product on the left; one focused activity panel explains the work on
-        // the right. The screen stays useful at every progress state.
-        let margin = 28;
-        let top = TITLE_H + 22;
-        let bottom = s.win_h - 26;
+        // Keep product discovery and installation status in separate panels:
+        // the artwork tells players what is being installed while the right
+        // panel stays focused on the live operation.
+        let margin = 30;
+        let top = TITLE_H + 24;
+        let bottom = s.win_h - 28;
         let panel_h = bottom - top;
         let gap = 22;
         let content_w = s.win_w - margin * 2;
-        let art_w = ((content_w - gap) * 51 / 100).clamp(390, 620);
+        let art_w = ((content_w - gap) * 48 / 100).clamp(390, 620);
         let panel_x = margin + art_w + gap;
         let panel_w = s.win_w - margin - panel_x;
 
-        // Full-height art panel with a branded caption band.
+        // Full-height Flux Rec artwork with both product and studio marks.
         draw_game_art(hdc, s, margin, top, art_w, panel_h);
-        rr_fill(hdc, margin + 24, top + 22, 106, 28, 14, GAME_ORANGE);
-        text_center(hdc, s.f_tiny, PURE_WHITE, "FLUX REC", margin + 77, top + 27, 96, 18);
-        rr_fill(hdc, margin, bottom - 174, art_w, 174, 0, COLORREF(0x00241A13));
-        draw_logo(hdc, s, margin + 28, bottom - 128, 64);
+        rr_fill(hdc, margin + 24, top + 22, 112, 30, 15, GAME_ORANGE);
+        text_center(hdc, s.f_tiny, PURE_WHITE, "FLUX REC", margin + 80, top + 27, 100, 20);
+        rr_fill(hdc, margin, bottom - 176, art_w, 176, 0, COLORREF(0x00241A13));
+        draw_logo(hdc, s, margin + 28, bottom - 130, 66);
         text_at(hdc, s.f_title, PURE_WHITE, "Flux Rec", margin + 108, bottom - 132);
-        text_at(hdc, s.f_small, COLORREF(0x00F1E5D8), "RIPO TEAM", margin + 110, bottom - 96);
+        text_at(hdc, s.f_small, COLORREF(0x00F1E5D8), "Explore. Play. Create together.", margin + 110, bottom - 94);
+        let team_x = margin + art_w - 90;
+        draw_team_logo(hdc, s, team_x, bottom - 136, 52);
+        text_center(
+            hdc,
+            s.f_tiny,
+            COLORREF(0x00F1E5D8),
+            "RIPO TEAM",
+            team_x + 26,
+            bottom - 78,
+            84,
+            18,
+        );
         text_block(
             hdc,
             s.f_small,
             COLORREF(0x00F1E5D8),
-            "Explore rooms, play with friends and create together.",
-            RECT { left: margin + 28, top: bottom - 68, right: margin + art_w - 28, bottom: bottom - 28 },
+            "A world to explore with friends, plus tools to make something of your own.",
+            RECT {
+                left: margin + 28,
+                top: bottom - 54,
+                right: team_x - 18,
+                bottom: bottom - 12,
+            },
         );
         rr_outline(hdc, margin, top, art_w, panel_h, 18, BORDER);
 
-        // Installation activity panel.
+        // Installation panel: current phase first, then measurable progress,
+        // then the full checklist and the latest file detail.
         rr_fill(hdc, panel_x, top, panel_w, panel_h, 18, BG_CARD);
         rr_outline(hdc, panel_x, top, panel_w, panel_h, 18, BORDER);
         let pad = 28;
         let inner_x = panel_x + pad;
         let inner_w = panel_w - pad * 2;
-        rr_fill(hdc, inner_x, top + 14, inner_w, 3, 2, BLUE);
-        text_at(hdc, s.f_tiny, BLUE, "RIPO TEAM LAUNCHER  /  SETUP", inner_x, top + 28);
-        text_at(hdc, s.f_title, WHITE, "Getting Flux Rec ready", inner_x, top + 56);
-        text_at(hdc, s.f_small, GRAY, "Download, install and verify", inner_x, top + 102);
+        rr_fill(hdc, inner_x, top + 16, inner_w, 4, 2, BLUE);
+        text_at(hdc, s.f_tiny, BLUE, "GAME SETUP", inner_x, top + 34);
+        let install_badge_w = 112;
+        let install_badge_x = panel_x + panel_w - pad - install_badge_w;
+        let badge_bg = if s.finished { COLORREF(0x00E7F2E8) } else { BLUE_DIM };
+        let badge_fg = if s.finished { GREEN } else { BLUE };
+        rr_fill(hdc, install_badge_x, top + 26, install_badge_w, 28, 14, badge_bg);
+        text_center(
+            hdc,
+            s.f_tiny,
+            badge_fg,
+            if s.finished { "READY" } else { "INSTALLING" },
+            install_badge_x + install_badge_w / 2,
+            top + 31,
+            install_badge_w - 12,
+            18,
+        );
+        text_at(hdc, s.f_title, WHITE, "Install Flux Rec", inner_x, top + 62);
+        text_at(
+            hdc,
+            s.f_small,
+            GRAY,
+            "Download, install and verify your game files.",
+            inner_x,
+            top + 104,
+        );
 
         let display_percent = if s.finished { 100 } else { s.percent };
         let percent = format!("{display_percent}%");
         let _ = SelectObject(hdc, s.f_big);
         let percent_w = text_width(hdc, &percent);
-        text_at(hdc, s.f_big, if s.finished { GREEN } else { BLUE }, &percent, panel_x + panel_w - pad - percent_w, top + 140);
-        let bar_y = top + 164;
+        text_at(hdc, s.f_tiny, BLUE, "INSTALL PROGRESS", inner_x, top + 140);
+        text_at(
+            hdc,
+            s.f_big,
+            if s.finished { GREEN } else { BLUE },
+            &percent,
+            panel_x + panel_w - pad - percent_w,
+            top + 116,
+        );
+        let bar_y = top + 168;
         if display_percent == 0 && !s.finished {
             draw_shimmer_bar(hdc, s, inner_x, bar_y, inner_w, 14);
         } else {
@@ -1413,36 +1461,69 @@ mod imp {
             s.f_h2,
             WHITE,
             stage,
-            RECT { left: inner_x, top: top + 196, right: panel_x + panel_w - pad, bottom: top + 226 },
+            RECT { left: inner_x, top: top + 198, right: panel_x + panel_w - pad, bottom: top + 230 },
         );
 
-        // A vertical step list keeps the long operation legible without four
-        // tiny cards competing for attention.
+        // A vertical step list gives the longer setup process clear structure.
         let states = step_states(s.percent, s.finished);
-        let step_y = top + 254;
-        let step_spacing = ((panel_h - 366) / STEPS.len() as i32).clamp(45, 66);
+        let step_y = top + 234;
+        let step_spacing = ((panel_h - 340) / STEPS.len() as i32).clamp(46, 78);
         for (i, (title, sub)) in STEPS.iter().enumerate() {
             let state = states.get(i).copied().unwrap_or(StepState::Todo);
-            draw_step(hdc, s, inner_x + 14, step_y + i as i32 * step_spacing, (i + 1) as i32, title, sub, state);
+            draw_step(
+                hdc,
+                s,
+                inner_x + 14,
+                step_y + i as i32 * step_spacing,
+                (i + 1) as i32,
+                title,
+                sub,
+                state,
+            );
+            if i < STEPS.len() - 1 {
+                let line_y = step_y + i as i32 * step_spacing + 46;
+                rr_fill(hdc, inner_x + 13, line_y, 2, (step_spacing - 40).max(8), 1, TRACK);
+            }
         }
 
-        let info_y = top + panel_h - 92;
+        let info_y = bottom - 70;
         let detail = if !s.detail.is_empty() {
             s.detail.as_str()
         } else if s.finished {
-            "Flux Rec is installed and will appear in your launcher library."
+            "Flux Rec is installed and ready in your game library."
         } else {
-            "You can minimize this window while setup continues."
+            "Setup keeps running if you minimize this window."
         };
+        rr_fill(hdc, inner_x, info_y - 10, inner_w, 40, 12, BG_SIDE);
+        rr_outline(hdc, inner_x, info_y - 10, inner_w, 40, 12, BORDER);
         text_ellipsis(
             hdc,
             s.f_tiny,
             GRAY,
             detail,
-            RECT { left: inner_x, top: info_y, right: panel_x + panel_w - pad, bottom: info_y + 24 },
+            RECT {
+                left: inner_x + 12,
+                top: info_y - 2,
+                right: panel_x + panel_w - pad - 12,
+                bottom: info_y + 22,
+            },
         );
-        text_at(hdc, s.f_tiny, DIM, &format!("Launcher v{}", env!("CARGO_PKG_VERSION")), inner_x, bottom - 34);
-        text_at(hdc, s.f_tiny, DIM, "Automatic update check", panel_x + panel_w - pad - 150, bottom - 34);
+        text_at(
+            hdc,
+            s.f_tiny,
+            DIM,
+            &format!("Launcher v{}", env!("CARGO_PKG_VERSION")),
+            inner_x,
+            bottom - 30,
+        );
+        text_at(
+            hdc,
+            s.f_tiny,
+            DIM,
+            "Automatic updates included",
+            panel_x + panel_w - pad - 176,
+            bottom - 30,
+        );
     }
     unsafe fn draw_launcher(hdc: HDC, s: &GuiState) {
         let left = 28;
@@ -1618,26 +1699,29 @@ mod imp {
     }
 
     unsafe fn draw_launcher_redesigned(hdc: HDC, s: &GuiState) {
-        // The updater keeps the same recognizable product art as setup, with a
-        // compact progress rail beside it so the game launch remains the focus.
-        let margin = 26;
-        let top = TITLE_H + 22;
-        let bottom = s.win_h - 24;
+        // Reuse setup's split-screen frame so the update check feels like the
+        // same branded product flow, with less copy and a tighter checklist.
+        let margin = 30;
+        let top = TITLE_H + 24;
+        let bottom = s.win_h - 28;
         let panel_h = bottom - top;
         let gap = 20;
         let content_w = s.win_w - margin * 2;
-        let art_w = ((content_w - gap) * 48 / 100).clamp(390, 500);
+        let art_w = ((content_w - gap) * 46 / 100).clamp(390, 500);
         let panel_x = margin + art_w + gap;
         let panel_w = s.win_w - margin - panel_x;
 
         draw_game_art(hdc, s, margin, top, art_w, panel_h);
-        rr_fill(hdc, margin + 22, top + 20, 106, 28, 14, GAME_ORANGE);
-        text_center(hdc, s.f_tiny, PURE_WHITE, "FLUX REC", margin + 75, top + 25, 96, 18);
-        rr_fill(hdc, margin, bottom - 134, art_w, 134, 0, COLORREF(0x00241A13));
-        draw_logo(hdc, s, margin + 24, bottom - 104, 54);
-        text_at(hdc, s.f_h2, PURE_WHITE, "Flux Rec", margin + 94, bottom - 103);
-        text_at(hdc, s.f_tiny, COLORREF(0x00F1E5D8), "RIPO TEAM  ·  AUTOMATIC UPDATES", margin + 96, bottom - 72);
-        text_at(hdc, s.f_tiny, COLORREF(0x00F1E5D8), "Update check before every launch", margin + 24, bottom - 34);
+        rr_fill(hdc, margin + 22, top + 20, 112, 30, 15, GAME_ORANGE);
+        text_center(hdc, s.f_tiny, PURE_WHITE, "FLUX REC", margin + 78, top + 25, 100, 20);
+        rr_fill(hdc, margin, bottom - 150, art_w, 150, 0, COLORREF(0x00241A13));
+        draw_logo(hdc, s, margin + 24, bottom - 116, 58);
+        text_at(hdc, s.f_h2, PURE_WHITE, "Flux Rec", margin + 94, bottom - 114);
+        text_at(hdc, s.f_tiny, COLORREF(0x00F1E5D8), "Explore. Play. Create together.", margin + 96, bottom - 82);
+        let team_x = margin + art_w - 76;
+        draw_team_logo(hdc, s, team_x, bottom - 112, 42);
+        text_center(hdc, s.f_tiny, COLORREF(0x00F1E5D8), "RIPO TEAM", team_x + 21, bottom - 64, 76, 18);
+        text_at(hdc, s.f_tiny, COLORREF(0x00F1E5D8), "Automatic update check before launch", margin + 24, bottom - 30);
         rr_outline(hdc, margin, top, art_w, panel_h, 18, BORDER);
 
         rr_fill(hdc, panel_x, top, panel_w, panel_h, 18, BG_CARD);
@@ -1645,8 +1729,36 @@ mod imp {
         let pad = 28;
         let inner_x = panel_x + pad;
         let inner_w = panel_w - pad * 2;
-        rr_fill(hdc, inner_x, top + 14, inner_w, 3, 2, BLUE);
-        text_at(hdc, s.f_tiny, BLUE, "RIPO TEAM LAUNCHER  /  AUTO UPDATE", inner_x, top + 30);
+        rr_fill(hdc, inner_x, top + 16, inner_w, 4, 2, BLUE);
+        text_at(hdc, s.f_tiny, BLUE, "AUTOMATIC UPDATE", inner_x, top + 34);
+        let update_badge_w = 112;
+        let update_badge_x = panel_x + panel_w - pad - update_badge_w;
+        let update_ready = s.finished;
+        rr_fill(
+            hdc,
+            update_badge_x,
+            top + 26,
+            update_badge_w,
+            28,
+            14,
+            if update_ready { COLORREF(0x00E7F2E8) } else { BLUE_DIM },
+        );
+        text_center(
+            hdc,
+            s.f_tiny,
+            if update_ready { GREEN } else { BLUE },
+            if update_ready {
+                "READY"
+            } else if s.percent == 0 {
+                "CHECKING"
+            } else {
+                "UPDATING"
+            },
+            update_badge_x + update_badge_w / 2,
+            top + 31,
+            update_badge_w - 12,
+            18,
+        );
         let state = if s.finished {
             "Update complete"
         } else if s.stage.is_empty() {
@@ -1665,8 +1777,16 @@ mod imp {
         let percent = format!("{display_percent}%");
         let _ = SelectObject(hdc, s.f_big);
         let percent_w = text_width(hdc, &percent);
-        text_at(hdc, s.f_big, if s.finished { GREEN } else { BLUE }, &percent, panel_x + panel_w - pad - percent_w, top + 132);
-        let bar_y = top + 158;
+        text_at(hdc, s.f_tiny, BLUE, "UPDATE PROGRESS", inner_x, top + 137);
+        text_at(
+            hdc,
+            s.f_big,
+            if s.finished { GREEN } else { BLUE },
+            &percent,
+            panel_x + panel_w - pad - percent_w,
+            top + 114,
+        );
+        let bar_y = top + 164;
         if display_percent == 0 && !s.finished {
             draw_shimmer_bar(hdc, s, inner_x, bar_y, inner_w, 14);
         } else {
@@ -1687,15 +1807,15 @@ mod imp {
             RECT { left: inner_x, top: bar_y + 24, right: panel_x + panel_w - pad, bottom: bar_y + 48 },
         );
 
-        // Match setup's vertical progress rail so the updater feels like the
-        // same product flow, with room for clear descriptions at narrow sizes.
+        // Match setup's vertical progress rail. The active stage stays legible
+        // even when the installer reports a long filename or operation string.
         let steps = [
             ("Check files", "Compare the installed build with the latest release"),
             ("Apply update", "Download and verify changed files when needed"),
             ("Start game", "Open Flux Rec when checks finish"),
         ];
-        let step_y = top + 264;
-        let step_spacing = ((panel_h - 356) / steps.len() as i32).clamp(58, 74);
+        let step_y = top + 250;
+        let step_spacing = ((panel_h - 350) / steps.len() as i32).clamp(58, 72);
         for (i, (label, description)) in steps.iter().enumerate() {
             let y = step_y + i as i32 * step_spacing;
             let threshold = [0, 35, 85][i];
@@ -1710,11 +1830,27 @@ mod imp {
             draw_step(hdc, s, inner_x + 14, y, (i + 1) as i32, label, description, step);
             if i < steps.len() - 1 {
                 let line_x = inner_x + 14;
-                let line_y = y + 48;
+                let line_y = y + 46;
                 rr_fill(hdc, line_x - 1, line_y, 2, (step_spacing - 42).max(8), 1, TRACK);
             }
         }
-        text_at(hdc, s.f_tiny, DIM, &format!("Launcher v{}", env!("CARGO_PKG_VERSION")), inner_x, bottom - 30);
+        let footer_y = bottom - 30;
+        text_at(
+            hdc,
+            s.f_tiny,
+            DIM,
+            &format!("Launcher v{}", env!("CARGO_PKG_VERSION")),
+            inner_x,
+            footer_y,
+        );
+        text_at(
+            hdc,
+            s.f_tiny,
+            DIM,
+            "Updates are checked automatically",
+            panel_x + panel_w - pad - 196,
+            footer_y,
+        );
     }
 }
 

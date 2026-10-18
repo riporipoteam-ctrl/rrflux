@@ -44,10 +44,12 @@ describe('cdn endpoints', () => {
 	test('GET /config/LoadingScreenTipData returns the tip array', async () => {
 		const res = await exports.default.fetch(`${ORIGIN}/config/LoadingScreenTipData`)
 		expect(res.status).toBe(200)
-		const body = (await res.json()) as Array<{ Title: string }>
+		const body = (await res.json()) as Array<{ Title: string; Message: string }>
 		expect(Array.isArray(body)).toBe(true)
 		expect(body.length).toBeGreaterThan(0)
 		expect(body[0]).toHaveProperty('Title')
+		expect(body.some((tip) => tip.Title === 'Connect with Flux Social')).toBe(true)
+		expect(JSON.stringify(body)).not.toMatch(/rec\.net/i)
 	})
 
 	// The config directory is served by filename through the ASSETS binding, so a file
