@@ -149,13 +149,45 @@ async function pushConsumableAdded(
 	consumable: OpenedConsumable
 ): Promise<void> {
 	try {
+		// Gift rows can outlive the item-definition snapshot that created them. Resolve the
+		// descriptor through Econ's same catalog endpoint the backpack uses, so the immediate
+		// unlock notification gets the current Unity model fields even for older/sparse gifts.
+		// Preserve the gift snapshot as a fallback if the catalog service is unavailable.
+		let preview = consumable.preview
+		try {
+			const response = await c.env.ECON.fetch(
+				new Request('https://proxy.internal/api/consumables/v1/query/bulk', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ descriptors: [consumable.itemDesc] }),
+				})
+			)
+			if (response.ok) {
+				const definitions = (await response.json().catch(() => null)) as unknown
+				if (Array.isArray(definitions)) {
+					const definition = definitions.find(
+						(value): value is Record<string, unknown> =>
+							typeof value === 'object' &&
+							value !== null &&
+							(value as Record<string, unknown>).ConsumableItemDesc === consumable.itemDesc
+					)
+					if (definition) preview = { ...preview, ...giftConsumablePreview(definition) }
+				}
+			}
+		} catch (err) {
+			logger.warn('failed to resolve consumable model metadata for gift reveal', {
+				accountId,
+				consumableItemDesc: consumable.itemDesc,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
 		await c.env.RECFLARE_NOTIFICATIONS_HUB.getByName(HUB_INSTANCE).notifyPlayer(
 			accountId,
 			NotificationType.ConsumableMappingAdded,
 			{
 				Id: consumable.mappingId,
 				ConsumableItemDesc: consumable.itemDesc,
-				...consumable.preview,
+				...preview,
 				CreatedAt: consumable.createdAt,
 				Count: consumable.count,
 				InitialCount: consumable.preExistingCount,

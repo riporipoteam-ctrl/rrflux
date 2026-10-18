@@ -90,8 +90,25 @@ export default defineConfig({
 							script: `
 									export default {
 									async fetch(request) {
-										await request.arrayBuffer()
 										const path = new URL(request.url).pathname
+									if (path === '/api/consumables/v1/query/bulk' && request.method === 'POST') {
+										const body = await request.json().catch(() => ({}))
+										const descriptors = body?.descriptors ?? []
+										if (descriptors.includes('test-legacy-apple-desc')) {
+											return Response.json([{
+												ConsumableItemDesc: 'test-legacy-apple-desc',
+												ConsumableItemId: 317,
+												ConfigurationData: '{"UnityAssetData":{"UnityAssetId":"test-fixture-asset"}}',
+												ConfigurationVersion: 2,
+												ConsumableToolName: 'AppleTool',
+												IsRRO: true,
+												RoomieCategory: 1,
+												ThumbnailImageName: 'Apple.png',
+											}])
+										}
+										return Response.json([])
+									}
+									await request.arrayBuffer()
 										if (path.startsWith('/api/consumables/') || path.startsWith('/api/equipment/')) {
 											const authorization = request.headers.get('authorization')
 											if (!authorization || authorization === 'Bearer not-a-real-token') {
