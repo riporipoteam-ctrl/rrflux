@@ -1628,7 +1628,7 @@ pub(crate) fn install_patch2025(
          EnableConsole=false\n\
          BlockDeadHosts=true\n\
          SuppressDuidMismatch=true\n\
-         EnableTracing=true\n\
+         EnableTracing=false\n\
          VoiceKeyXml=\n",
         ns_host
     );
