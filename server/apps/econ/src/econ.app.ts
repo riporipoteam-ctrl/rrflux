@@ -39,9 +39,9 @@ import { censorSwears } from '../../api/src/sanitize'
 // wrong or renamed key (see the `Platform`/`BalanceType` trap) fails the build here.
 import { BalanceAddType } from '../../notify/src/notification-payloads'
 import { NotificationType } from '../../notify/src/notification-types'
-import avatarItemCatalog from '../static/db/avatar-items.json'
-import store2025ThumbnailMap from '../static/db/2025-store-thumbnail-map.json'
 import consumableDefinitions from '../static/consumables.json'
+import store2025ThumbnailMap from '../static/db/2025-store-thumbnail-map.json'
+import avatarItemCatalog from '../static/db/avatar-items.json'
 import defaultAvatarItems from '../static/default-avatar-items.json'
 import defaultAvatar from '../static/default-avatar.json'
 import defaultBaseAvatarItems from '../static/default-base-avatar-items.json'
@@ -550,6 +550,7 @@ async function pushConsumableAdded(
 			{
 				Id: args.mappingId,
 				ConsumableItemDesc: args.consumableItemDesc,
+				...consumablePreviewFor(args.consumableItemDesc),
 				CreatedAt: new Date().toISOString(),
 				Count: args.count,
 				InitialCount: args.preExistingCount,
@@ -1011,10 +1012,7 @@ const DESC_BY_NAME: Map<string, string> = (() => {
  * boxes (contents are rolled at grant time) and equipment (resolved by
  * `EquipmentModificationGuid`) keep their captured descs.
  */
-function enrichWithThumbnails(
-	items: StoreItem[],
-	includeConsumablePreview = false
-): StoreItem[] {
+function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = false): StoreItem[] {
 	// Keep the storefront DTO field-for-field compatible with the client. It reads
 	// ThumbnailImageName and requests https://rec.net/{name}; the game patch rewrites
 	// that dead host to our img worker. The client rejects the non-native
@@ -1093,8 +1091,16 @@ function enrichWithThumbnails(
 			// Repair AvatarItemDesc: the captures carry a human-readable
 			// description here which the client cannot resolve to an item; the
 			// catalog holds the real opaque desc the detail view needs.
+			const currentDesc = typeof next.AvatarItemDesc === 'string' ? next.AvatarItemDesc : ''
 			const realDesc = DESC_BY_NAME.get(name)
-			if (realDesc && next.AvatarItemDesc !== realDesc) {
+			// Preserve a valid opaque item descriptor, including variants that share a name.
+			// Repair only the human-readable descriptions in the old storefront captures.
+			const looksLikeCatalogDesc =
+				currentDesc !== '' &&
+				(/^[0-9a-f]{8}-[0-9a-f-]{27,}(?:,|$)/i.test(currentDesc) ||
+					/^_[A-Za-z0-9_-]{12,}/.test(currentDesc) ||
+					/^[A-Za-z0-9_-]{20,}(?:,|$)/.test(currentDesc))
+			if (realDesc && currentDesc !== '' && !looksLikeCatalogDesc && currentDesc !== realDesc) {
 				next.AvatarItemDesc = realDesc
 				changed = true
 			}
@@ -1157,6 +1163,96 @@ function withFiveStarUniqueBox(items: StoreItem[]): StoreItem[] {
 	}
 	const [fiveStar] = enrichWithThumbnails([item], true)
 	return [...items.slice(0, insertAfter + 1), fiveStar, ...items.slice(insertAfter + 1)]
+}
+
+/**
+ * The current Watch capture does not list every wearable in the bundled item catalog.
+ * Add only real, sellable avatar rows, retaining their original descriptions, names,
+ * rarities and thumbnails. IDs live above the captured range so the listing and purchase
+ * resolver can use one unambiguous identifier. The rarity price schedule is the same one
+ * used by the generated legacy storefront; it is a project price for these added rows.
+ */
+function withCatalogWearables(items: StoreItem[]): StoreItem[] {
+	const existingDescs = new Set(
+		items
+			.map(({ GiftDrop }) => GiftDrop.AvatarItemDesc)
+			.filter((desc): desc is string => typeof desc === 'string' && desc !== '')
+	)
+	const usedPurchasableIds = new Set(items.map(({ PurchasableItemId }) => PurchasableItemId))
+	let nextPurchasableId = items.reduce(
+		(max, { PurchasableItemId }) => Math.max(max, PurchasableItemId + 1),
+		40_000
+	)
+	let nextGiftDropId = items.reduce(
+		(max, { GiftDrop }) => Math.max(max, (GiftDrop.GiftDropId ?? 0) + 1),
+		1
+	)
+	const additions: StoreItem[] = []
+	for (const row of avatarItemCatalog as Array<{
+		AvatarItemDesc?: string
+		AvatarItemType?: number | null
+		FriendlyName?: string
+		Tooltip?: string | null
+		Rarity?: number
+		AvatarItemId?: number
+		IsBaseAvatarItem?: boolean
+		CreatedAt?: string
+		ThumbnailImage?: string | null
+	}>) {
+		const desc = row.AvatarItemDesc
+		const name = row.FriendlyName?.trim()
+		const rarity = row.Rarity
+		if (
+			!desc ||
+			!name ||
+			!Number.isInteger(rarity) ||
+			!isSellableRarity(rarity!) ||
+			row.IsBaseAvatarItem === true ||
+			existingDescs.has(desc)
+		) {
+			continue
+		}
+		while (usedPurchasableIds.has(nextPurchasableId)) nextPurchasableId += 1
+		const price = priceForRarity(rarity!)
+		additions.push({
+			GiftDrop: {
+				GiftDropId: nextGiftDropId++,
+				FriendlyName: name,
+				Tooltip: row.Tooltip ?? '',
+				ConsumableItemDesc: '',
+				AvatarItemDesc: desc,
+				AvatarItemType: row.AvatarItemType ?? 0,
+				EquipmentPrefabName: '',
+				EquipmentModificationGuid: '',
+				IsQuery: false,
+				Unique: false,
+				SubscribersOnly: false,
+				Rarity: rarity!,
+				CurrencyType: 0,
+				Currency: 0,
+				Context: 0,
+				ItemSetId: null,
+				ItemSetFriendlyName: '',
+				AvatarItemId: row.AvatarItemId ?? null,
+				EquipmentItemId: 0,
+				ThumbnailImageName: row.ThumbnailImage ?? undefined,
+			},
+			Prices: [{ CurrencyType: CurrencyType.RecCenterTokens, Price: price }],
+			SubscriberPrices: [
+				{ CurrencyType: CurrencyType.RecCenterTokens, Price: subscriberPriceFor(price) },
+			],
+			IsFeatured: false,
+			NewUntil: null,
+			AvailableAt: row.CreatedAt ?? null,
+			AvailableUntil: null,
+			CanBeGifted: true,
+			PurchasableItemId: nextPurchasableId,
+		})
+		usedPurchasableIds.add(nextPurchasableId)
+		nextPurchasableId += 1
+		existingDescs.add(desc)
+	}
+	return additions.length === 0 ? items : [...items, ...additions]
 }
 
 interface StoreItem {
@@ -1351,7 +1447,10 @@ async function loadStorefront(
  * of items on every request. The short TTL also covers deployments that do not set
  * a release id (for example local preview builds).
  */
-async function loadCachedStorefrontResponse(c: Context<App>, path: string): Promise<Response | null> {
+async function loadCachedStorefrontResponse(
+	c: Context<App>,
+	path: string
+): Promise<Response | null> {
 	const cacheKey = new Request(
 		new URL(
 			`/__storefront-cache/${encodeURIComponent(c.env.SENTRY_RELEASE)}/${encodeURIComponent(path)}`,
@@ -1376,6 +1475,9 @@ async function loadCachedStorefrontResponse(c: Context<App>, path: string): Prom
 	// purchase path sees the same token prices the listing routes serve.
 	if (Array.isArray(catalog.StoreItems)) {
 		catalog.StoreItems = repriceDeadCurrencyItems(catalog.StoreItems)
+		if (path === '/sf3-2025.json') {
+			catalog.StoreItems = withCatalogWearables(catalog.StoreItems)
+		}
 		// Same enrichment the listing routes apply (thumbnails + real catalog descs),
 		// so what is bought is what was browsed and the grant keys the inventory row
 		// by the catalog's AvatarItemDesc.
@@ -1661,6 +1763,7 @@ function toGiftContent(
 		GrantedAvatarItem: grantedAvatarItem,
 		GrantedEquipment: grantedEquipment,
 		ConsumableItemDesc: giftDrop.ConsumableItemDesc,
+		...consumablePreviewFor(giftDrop.ConsumableItemDesc),
 		ConsumableCount: consumableCount,
 		AvatarItemDesc: giftDrop.AvatarItemDesc,
 		AvatarItemType: giftDrop.AvatarItemType,
@@ -1672,6 +1775,7 @@ function toGiftContent(
 		EquipmentPrefabName: giftDrop.EquipmentPrefabName,
 		EquipmentModificationGuid: giftDrop.EquipmentModificationGuid,
 		GiftRarity: giftDrop.Rarity,
+		CustomAvatarItemId: null,
 		Platform: -1,
 		PlatformsToSpawnOn: -1,
 		BalanceType: null,
@@ -1713,6 +1817,7 @@ async function pushGiftReceived(
 				FromGiftDropId: 0,
 				FromPlayerId: fromPlayerId,
 				ConsumableItemDesc: gift.drop.ConsumableItemDesc,
+				...consumablePreviewFor(gift.drop.ConsumableItemDesc),
 				AvatarItemDesc: gift.drop.AvatarItemDesc,
 				AvatarItemType: gift.drop.AvatarItemType ?? 0,
 				EquipmentPrefabName: gift.drop.EquipmentPrefabName,
@@ -1724,6 +1829,8 @@ async function pushGiftReceived(
 				Platform: -1,
 				PlatformsToSpawnOn: -1,
 				BalanceType: ALL_PLATFORMS,
+				PackageType: 0,
+				CustomAvatarItemId: null,
 				GiftContext: giftContext ?? gift.drop.Context,
 				GiftRarity: gift.drop.Rarity,
 				Message: message,
@@ -2356,6 +2463,7 @@ function toBalanceUpdateData(
 		Id: granted.id,
 		FromPlayerId: fromPlayerId,
 		ConsumableItemDesc: drop.ConsumableItemDesc,
+		...consumablePreviewFor(drop.ConsumableItemDesc),
 		AvatarItemDesc: drop.AvatarItemDesc,
 		AvatarItemType: drop.AvatarItemType ?? 0,
 		EquipmentPrefabName: drop.EquipmentPrefabName,
@@ -2369,6 +2477,8 @@ function toBalanceUpdateData(
 		BalanceType: ALL_PLATFORMS,
 		GiftContext: giftContext ?? drop.Context,
 		GiftRarity: drop.Rarity,
+		PackageType: 0,
+		CustomAvatarItemId: null,
 		Message: message,
 	}
 }
@@ -2504,6 +2614,7 @@ function toGiftPackage(
 		PlayerId: playerId,
 		FromPlayerId: fromPlayerId,
 		ConsumableItemDesc: drop.ConsumableItemDesc,
+		...consumablePreviewFor(drop.ConsumableItemDesc),
 		AvatarItemType: drop.AvatarItemType ?? 0,
 		AvatarItemDesc: drop.AvatarItemDesc,
 		CustomAvatarItemId: null,
@@ -2520,6 +2631,7 @@ function toGiftPackage(
 		Platform: -1,
 		PlatformsToSpawnOn: -1,
 		BalanceType: ALL_PLATFORMS,
+		PackageType: 0,
 	}
 }
 
@@ -3322,8 +3434,8 @@ const app = new Hono<App>({ strict: false })
 		describeRoute({
 			tags: ['Consumables'],
 			summary: 'All consumable definitions',
-				description:
-					'Public item definitions, including the Unity model configuration and local thumbnail fallback used by the 2025 client.',
+			description:
+				'Public item definitions, including the Unity model configuration and local thumbnail fallback used by the 2025 client.',
 			responses: { 200: json(JsonArray, 'Consumable item definitions') },
 		}),
 		(c) =>
@@ -3602,13 +3714,13 @@ const app = new Hono<App>({ strict: false })
 				}),
 				ObjectiveGroups: (myProgress.ObjectiveGroups as Array<Record<string, unknown>>).map(
 					(grp) => {
-					const stored = groupStatuses.get(Number(grp.Group))
-					if (!stored) return grp
-					return {
-						...grp,
-						IsCompleted: stored.isCompleted,
-						ClearedAt: stored.clearedAt,
-					}
+						const stored = groupStatuses.get(Number(grp.Group))
+						if (!stored) return grp
+						return {
+							...grp,
+							IsCompleted: stored.isCompleted,
+							ClearedAt: stored.clearedAt,
+						}
 					}
 				),
 			})
@@ -3924,7 +4036,7 @@ const app = new Hono<App>({ strict: false })
 			// gift box wrapping them) would fabricate game data.
 			await db
 				.prepare(
-				'INSERT INTO checklist_status (account_id, item_index, completed_at) VALUES (?, ?, ?)'
+					'INSERT INTO checklist_status (account_id, item_index, completed_at) VALUES (?, ?, ?)'
 				)
 				.bind(id, itemIndex, new Date().toISOString())
 				.run()
@@ -5298,9 +5410,9 @@ const app = new Hono<App>({ strict: false })
 					return Number.isSafeInteger(itemId) &&
 						String(itemId) === ref.itemId &&
 						!storeById.has(itemId)
-					? [itemId]
-					: []
-			})
+						? [itemId]
+						: []
+				})
 			)
 			if (missingRecCenterIds.size > 0) {
 				for (const item of await loadRecCenterFallbackItems(c)) {
@@ -5505,9 +5617,13 @@ const app = new Hono<App>({ strict: false })
 			const catalog = (await response.json()) as { StoreItems?: StoreItem[] }
 			if (Array.isArray(catalog.StoreItems)) {
 				const allItems = catalog.StoreItems
-				const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
+				const skip = Math.max(
+					0,
+					Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0
+				)
 				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
-				const take = takeRaw === '' ? allItems.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
+				const take =
+					takeRaw === '' ? allItems.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
 				return c.json({
 					...catalog,
 					StoreItems: allItems.slice(skip, skip + take),
@@ -5517,64 +5633,68 @@ const app = new Hono<App>({ strict: false })
 		}
 	)
 
-	// v3 storefront by id. The 2025 client calls GET /api/storefronts/v3/{id} when
-	// opening the main Store from the Watch menu (Storefront_Watch → id 3).
-	// This was missing → 404 → empty store. Serves the captured sf{id}.json catalogs.
-	app.get(
-		'/api/storefronts/v3/:id',
-		describeRoute({
-			tags: ['Storefront'],
-			summary: 'Storefront catalog by id (v3)',
+// v3 storefront by id. The 2025 client calls GET /api/storefronts/v3/{id} when
+// opening the main Store from the Watch menu (Storefront_Watch → id 3).
+// This was missing → 404 → empty store. Serves the captured sf{id}.json catalogs.
+app.get(
+	'/api/storefronts/v3/:id',
+	describeRoute({
+		tags: ['Storefront'],
+		summary: 'Storefront catalog by id (v3)',
 		description:
 			'Serves the storefront catalog for the given storefront id. Id 3 is the main Watch-menu store (sf3-2025.json on newer builds).',
-			parameters: [
-				{
-					name: 'id',
-					in: 'path',
-					required: true,
-					description: 'Storefront id (3 = main store)',
-					schema: { type: 'string' },
-				},
-			],
-			responses: {
-				200: json(JsonObject, 'The storefront catalog'),
-				404: { description: 'No storefront for this id' },
+		parameters: [
+			{
+				name: 'id',
+				in: 'path',
+				required: true,
+				description: 'Storefront id (3 = main store)',
+				schema: { type: 'string' },
 			},
-		}),
-		async (c) => {
-			const id = c.req.param('id')
-			// Consult the alias map first (e.g. 'Storefront_Watch' → '3') before parsing
-			// as a number — the alias is a string id, not a numeric type.
-			const aliased = (STOREFRONT_ALIASES as Record<string, string>)[id]
-			const storefrontType = Number.parseInt(aliased ?? id, 10)
-			if (!Number.isFinite(storefrontType)) {
-				return c.json({ success: false, error: { message: 'not found' } }, 404)
-			}
+		],
+		responses: {
+			200: json(JsonObject, 'The storefront catalog'),
+			404: { description: 'No storefront for this id' },
+		},
+	}),
+	async (c) => {
+		const id = c.req.param('id')
+		// Consult the alias map first (e.g. 'Storefront_Watch' → '3') before parsing
+		// as a number — the alias is a string id, not a numeric type.
+		const aliased = (STOREFRONT_ALIASES as Record<string, string>)[id]
+		const storefrontType = Number.parseInt(aliased ?? id, 10)
+		if (!Number.isFinite(storefrontType)) {
+			return c.json({ success: false, error: { message: 'not found' } }, 404)
+		}
 		const catalog = await loadStorefront(c, storefrontType, {
 			defaultToCurrentForPublicBrowse: true,
 		})
-			if (!catalog) {
-				return c.json({ success: false, error: { message: 'not found' } }, 404)
-			}
-			// Paginate store items if requested (skip/take or offset/limit).
-			// Defaults to full catalog for backward compatibility.
-			const _items = (catalog as any)?.StoreItems
-			if (Array.isArray(_items)) {
-				const _skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
-				const _takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
-				const _take = _takeRaw === '' ? _items.length : Math.max(0, Number.parseInt(_takeRaw, 10) || 0)
-				if (_skip !== 0 || _take !== _items.length) {
-					return c.json({ ...(catalog as any), StoreItems: _items.slice(_skip, _skip + _take) })
-				}
-			}
-			return c.json(catalog)
+		if (!catalog) {
+			return c.json({ success: false, error: { message: 'not found' } }, 404)
 		}
-	)
+		// Paginate store items if requested (skip/take or offset/limit).
+		// Defaults to full catalog for backward compatibility.
+		const _items = (catalog as any)?.StoreItems
+		if (Array.isArray(_items)) {
+			const _skip = Math.max(
+				0,
+				Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0
+			)
+			const _takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
+			const _take =
+				_takeRaw === '' ? _items.length : Math.max(0, Number.parseInt(_takeRaw, 10) || 0)
+			if (_skip !== 0 || _take !== _items.length) {
+				return c.json({ ...(catalog as any), StoreItems: _items.slice(_skip, _skip + _take) })
+			}
+		}
+		return c.json(catalog)
+	}
+)
 
-	// v4 room storefront. The 2023 client calls GET /api/storefronts/v4/room/{id} when
-	// opening the store in a room (Rec Center = room 2, bowling alley = 500, etc.).
-	// This was missing → 404 → empty store. Room 2 serves its captured sf2.json catalog;
-	// other original rooms return their captured sf{id}.json catalogs.
+// v4 room storefront. The 2023 client calls GET /api/storefronts/v4/room/{id} when
+// opening the store in a room (Rec Center = room 2, bowling alley = 500, etc.).
+// This was missing → 404 → empty store. Room 2 serves its captured sf2.json catalog;
+// other original rooms return their captured sf{id}.json catalogs.
 app
 	.get(
 		'/api/storefronts/v4/room/:id',
@@ -5601,15 +5721,15 @@ app
 			const id = c.req.param('id')
 			// Keep the Rec Center's own captured storefront (sf2.json). Do not swap in
 			// the Watch-menu store: it is a different catalog with different item ids.
-				if (id === '2') {
+			if (id === '2') {
 				const storefront = await loadStorefront(c, 2, {
 					defaultToCurrentForPublicBrowse: true,
 				})
-					if (!storefront) return c.notFound()
-					// Keep the room's public storefront id on the response even though its
-					// catalog (and purchase lookup) is aliased to the general store.
-					return c.json({ ...storefront, StorefrontType: 2 })
-				}
+				if (!storefront) return c.notFound()
+				// Keep the room's public storefront id on the response even though its
+				// catalog (and purchase lookup) is aliased to the general store.
+				return c.json({ ...storefront, StorefrontType: 2 })
+			}
 			// Map original room IDs to their storefront catalog IDs. Room IDs and
 			// storefront IDs are different namespaces (e.g., Bowling is room 39
 			// but its storefront is sf500).
@@ -5654,9 +5774,13 @@ app
 			const catalog = (await response.json()) as { StoreItems?: StoreItem[] }
 			if (Array.isArray(catalog.StoreItems)) {
 				const allItems = catalog.StoreItems
-				const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0)
+				const skip = Math.max(
+					0,
+					Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0
+				)
 				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
-				const take = takeRaw === '' ? allItems.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
+				const take =
+					takeRaw === '' ? allItems.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
 				return c.json({
 					...catalog,
 					StoreItems: allItems.slice(skip, skip + take),
@@ -6769,7 +6893,7 @@ app
 				const renewed = await spendCurrency(
 					c.env.DB,
 					id,
-				CurrencyType.RecCenterTokens,
+					CurrencyType.RecCenterTokens,
 					price,
 					startingTokens
 				)
@@ -7085,3 +7209,4 @@ app.get(
 )
 
 export default app
+

@@ -100,6 +100,15 @@ export interface GiftContent extends Record<string, unknown> {
 	GrantedEquipment?: GrantedGiftEquipment | null
 	ConsumableItemDesc: string
 	ConsumableCount: number
+	/** Optional 2025 client model/config metadata for a consumable reveal. */
+	ConsumableItemId?: number
+	ConfigurationData?: string | null
+	ConfigurationVersion?: number
+	ConsumableToolName?: string | null
+	IsRRO?: boolean
+	RoomieCategory?: number
+	ThumbnailImageName?: string | null
+	CustomAvatarItemId?: string | null
 	// Legacy (pre-open-to-grant) boxes only: the id of the `consumable` row granted at
 	// purchase and the player's total of that consumable *before* that grant. They let
 	// the old gift-consume fire an accurate ConsumableMappingAdded notification without
@@ -206,3 +215,4 @@ export async function consumeGift(
 	if (row === null) return null
 	return { ...(JSON.parse(row.data) as GiftContent), Id: row.id, CreatedAt: row.created_at }
 }
+

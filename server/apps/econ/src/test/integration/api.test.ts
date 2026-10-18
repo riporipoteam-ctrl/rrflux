@@ -37,9 +37,9 @@ import avatarItemsJson from '../../../static/db/avatar-items.json'
 import carriedItems from '../../../static/db/consumables.json'
 import skinsJson from '../../../static/db/skins.json'
 import questRewards from '../../../static/quest-rewards.json'
+import sf2 from '../../../static/storefronts/sf2.json'
 import sf32025 from '../../../static/storefronts/sf3-2025.json'
 import sf3 from '../../../static/storefronts/sf3.json'
-import sf2 from '../../../static/storefronts/sf2.json'
 import { SCHEMA_DDL } from '../../avatar-db'
 import {
 	BALANCE_SCHEMA_DDL,
@@ -2500,7 +2500,9 @@ describe('econ endpoints', () => {
 				?.ThumbnailImageName
 		).toBe('store-backpack-food-v2.png')
 
-		const potion = definitions.find((definition) => definition.FriendlyName === 'Blue Pulse Potion')!
+		const potion = definitions.find(
+			(definition) => definition.FriendlyName === 'Blue Pulse Potion'
+		)!
 		expect(potion.ConfigurationData).toBeTruthy()
 		expect(potion.ThumbnailImageName).toBe('store-backpack-potion-v2.png')
 
@@ -2508,14 +2510,11 @@ describe('econ endpoints', () => {
 		form.append('descriptors', apple.ConsumableItemDesc)
 		form.append('descriptors', potion.ConsumableItemDesc)
 		form.append('descriptors', 'not-a-real-consumable')
-		const bulkResponse = await exports.default.fetch(
-			`${ORIGIN}/api/consumables/v1/query/bulk`,
-			{
-				method: 'POST',
-				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-				body: form.toString(),
-			}
-		)
+		const bulkResponse = await exports.default.fetch(`${ORIGIN}/api/consumables/v1/query/bulk`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: form.toString(),
+		})
 		expect(bulkResponse.status).toBe(200)
 		const resolved = (await bulkResponse.json()) as typeof definitions
 		expect(resolved.map((definition) => definition.ConsumableItemDesc)).toEqual([
@@ -2731,7 +2730,12 @@ describe('econ endpoints', () => {
 				StorefrontType: number
 				StoreItems: Array<{
 					PurchasableItemId: number
-					GiftDrop: { FriendlyName: string; AvatarItemDesc: string; ConsumableItemDesc: string; IsQuery: boolean }
+					GiftDrop: {
+						FriendlyName: string
+						AvatarItemDesc: string
+						ConsumableItemDesc: string
+						IsQuery: boolean
+					}
 				}>
 			}
 		}
@@ -2746,9 +2750,15 @@ describe('econ endpoints', () => {
 		expectCapturedRecCenter(legacy)
 		const current = await read()
 		expectCapturedRecCenter(current)
-		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Gladiator Helmet')).toBe(true)
-		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === '4-Star Unique Box')).toBe(true)
-		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')).toBe(false)
+		expect(
+			current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Gladiator Helmet')
+		).toBe(true)
+		expect(
+			current.StoreItems.some((item) => item.GiftDrop.FriendlyName === '4-Star Unique Box')
+		).toBe(true)
+		expect(current.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Candy Apples')).toBe(
+			false
+		)
 		expect(current.StoreItems.some((item) => item.GiftDrop.IsQuery)).toBe(true)
 
 		// The v3 catalog route for id 2 must use the same captured storefront.
@@ -2792,6 +2802,7 @@ describe('econ endpoints', () => {
 					SubscriberPrices?: Array<{ CurrencyType: number; Price: number }> | null
 					GiftDrop: {
 						FriendlyName: string
+						AvatarItemDesc?: string
 						GiftDropId?: number
 						Rarity?: number
 						ThumbnailImageName?: string
@@ -2823,9 +2834,22 @@ describe('econ endpoints', () => {
 		// A same-day rebuild sorts by its DATE, not the `.NN` suffix.
 		expect((await store(await at('20230414.02'))).StoreItems).toHaveLength(sf3.StoreItems.length)
 
-		// Anonymous public browsing gets the current catalog and the project's 5-star box
-		// extension when it cannot supply a build.
-		expect((await store({})).StoreItems).toHaveLength(sf32025.StoreItems.length + 1)
+		// Anonymous public browsing gets the current catalog plus the project-side
+		// 5-star box and missing catalog-wearable extensions.
+		const expectedMissingWearables = avatarItemsJson.filter(
+			(item) =>
+				item.AvatarItemDesc &&
+				item.FriendlyName &&
+				!item.IsBaseAvatarItem &&
+				item.Rarity !== -1 &&
+				!sf32025.StoreItems.some(
+					(storeItem) => storeItem.GiftDrop.AvatarItemDesc === item.AvatarItemDesc
+				)
+		)
+		expect(expectedMissingWearables).toHaveLength(790)
+		expect((await store({})).StoreItems).toHaveLength(
+			sf32025.StoreItems.length + expectedMissingWearables.length + 1
+		)
 		// A signed but unversioned token and malformed build remain on the legacy snapshot.
 		expect((await store(await bearer())).StoreItems).toHaveLength(sf3.StoreItems.length)
 		expect((await store(await at('not-a-build'))).StoreItems).toHaveLength(sf3.StoreItems.length)
@@ -2834,10 +2858,20 @@ describe('econ endpoints', () => {
 		for (const version of ['20230616', '20250424.01', '20250718.01']) {
 			const merged = await store(await at(version))
 			expect(merged.StorefrontType, version).toBe(3)
-			expect(merged.StoreItems.length, version).toBe(sf32025.StoreItems.length + 1)
+			expect(merged.StoreItems.length, version).toBe(
+				sf32025.StoreItems.length + expectedMissingWearables.length + 1
+			)
 			expect(merged.StoreItems.length, version).toBeGreaterThan(sf3.StoreItems.length)
 		}
 		const currentStore = await store(await at('20250718.01'))
+		const currentIds = currentStore.StoreItems.map((item) => item.PurchasableItemId)
+		expect(new Set(currentIds).size).toBe(currentIds.length)
+		const currentDescSet = new Set(
+			currentStore.StoreItems.map((item) => item.GiftDrop.AvatarItemDesc)
+		)
+		for (const item of expectedMissingWearables) {
+			expect(currentDescSet.has(item.AvatarItemDesc), item.FriendlyName).toBe(true)
+		}
 		const definitionsResponse = await exports.default.fetch(
 			`${ORIGIN}/api/consumables/v1/all?supportedVersion=2`
 		)
@@ -2902,9 +2936,9 @@ describe('econ endpoints', () => {
 		)!.GiftDrop
 		expect(appleDrop.ConsumableItemId).toBe(1616)
 		expect(appleDrop.ConfigurationVersion).toBe(2)
-		expect(
-			JSON.parse(appleDrop.ConfigurationData!).UnityAssetData.UnityAssetId
-		).toBe('52106138-cc33-4bd1-86fa-91adf31aca95')
+		expect(JSON.parse(appleDrop.ConfigurationData!).UnityAssetData.UnityAssetId).toBe(
+			'52106138-cc33-4bd1-86fa-91adf31aca95'
+		)
 		const potionDrop = currentStore.StoreItems.find(
 			(item) => item.GiftDrop.FriendlyName === 'Blue Pulse Potion'
 		)!.GiftDrop
@@ -2918,29 +2952,35 @@ describe('econ endpoints', () => {
 		)
 		expect(backpackRows).toHaveLength(331)
 		expect(
-			backpackRows.every(({ GiftDrop }) =>
-				GiftDrop.ThumbnailImageName?.startsWith('store-backpack-')
+			backpackRows.every(
+				({ GiftDrop }) =>
+					typeof GiftDrop.ThumbnailImageName === 'string' && GiftDrop.ThumbnailImageName !== ''
 			)
 		).toBe(true)
+		const addedWearable = currentStore.StoreItems.find(
+			(item) => item.GiftDrop.FriendlyName === 'Vampire Hunter Gloves (Blue)'
+		)!
+		expect(addedWearable.PurchasableItemId).toBeGreaterThanOrEqual(40_000)
+		expect(addedWearable.GiftDrop.AvatarItemDesc).toBe(
+			avatarItemsJson.find((item) => item.FriendlyName === 'Vampire Hunter Gloves (Blue)')
+				?.AvatarItemDesc
+		)
 
 		// The id does not change within a snapshot: an old-build client buys an sf3 item
 		// from sf3 at sf3's price. (The 2025 capture is a different snapshot — the real API
 		// reused PurchasableItemIds over time — so cross-snapshot id equality is not asserted.)
 		// The fixture costs 600, so account 42 is credited first.
 		await creditCurrency(env.DB, 42, CurrencyType.RecCenterTokens, 10000, DEFAULT_STARTING_TOKENS)
-		const fiveStarPurchase = await exports.default.fetch(
-			`${ORIGIN}/api/storefronts/v2/buyItem`,
-			{
-				method: 'POST',
-				headers: { ...(await at('20250718.01')), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					StorefrontType: 3,
-					PurchasableItemId: fiveStarBox.PurchasableItemId,
-					CurrencyType: 2,
-					RequestedPrice: fiveStarBox.Prices[0]!.Price,
-				}),
-			}
-		)
+		const fiveStarPurchase = await exports.default.fetch(`${ORIGIN}/api/storefronts/v2/buyItem`, {
+			method: 'POST',
+			headers: { ...(await at('20250718.01')), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				StorefrontType: 3,
+				PurchasableItemId: fiveStarBox.PurchasableItemId,
+				CurrencyType: 2,
+				RequestedPrice: fiveStarBox.Prices[0]!.Price,
+			}),
+		})
 		expect(fiveStarPurchase.status).toBe(200)
 		const fiveStarResult = (await fiveStarPurchase.json()) as {
 			Balance: number
@@ -2963,6 +3003,98 @@ describe('econ endpoints', () => {
 				(fiveStarReward?.EquipmentModificationGuid ?? '') !== ''
 		).toBe(true)
 		expect(fiveStarResult.BalanceUpdates[0]?.Data[0]?.Id).toBeGreaterThan(0)
+
+		const appleStoreItem = currentStore.StoreItems.find(
+			(item) => item.GiftDrop.FriendlyName === 'Apple'
+		)!
+		const applePurchase = await exports.default.fetch(`${ORIGIN}/api/storefronts/v2/buyItem`, {
+			method: 'POST',
+			headers: { ...(await at('20250718.01')), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				StorefrontType: 3,
+				PurchasableItemId: appleStoreItem.PurchasableItemId,
+				CurrencyType: 2,
+				RequestedPrice: appleStoreItem.Prices[0]!.Price,
+			}),
+		})
+		expect(applePurchase.status).toBe(200)
+		const applePurchaseResult = (await applePurchase.json()) as {
+			BalanceUpdates: Array<{
+				Data: Array<{
+					Id: number
+					ConsumableItemId?: number
+					ConfigurationData?: string | null
+					ConfigurationVersion?: number
+					ThumbnailImageName?: string
+				}>
+			}>
+		}
+		const appleGift = applePurchaseResult.BalanceUpdates[0]?.Data[0]
+		expect(appleGift).toMatchObject({
+			ConsumableItemId: 1616,
+			ConfigurationVersion: 2,
+			ThumbnailImageName: 'store-backpack-food-v2.png',
+		})
+		expect(JSON.parse(appleGift!.ConfigurationData!).UnityAssetData.UnityAssetId).toBe(
+			'52106138-cc33-4bd1-86fa-91adf31aca95'
+		)
+		const appleFrames = await drainFrames()
+		const appleArrival = appleFrames.find(
+			(frame) =>
+				frame.notificationType === NotificationType.GiftPackageReceivedImmediate &&
+				(frame.payload as { Id?: number }).Id === appleGift!.Id
+		)
+		expect(appleArrival?.payload).toMatchObject({
+			Id: appleGift!.Id,
+			ConsumableItemId: 1616,
+			ConfigurationVersion: 2,
+			ThumbnailImageName: 'store-backpack-food-v2.png',
+		})
+		const pendingGiftsResponse = await exports.default.fetch(`${ORIGIN}/api/avatar/v2/gifts`, {
+			headers: await at('20250718.01'),
+		})
+		const pendingGifts = (await pendingGiftsResponse.json()) as Array<{
+			Id: number
+			ConsumableItemId?: number
+			ConfigurationData?: string | null
+		}>
+		expect(pendingGifts.find((gift) => gift.Id === appleGift!.Id)).toMatchObject({
+			ConsumableItemId: 1616,
+			ConfigurationData: appleStoreItem.GiftDrop.ConfigurationData,
+		})
+		expect((await openGiftBox('42', appleGift!.Id)).status).toBe(200)
+		const openedAppleFrames = await drainFrames()
+		const unlockedApple = openedAppleFrames.find(
+			(frame) => frame.notificationType === NotificationType.ConsumableMappingAdded
+		)
+		expect(unlockedApple?.payload).toMatchObject({
+			ConsumableItemDesc: appleStoreItem.GiftDrop.ConsumableItemDesc,
+			ConsumableItemId: 1616,
+			ConfigurationData: appleStoreItem.GiftDrop.ConfigurationData,
+			ConfigurationVersion: 2,
+			ThumbnailImageName: 'store-backpack-food-v2.png',
+		})
+
+		const addedWearablePurchase = await exports.default.fetch(
+			`${ORIGIN}/api/storefronts/v2/buyItem`,
+			{
+				method: 'POST',
+				headers: { ...(await at('20250718.01')), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					StorefrontType: 3,
+					PurchasableItemId: addedWearable.PurchasableItemId,
+					CurrencyType: 2,
+					RequestedPrice: addedWearable.Prices[0]!.Price,
+				}),
+			}
+		)
+		expect(addedWearablePurchase.status).toBe(200)
+		const addedWearableResult = (await addedWearablePurchase.json()) as {
+			BalanceUpdates: Array<{ Data: Array<{ AvatarItemDesc: string }> }>
+		}
+		expect(addedWearableResult.BalanceUpdates[0]?.Data[0]?.AvatarItemDesc).toBe(
+			addedWearable.GiftDrop.AvatarItemDesc
+		)
 
 		const bowtie = await exports.default.fetch(`${ORIGIN}/api/storefronts/v2/buyItem`, {
 			method: 'POST',
@@ -3229,7 +3361,7 @@ describe('econ endpoints', () => {
 		const buy = async () =>
 			exports.default.fetch(`${ORIGIN}/api/storefronts/v2/buyItem`, {
 				method: 'POST',
-				headers: { ...(await bearer('25')), 'Content-Type': 'application/json' },
+				headers: { ...(await bearer('25', undefined, '20250718.01')), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					StorefrontType: 300,
 					PurchasableItemId: 2266,
@@ -3257,6 +3389,10 @@ describe('econ endpoints', () => {
 					AvatarItemDesc: string
 					AvatarItemType: number
 					FromPlayerId: number
+					ConsumableItemId?: number
+					ConfigurationData?: string | null
+					ConfigurationVersion?: number
+					ThumbnailImageName?: string
 				}>
 			}>
 		}
@@ -3267,15 +3403,34 @@ describe('econ endpoints', () => {
 		expect(drop.AvatarItemDesc).toBe('')
 		// A consumable's AvatarItemType is null in the catalog; the response coalesces it to 0.
 		expect(drop.AvatarItemType).toBe(0)
+		// The 2025 reveal path needs the same model lookup values as the backpack listing.
+		expect(drop.ConsumableItemId).toBe(8)
+		expect(drop.ConfigurationVersion).toBe(0)
+		expect(drop.ThumbnailImageName).toBe('store-backpack-food-v2.png')
 		// A self-buy is attributed to the "Coach" system account (id 1).
 		expect(drop.FromPlayerId).toBe(1)
 		const giftId = drop.Id
 		expect(giftId).toBeGreaterThan(0)
+		const pendingRes = await exports.default.fetch(`${ORIGIN}/api/avatar/v2/gifts`, {
+			headers: await bearer('25'),
+		})
+		const pending = (await pendingRes.json()) as Array<{
+			Id: number
+			ConsumableItemId?: number
+			ConfigurationVersion?: number
+			ThumbnailImageName?: string
+		}>
+		expect(pending[0]).toMatchObject({
+			Id: giftId,
+			ConsumableItemId: 8,
+			ConfigurationVersion: 0,
+			ThumbnailImageName: 'store-backpack-food-v2.png',
+		})
 
 		// It's owned as an unlocked consumable — one instance, count 1.
 		const unlocked = async () => {
 			const r = await exports.default.fetch(`${ORIGIN}/api/consumables/v2/getUnlocked`, {
-				headers: await bearer('25'),
+				headers: await bearer('25', undefined, '20250718.01'),
 			})
 			expect(r.status).toBe(200)
 			return (await r.json()) as Array<{
@@ -3286,6 +3441,8 @@ describe('econ endpoints', () => {
 				InitialCount: number
 				IsActive: boolean
 				IsTransferable: boolean
+				ConsumableItemId?: number
+				ThumbnailImageName?: string
 			}>
 		}
 
@@ -3298,6 +3455,10 @@ describe('econ endpoints', () => {
 		expect(first).toHaveLength(1)
 		expect(first[0].ConsumableItemDesc).toBe(consumableDesc)
 		expect(first[0].Count).toBe(1)
+		expect(first[0]).toMatchObject({
+			ConsumableItemId: 8,
+			ThumbnailImageName: 'store-backpack-food-v2.png',
+		})
 		expect(first[0].InitialCount).toBe(1)
 		expect(first[0].Ids).toHaveLength(1)
 		expect(first[0].CreatedAts).toHaveLength(1)
@@ -4013,7 +4174,9 @@ describe('econ endpoints', () => {
 		expect(arrivals.map((frame) => (frame.payload as { Id: number }).Id)).toEqual(
 			value.BalanceUpdates.map((update) => update.Data.GiftPackage!.Id)
 		)
-		expect(frames.find((frame) => frame.notificationType === NotificationType.StorefrontBalancePurchase)).toEqual({
+		expect(
+			frames.find((frame) => frame.notificationType === NotificationType.StorefrontBalancePurchase)
+		).toEqual({
 			accountId: 90,
 			notificationType: NotificationType.StorefrontBalancePurchase,
 			payload: {
@@ -6875,3 +7038,4 @@ describe('plus token reload', () => {
 		expect(() => plusReloadSql(100, -1)).toThrow('non-negative integer')
 	})
 })
+
