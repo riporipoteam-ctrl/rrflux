@@ -87,10 +87,10 @@ const FLUXREC_LOGO_PNG: &[u8] = include_bytes!("../assets/fluxrec-logo.png");
 #[cfg(windows)]
 const RIPO_TEAM_LOGO_PNG: &[u8] = include_bytes!("../assets/ripo-team-logo.png");
 
-/// Release tags retain their historic internal prefix for updater compatibility.
-/// Keep that implementation detail out of every user-facing version label.
+/// Strip any internal tag prefix so it stays out of user-facing version labels.
 fn display_update_version(tag: &str) -> &str {
-    tag.strip_prefix("recflare-installer-")
+    tag.rsplit_once("-v")
+        .map(|(_, version)| version)
         .unwrap_or(tag)
         .trim_start_matches('v')
 }
@@ -101,7 +101,7 @@ mod release_label_tests {
 
     #[test]
     fn updater_label_hides_internal_release_prefix() {
-        assert_eq!(display_update_version("recflare-installer-v1.0.31"), "1.0.31");
+        assert_eq!(display_update_version("legacy-launcher-v1.0.31"), "1.0.31");
         assert_eq!(display_update_version("v1.0.31"), "1.0.31");
         assert_eq!(display_update_version("1.0.31"), "1.0.31");
     }
@@ -231,7 +231,6 @@ mod imp {
         NavSettings,
         Play,
         Uninstall,
-        RefreshPlayers,
         CheckForUpdates,
         OpenInstallFolder,
         Details, // v1.0.6
@@ -295,7 +294,6 @@ mod imp {
         details: RECT, // v1.0.6: explicit Details button
         theme_light: RECT,
         theme_dark: RECT,
-        refresh_players: RECT,
         check_updates: RECT,
         open_folder: RECT,
         close: RECT,
@@ -952,8 +950,8 @@ mod imp {
         let content_x = CONTENT_X + 8;
         let content_right = win_w - 32;
         let content_w = (content_right - content_x).max(420);
-        let hero_top = TITLE_H + 40;
-        let hero_bottom = hero_top + ((win_h - TITLE_H) * 58 / 100).clamp(320, 430);
+        let hero_top = TITLE_H + 82;
+        let hero_bottom = hero_top + ((win_h - TITLE_H - 48) * 54 / 100).clamp(320, 430);
         let library_top = TITLE_H + 62;
         let library_bottom = library_top + 380;
         let library_action_y = library_bottom - 62;
@@ -1017,12 +1015,6 @@ mod imp {
                 top: TITLE_H + 190,
                 right: content_x + 378,
                 bottom: TITLE_H + 238,
-            },
-            refresh_players: RECT {
-                left: content_right - 112,
-                top: hero_top + 16,
-                right: content_right - 20,
-                bottom: hero_top + 52,
             },
             check_updates: RECT {
                 left: content_x + 24,
@@ -1131,9 +1123,6 @@ mod imp {
         }
         match view {
             View::Store => {
-                if pt_in(&rects.refresh_players, x, y) {
-                    return Hot::RefreshPlayers;
-                }
                 if pt_in(&rects.play, x, y) {
                     return Hot::Play;
                 }
@@ -1298,7 +1287,7 @@ mod imp {
             draw_logo(mem, footer.left + 12, footer.top + 14, 32, p.accent)?;
         }
         draw_text(mem, "FLUX REC", footer.left + 52, footer.top + 13, footer.right - footer.left - 60, 17, p.text, 10, true, false)?;
-        let game_state = if st.install_required { "Not installed" } else if st.update_available { "Update available" } else if st.checking { "Checking status" } else { "2025 game build" };
+        let game_state = if st.install_required { "Not installed" } else if st.update_available { "Update available" } else if st.checking { "Checking status" } else { "Ready to play" };
         draw_text_ellipsis(mem, game_state, footer.left + 52, footer.top + 34, footer.right - footer.left - 60, 18, p.text_dim, 9)?;
         draw_nav(
             mem,
@@ -1578,7 +1567,9 @@ mod imp {
         let hero = &rects.card;
         let content_x = hero.left;
         let content_w = hero.right - hero.left;
-        draw_text(hdc, "STORE  /  FEATURED", content_x, TITLE_H + 13, 320, 18, p.accent, 10, true, false)?;
+        draw_text(hdc, "RIPO TEAM STORE", content_x, TITLE_H + 3, 320, 17, p.accent, 9, true, false)?;
+        draw_text(hdc, "Discover games", content_x, TITLE_H + 20, 400, 32, p.text, 25, true, false)?;
+        draw_text(hdc, "Explore the first game from Ripo Team.", content_x, TITLE_H + 52, 430, 20, p.text_dim, 11, false, false)?;
         draw_gallery_image(hdc, st, 0, hero, p)?;
         round_rect_outline(hdc, hero, 18, p.border)?;
 
@@ -1607,16 +1598,16 @@ mod imp {
             (None, true) => "Checking players".to_string(),
             (None, false) => "Player count unavailable".to_string(),
         };
-        draw_people_icon(hdc, hero.right - 275, hero.top + 19, COLORREF(0x00FFFFFF))?;
-        draw_text_ellipsis(hdc, &players, hero.right - 244, hero.top + 17, 122, 24, COLORREF(0x00FFFFFF), 10)?;
-        round_rect_path(hdc, &rects.refresh_players, 9, COLORREF(0x00FFFFFF))?;
-        draw_text(hdc, if st.player_count_pending { "…" } else { "Refresh" }, rects.refresh_players.left + 4, rects.refresh_players.top + 7, rects.refresh_players.right - rects.refresh_players.left - 8, 20, p.text, 10, true, true)?;
+        let players_chip = RECT { left: hero.right - 246, top: hero.top + 16, right: hero.right - 20, bottom: hero.top + 52 };
+        round_rect_path(hdc, &players_chip, 10, COLORREF(0x00221914))?;
+        draw_people_icon(hdc, players_chip.left + 12, players_chip.top + 8, COLORREF(0x00FFFFFF))?;
+        draw_text_ellipsis(hdc, &players, players_chip.left + 38, players_chip.top + 7, players_chip.right - players_chip.left - 48, 22, COLORREF(0x00FFFFFF), 10)?;
 
         if draw_logo_bitmap(hdc, st.logo_bitmap, hero.left + 22, hero.bottom - 112, 56).is_err() {
             draw_logo(hdc, hero.left + 22, hero.bottom - 112, 56, p.accent)?;
         }
         draw_text(hdc, "Flux Rec", hero.left + 94, hero.bottom - 112, (content_w - 565).max(180), 38, COLORREF(0x00FFFFFF), 28, true, false)?;
-        draw_text(hdc, "Explore rooms, play together and create with the 2025 game build.", hero.left + 94, hero.bottom - 72, (content_w - 565).max(180), 30, COLORREF(0x00E9E1DA), 12, false, false)?;
+        draw_text(hdc, "Explore rooms, play together and create in Flux Rec.", hero.left + 94, hero.bottom - 72, (content_w - 565).max(180), 30, COLORREF(0x00E9E1DA), 12, false, false)?;
         let play_label = if st.install_required { "Install" } else if st.update_available { "Update & play" } else { "Play now" };
         round_rect_path(hdc, &rects.play, 10, if st.hover == Hot::Play { p.accent_dark } else { p.accent })?;
         draw_text(hdc, play_label, rects.play.left + 8, rects.play.top + 15, rects.play.right - rects.play.left - 16, 25, COLORREF(0x00FFFFFF), 14, true, true)?;
@@ -1626,7 +1617,7 @@ mod imp {
 
         let section_y = hero.bottom + 20;
         draw_text(hdc, "Take a look inside", content_x, section_y, 380, 25, p.text, 18, true, false)?;
-        draw_text(hdc, "Scenes from the 2025 game build", content_x, section_y + 25, 390, 20, p.text_dim, 11, false, false)?;
+        draw_text(hdc, "Scenes from Flux Rec", content_x, section_y + 25, 390, 20, p.text_dim, 11, false, false)?;
         let gap = 14;
         let tile_w = (content_w - gap * 2) / 3;
         let tile_top = section_y + 53;
@@ -1652,7 +1643,7 @@ mod imp {
 
         draw_text(
             hdc,
-            "RIPO TEAM STORE  ·  2025 CLIENT",
+            "RIPO TEAM STORE",
             content_x,
             TITLE_H + 12,
             400,
@@ -1767,7 +1758,7 @@ mod imp {
         )?;
         draw_text(
             hdc,
-            "A 2025 Rec Room community",
+            "A Rec Room community",
             banner.left + 110,
             banner.top + 72,
             340,
@@ -1816,7 +1807,7 @@ mod imp {
         )?;
         draw_text(
             hdc,
-            &format!("Launcher  v{}  ·  2025 client", st.version),
+            &format!("Ripo Team Launcher  v{}", st.version),
             card.left + 24,
             banner.bottom + 112,
             banner_w - 48,
@@ -1827,7 +1818,7 @@ mod imp {
             false,
         )?;
 
-        // Live presence panel with an actual drawn person glyph and an explicit refresh target.
+        // Live presence panel with an actual drawn person glyph.
         let player_card = RECT {
             left: status_x,
             top: card.top,
@@ -1885,31 +1876,6 @@ mod imp {
             false,
             false,
         )?;
-        let refresh_hover = st.hover == Hot::RefreshPlayers;
-        round_rect_path(
-            hdc,
-            &rects.refresh_players,
-            10,
-            if refresh_hover { p.bg_hover } else { p.bg_card },
-        )?;
-        round_rect_outline(hdc, &rects.refresh_players, 10, p.border)?;
-        draw_text(
-            hdc,
-            if st.player_count_pending {
-                "Refreshing"
-            } else {
-                "Refresh"
-            },
-            rects.refresh_players.left,
-            rects.refresh_players.top + 5,
-            rects.refresh_players.right - rects.refresh_players.left,
-            20,
-            p.accent,
-            11,
-            true,
-            true,
-        )?;
-
         // Update/install health card.
         let update_card = RECT {
             left: status_x,
@@ -2114,9 +2080,9 @@ mod imp {
         } else {
             "Up to date"
         };
-        draw_text(hdc, "RIPO TEAM  ·  2025 GAME BUILD", info_x, card.top + 25, info_w, 18, p.accent, 10, true, false)?;
+        draw_text(hdc, "RIPO TEAM  ·  FLUX REC", info_x, card.top + 25, info_w, 18, p.accent, 10, true, false)?;
         draw_text(hdc, "Flux Rec", info_x, card.top + 55, info_w, 38, p.text, 26, true, false)?;
-        draw_text(hdc, "Explore rooms, meet friends and create together in the 2025 client.", info_x, card.top + 102, info_w, 50, p.text_dim, 12, false, false)?;
+        draw_text(hdc, "Explore rooms, meet friends and create together.", info_x, card.top + 102, info_w, 50, p.text_dim, 12, false, false)?;
         draw_status_pulse(hdc, info_x + 5, card.top + 185, st.anim_t, if st.update_available || st.install_required { p.accent } else { COLORREF(0x005A8C2D) })?;
         draw_text_ellipsis(hdc, state, info_x + 20, card.top + 174, info_w - 20, 24, p.text, 11)?;
         let version = if st.update_available {
@@ -2491,8 +2457,8 @@ mod imp {
             draw_logo(hdc, info.left + 24, info.top + 26, 54, p.accent)?;
         }
         draw_text(hdc, "Flux Rec", info.left + 92, info.top + 31, info.right - info.left - 114, 35, p.text, 25, true, false)?;
-        draw_text(hdc, "RIPO TEAM  ·  2025 GAME BUILD", info.left + 24, info.top + 94, info.right - info.left - 48, 20, p.accent, 10, true, false)?;
-        draw_text(hdc, "Explore rooms, meet friends, play together and make your own spaces in the 2025 client.", info.left + 24, info.top + 128, info.right - info.left - 48, 74, p.text, 12, false, false)?;
+        draw_text(hdc, "RIPO TEAM  ·  FLUX REC", info.left + 24, info.top + 94, info.right - info.left - 48, 20, p.accent, 10, true, false)?;
+        draw_text(hdc, "Explore rooms, meet friends, play together and make your own spaces.", info.left + 24, info.top + 128, info.right - info.left - 48, 74, p.text, 12, false, false)?;
 
         let players = match (st.players, st.player_count_pending) {
             (Some(count), _) => format!("{count} players online"),
@@ -2975,6 +2941,34 @@ mod imp {
             }
         }
 
+        let status_top = card.top + 250;
+        let status_bottom = card.top + 438;
+        let status_gap = 16;
+        let status_left = card.left + 28;
+        let status_right = card.right - 28;
+        let status_w = (status_right - status_left - status_gap) / 2;
+        let install_tile = RECT { left: status_left, top: status_top, right: status_left + status_w, bottom: status_bottom };
+        let update_tile = RECT { left: install_tile.right + status_gap, top: status_top, right: status_right, bottom: status_bottom };
+        for tile in [&install_tile, &update_tile] {
+            round_rect_path(hdc, tile, 14, p.bg_side)?;
+            round_rect_outline(hdc, tile, 14, p.border)?;
+        }
+        draw_text(hdc, "INSTALL STATUS", install_tile.left + 20, install_tile.top + 18, status_w - 40, 18, p.accent, 9, true, false)?;
+        draw_text(hdc, if st.install_required { "Ready to install" } else { "Installed" }, install_tile.left + 20, install_tile.top + 46, status_w - 40, 30, p.text, 19, true, false)?;
+        draw_text_ellipsis(hdc, &st.install_dir, install_tile.left + 20, install_tile.top + 91, status_w - 40, 24, p.text_dim, 10)?;
+        draw_text(hdc, "AUTOMATIC UPDATES", update_tile.left + 20, update_tile.top + 18, status_w - 40, 18, p.accent, 9, true, false)?;
+        draw_text(hdc, "Checked before launch", update_tile.left + 20, update_tile.top + 46, status_w - 40, 30, p.text, 19, true, false)?;
+        let update_note = if st.update_available {
+            format!("Version {} is ready to apply.", display_update_version(&st.update_version))
+        } else if st.checking {
+            "Checking the latest game version now.".to_string()
+        } else if !st.check_error.is_empty() {
+            "The check will retry automatically at launch.".to_string()
+        } else {
+            "Flux Rec stays current automatically.".to_string()
+        };
+        draw_text_ellipsis(hdc, &update_note, update_tile.left + 20, update_tile.top + 91, status_w - 40, 24, p.text_dim, 10)?;
+
         for (r, label, hot) in [
             (&rects.downloads_check_updates, "Check for updates", Hot::CheckForUpdates),
             (&rects.downloads_open_folder, "Open game folder", Hot::OpenInstallFolder),
@@ -3396,14 +3390,6 @@ mod imp {
                 if st.theme != Theme::Dark {
                     st.theme = Theme::Dark;
                     let _ = st.cmd_tx.send(LibCmd::SetTheme(Theme::Dark));
-                    let _ = InvalidateRect(hwnd, None, false);
-                }
-            }
-            Hot::RefreshPlayers => {
-                if !st.player_count_pending {
-                    st.players = None;
-                    st.player_count_pending = true;
-                    let _ = st.cmd_tx.send(LibCmd::RefreshPlayerCount);
                     let _ = InvalidateRect(hwnd, None, false);
                 }
             }
