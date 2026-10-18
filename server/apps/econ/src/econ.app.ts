@@ -65,6 +65,7 @@ import { getCatalogItem, getDevCatalogItems, toCatalogAvatarItem } from './catal
 import {
 	CATALOG_ID_BASE,
 	CatalogKind,
+	catalogWearableStoreItems,
 	isSellableRarity,
 	LEGACY_CLIENT_BUILD,
 	priceForRarity,
@@ -1187,61 +1188,28 @@ function withFiveStarUniqueBox(items: StoreItem[]): StoreItem[] {
  * used by the generated legacy storefront; it is a project price for these added rows.
  */
 function withCatalogWearables(items: StoreItem[]): StoreItem[] {
-	const existingDescs = new Set(
-		items
-			.map(({ GiftDrop }) => GiftDrop.AvatarItemDesc)
-			.filter((desc): desc is string => typeof desc === 'string' && desc !== '')
-	)
-	const usedPurchasableIds = new Set(items.map(({ PurchasableItemId }) => PurchasableItemId))
-	let nextPurchasableId = items.reduce(
-		(max, { PurchasableItemId }) => Math.max(max, PurchasableItemId + 1),
-		40_000
-	)
+	const catalogWearables = catalogWearableStoreItems(items, avatarItemCatalog)
+	if (catalogWearables.length === 0) return items
 	let nextGiftDropId = items.reduce(
 		(max, { GiftDrop }) => Math.max(max, (GiftDrop.GiftDropId ?? 0) + 1),
 		1
 	)
-	const additions: StoreItem[] = []
-	for (const row of avatarItemCatalog as Array<{
-		AvatarItemDesc?: string
-		AvatarItemType?: number | null
-		FriendlyName?: string
-		Tooltip?: string | null
-		Rarity?: number
-		AvatarItemId?: number
-		IsBaseAvatarItem?: boolean
-		CreatedAt?: string
-		ThumbnailImage?: string | null
-	}>) {
-		const desc = row.AvatarItemDesc
-		const name = row.FriendlyName?.trim()
-		const rarity = row.Rarity
-		if (
-			!desc ||
-			!name ||
-			!Number.isInteger(rarity) ||
-			!isSellableRarity(rarity!) ||
-			row.IsBaseAvatarItem === true ||
-			existingDescs.has(desc)
-		) {
-			continue
-		}
-		while (usedPurchasableIds.has(nextPurchasableId)) nextPurchasableId += 1
-		const price = priceForRarity(rarity!)
-		additions.push({
+	const additions: StoreItem[] = catalogWearables.map((row) => {
+		const price = priceForRarity(row.Rarity)
+		const item: StoreItem = {
 			GiftDrop: {
 				GiftDropId: nextGiftDropId++,
-				FriendlyName: name,
+				FriendlyName: row.FriendlyName.trim(),
 				Tooltip: row.Tooltip ?? '',
 				ConsumableItemDesc: '',
-				AvatarItemDesc: desc,
+				AvatarItemDesc: row.AvatarItemDesc,
 				AvatarItemType: row.AvatarItemType ?? 0,
 				EquipmentPrefabName: '',
 				EquipmentModificationGuid: '',
 				IsQuery: false,
 				Unique: false,
 				SubscribersOnly: false,
-				Rarity: rarity!,
+				Rarity: row.Rarity,
 				CurrencyType: 0,
 				Currency: 0,
 				Context: 0,
@@ -1260,13 +1228,11 @@ function withCatalogWearables(items: StoreItem[]): StoreItem[] {
 			AvailableAt: row.CreatedAt ?? null,
 			AvailableUntil: null,
 			CanBeGifted: true,
-			PurchasableItemId: nextPurchasableId,
-		})
-		usedPurchasableIds.add(nextPurchasableId)
-		nextPurchasableId += 1
-		existingDescs.add(desc)
-	}
-	return additions.length === 0 ? items : [...items, ...additions]
+			PurchasableItemId: row.PurchasableItemId,
+		}
+		return item
+	})
+	return [...items, ...additions]
 }
 
 interface StoreItem {

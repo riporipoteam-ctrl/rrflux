@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import avatarItemCatalog from '../../econ/static/db/avatar-items.json'
 import sf32025 from '../../econ/static/storefronts/sf3-2025.json'
-import { UNSELLABLE_RARITIES } from '../../econ/src/catalog-load'
+import { catalogWearableStoreItems, UNSELLABLE_RARITIES } from '../../econ/src/catalog-load'
 import { buildStoreFeedIds } from './lists.app'
 
 describe('2025 Store feeds', () => {
@@ -11,7 +12,7 @@ describe('2025 Store feeds', () => {
     expect(ids!.length).toBeGreaterThan(2000)
     expect(new Set(ids).size).toBe(ids!.length)
 
-    const expected = sf32025.StoreItems
+    const expectedSnapshotIds = sf32025.StoreItems
       .filter((item) =>
         !item.GiftDrop.IsQuery &&
         item.GiftDrop.AvatarItemType === 0 &&
@@ -20,6 +21,10 @@ describe('2025 Store feeds', () => {
         !UNSELLABLE_RARITIES.includes(item.GiftDrop.Rarity)
       )
       .map((item) => String(item.PurchasableItemId))
+    const expectedCatalogIds = catalogWearableStoreItems(sf32025.StoreItems, avatarItemCatalog)
+      .filter((item) => item.AvatarItemType === 0)
+      .map((item) => String(item.PurchasableItemId))
+    const expected = [...expectedSnapshotIds, ...expectedCatalogIds]
     expect(ids).toEqual([...new Set(expected)])
 
     const clothingIds = new Set(ids)
@@ -34,6 +39,16 @@ describe('2025 Store feeds', () => {
         expect(clothingIds.has(String(item.PurchasableItemId))).toBe(false)
       }
     }
+  })
+
+  it('adds catalog wearables with ids shared by Econ and clothing category feeds', () => {
+    const missingWearables = catalogWearableStoreItems(sf32025.StoreItems, avatarItemCatalog)
+    expect(missingWearables).toHaveLength(790)
+
+    const firstMissingWearable = missingWearables[0]!
+    expect(firstMissingWearable.PurchasableItemId).toBeGreaterThanOrEqual(40_000)
+    expect(buildStoreFeedIds('clothingitems')).toContain(String(firstMissingWearable.PurchasableItemId))
+    expect(buildStoreFeedIds('handsitems')).toContain(String(firstMissingWearable.PurchasableItemId))
   })
 
   it('recognizes the exact StoreClothing list-service slugs', () => {

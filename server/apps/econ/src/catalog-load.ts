@@ -217,6 +217,56 @@ export const UNSELLABLE_RARITIES: readonly number[] = [-1]
 export const isSellableRarity = (rarity: number): boolean => !UNSELLABLE_RARITIES.includes(rarity)
 
 /**
+ * A catalog wearable missing from a captured storefront, assigned the same synthetic
+ * PurchasableItemId by Econ and Lists so category results resolve to storefront items.
+ */
+export type CatalogWearableStoreItem = Pick<
+	AvatarItemCapture,
+	| 'AvatarItemDesc'
+	| 'AvatarItemType'
+	| 'FriendlyName'
+	| 'Tooltip'
+	| 'Rarity'
+	| 'AvatarItemId'
+	| 'CreatedAt'
+	| 'ThumbnailImage'
+> & { PurchasableItemId: number }
+
+export function catalogWearableStoreItems(
+	items: readonly { GiftDrop: { AvatarItemDesc?: string | null }; PurchasableItemId: number }[],
+	avatarItems: readonly AvatarItemCapture[]
+): CatalogWearableStoreItem[] {
+	const existingDescs = new Set(
+		items
+			.map(({ GiftDrop }) => GiftDrop.AvatarItemDesc)
+			.filter((desc): desc is string => typeof desc === 'string' && desc !== '')
+	)
+	const usedPurchasableIds = new Set(items.map(({ PurchasableItemId }) => PurchasableItemId))
+	let nextPurchasableId = items.reduce(
+		(max, { PurchasableItemId }) => Math.max(max, PurchasableItemId + 1),
+		40_000
+	)
+	const additions: CatalogWearableStoreItem[] = []
+	for (const row of avatarItems) {
+		const desc = row.AvatarItemDesc
+		if (
+			!desc ||
+			!row.FriendlyName?.trim() ||
+			!Number.isInteger(row.Rarity) ||
+			!isSellableRarity(row.Rarity) ||
+			row.IsBaseAvatarItem === true ||
+			existingDescs.has(desc)
+		) continue
+		while (usedPurchasableIds.has(nextPurchasableId)) nextPurchasableId += 1
+		additions.push({ ...row, PurchasableItemId: nextPurchasableId })
+		usedPurchasableIds.add(nextPurchasableId)
+		nextPurchasableId += 1
+		existingDescs.add(desc)
+	}
+	return additions
+}
+
+/**
  * What a catalog item costs, by rarity — the pricing every surface that sells a catalog row
  * must agree on.
  *

@@ -15,7 +15,7 @@ import { withCleanSpec, withNotFound, withOnError } from '@repo/hono-helpers'
 import { validateAndGetAccountId } from '@repo/jwt'
 
 import { COACH_ACCOUNT_ID } from '../../api/src/custom-avatar-items-load'
-import { CatalogKind, UNSELLABLE_RARITIES } from '../../econ/src/catalog-load'
+import { CatalogKind, catalogWearableStoreItems, UNSELLABLE_RARITIES } from '../../econ/src/catalog-load'
 import sf32025 from '../../econ/static/storefronts/sf3-2025.json'
 import avatarItemCatalog from '../../econ/static/db/avatar-items.json'
 import { placeholderCuratedList, resolveCuratedList, serializeCuratedList } from './curated-lists'
@@ -626,7 +626,42 @@ function normalizeStoreFeedKey(rawKey: string): string {
   const normalized = rawKey.trim().toLowerCase()
   return STORE_FEED_ALIASES[normalized] ?? normalized
 }
-function itemNames(item: (typeof sf32025.StoreItems)[number]): string[] {
+interface StoreFeedItem {
+	GiftDrop: {
+		AvatarItemDesc?: string | null
+		AvatarItemType?: number | null
+		ConsumableItemDesc?: string | null
+		EquipmentModificationGuid?: string | null
+		FriendlyName?: string | null
+		IsQuery?: boolean
+		Rarity: number
+	}
+	PurchasableItemId: number
+	IsFeatured?: boolean
+	NewUntil?: string | null
+	AvailableAt?: string | null
+}
+
+const storeFeedItems: StoreFeedItem[] = [
+	...sf32025.StoreItems,
+	...catalogWearableStoreItems(sf32025.StoreItems, avatarItemCatalog).map((row) => ({
+		GiftDrop: {
+			AvatarItemDesc: row.AvatarItemDesc,
+			AvatarItemType: row.AvatarItemType ?? 0,
+			ConsumableItemDesc: '',
+			EquipmentModificationGuid: '',
+			FriendlyName: row.FriendlyName,
+			IsQuery: false,
+			Rarity: row.Rarity,
+		},
+		PurchasableItemId: row.PurchasableItemId,
+		IsFeatured: false,
+		NewUntil: null,
+		AvailableAt: row.CreatedAt ?? null,
+	})),
+]
+
+function itemNames(item: StoreFeedItem): string[] {
   const name = String(item.GiftDrop?.FriendlyName ?? '')
   const canonicalByDesc = canonicalAvatarNamesByDesc.get(String(item.GiftDrop?.AvatarItemDesc ?? '')) ?? ''
   const canonicalByName = canonicalAvatarNamesByName.get(name.trim().toLowerCase()) ?? ''
@@ -638,10 +673,9 @@ function matchesAnyName(names: string[], terms: string[]): boolean {
 const storeFeedIdsCache = new Map<string, string[]>()
 
 /**
- * The 2025 storefront is a historical catalog snapshot. Build each feed once per Worker
- * isolate and preserve the public catalog, including free items and entries with no legacy
- * AvatarItemDesc. Discovery rows use the snapshot's `IsFeatured` / `NewUntil` metadata;
- * New is ordered by the latest recorded `NewUntil` and capped to keep the UI bounded.
+ * The 2025 storefront is a historical catalog snapshot. Add the same missing catalog
+ * wearables and synthetic ids as Econ before building feeds, so category rows resolve to
+ * items the client can hydrate. Discovery rows use captured `IsFeatured` / `NewUntil` metadata.
  */
 export function buildStoreFeedIds(rawKey: string): string[] | null {
   const key = normalizeStoreFeedKey(rawKey)
@@ -655,7 +689,7 @@ export function buildStoreFeedIds(rawKey: string): string[] | null {
   if (cached !== undefined) return cached
 
   const terms = STORE_CATEGORY_TERMS[key]
-  const items = sf32025.StoreItems
+	const items = storeFeedItems
     .filter((item) => {
       const drop = item.GiftDrop
       if (drop.IsQuery) return false
@@ -686,6 +720,7 @@ export function buildStoreFeedIds(rawKey: string): string[] | null {
         if (matchesAnyName(names, STORE_CATEGORY_TERMS.hairdyeitems)) return false
         return names.some(
           (name) => canonicalHairNames.has(name) ||
+					/\bhair\s+hat\b/i.test(name) ||
             matchesAnyName([name], terms!) ||
             (/\bhair\b/i.test(name) && !/\b(clip|bow|hat|headband|barrette|barrettes|dye)\b/i.test(name))
         )
