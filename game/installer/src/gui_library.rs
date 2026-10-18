@@ -1564,8 +1564,8 @@ mod imp {
         fill_rect(mem, &divider, p.border)?;
         let title_rule = RECT { left: 0, top: TITLE_H - 2, right: paint_w, bottom: TITLE_H };
         fill_gradient(mem, &title_rule, p.accent, p.accent_dark)?;
-        draw_text(mem, "RIPO TEAM", 64, 9, 200, 25, p.text, 17, true, false)?;
-        draw_text(mem, "GAME LIBRARY", 65, 34, 210, 17, p.text_dim, 9, true, false)?;
+        draw_text(mem, "RIPO TEAM LAUNCHER", 64, 9, 250, 25, p.text, 17, true, false)?;
+        draw_text(mem, "YOUR GAME LIBRARY", 65, 34, 210, 17, p.text_dim, 9, true, false)?;
         if draw_logo_bitmap(mem, st.team_logo_bitmap, 14, 7, 42).is_err() {
             draw_text(mem, "RT", 18, 16, 38, 24, p.accent, 15, true, true)?;
         }
