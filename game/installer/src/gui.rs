@@ -1170,7 +1170,7 @@ mod imp {
             hdc,
             s.f_body,
             GRAY,
-            "The 2025 client, ready to play. Follow the live progress below.",
+            "Flux Rec is getting ready. Follow the live progress below.",
             margin,
             124,
         );
@@ -1205,7 +1205,7 @@ mod imp {
             hdc,
             s.f_tiny,
             BLUE,
-            "2025 CLIENT  /  RIPO TEAM",
+            "FLUX REC  /  RIPO TEAM",
             left + 404,
             top + 116,
             360,
@@ -1223,7 +1223,7 @@ mod imp {
             hdc,
             s.f_tiny,
             BLUE,
-            "2025 GAME BUILD",
+            "READY TO PLAY",
             left + 322,
             top + 270,
             176,
@@ -1340,7 +1340,7 @@ mod imp {
             hdc,
             s.f_tiny,
             DIM,
-            "FLUX REC  /  2025 CLIENT  /  AUTOMATIC UPDATES",
+            "FLUX REC  /  AUTOMATIC UPDATES",
             margin,
             fy,
         );
@@ -1365,7 +1365,7 @@ mod imp {
         rr_fill(hdc, margin, bottom - 174, art_w, 174, 0, COLORREF(0x00241A13));
         draw_logo(hdc, s, margin + 28, bottom - 128, 64);
         text_at(hdc, s.f_title, PURE_WHITE, "Flux Rec", margin + 108, bottom - 132);
-        text_at(hdc, s.f_small, COLORREF(0x00F1E5D8), "2025 GAME BUILD  ·  RIPO TEAM", margin + 110, bottom - 96);
+        text_at(hdc, s.f_small, COLORREF(0x00F1E5D8), "RIPO TEAM", margin + 110, bottom - 96);
         text_block(
             hdc,
             s.f_small,
@@ -1383,7 +1383,7 @@ mod imp {
         let inner_w = panel_w - pad * 2;
         text_at(hdc, s.f_tiny, BLUE, "RIPO TEAM LAUNCHER  /  SETUP", inner_x, top + 28);
         text_at(hdc, s.f_title, WHITE, "Getting Flux Rec ready", inner_x, top + 56);
-        text_at(hdc, s.f_small, GRAY, "2025 client · Download, install and verify", inner_x, top + 102);
+        text_at(hdc, s.f_small, GRAY, "Download, install and verify", inner_x, top + 102);
 
         let display_percent = if s.finished { 100 } else { s.percent };
         let percent = format!("{display_percent}%");
@@ -1472,7 +1472,7 @@ mod imp {
             hdc,
             s.f_tiny,
             GRAY,
-            "2025 CLIENT",
+            "FLUX REC",
             cx,
             panel_y + 204,
             brand_w - 22,
@@ -1609,7 +1609,7 @@ mod imp {
                 18,
             );
         }
-        let footer = format!("Launcher v{}  ·  2025 game build", env!("CARGO_PKG_VERSION"));
+        let footer = format!("Ripo Team Launcher v{}  ·  Automatic updates", env!("CARGO_PKG_VERSION"));
         text_at(hdc, s.f_tiny, DIM, &footer, content_x + 24, s.win_h - 31);
     }
 
@@ -1630,7 +1630,7 @@ mod imp {
         rr_fill(hdc, margin, bottom - 134, art_w, 134, 0, COLORREF(0x00241A13));
         draw_logo(hdc, s, margin + 24, bottom - 104, 54);
         text_at(hdc, s.f_h2, PURE_WHITE, "Flux Rec", margin + 94, bottom - 103);
-        text_at(hdc, s.f_tiny, COLORREF(0x00F1E5D8), "2025 GAME BUILD  ·  RIPO TEAM", margin + 96, bottom - 72);
+        text_at(hdc, s.f_tiny, COLORREF(0x00F1E5D8), "RIPO TEAM  ·  AUTOMATIC UPDATES", margin + 96, bottom - 72);
         text_at(hdc, s.f_tiny, COLORREF(0x00F1E5D8), "Update check before every launch", margin + 24, bottom - 34);
         rr_outline(hdc, margin, top, art_w, panel_h, 18, BORDER);
 
@@ -1722,7 +1722,7 @@ mod imp {
             let description = match i {
                 0 => "Compare the installed build with the latest release",
                 1 => "Download and verify changed files when needed",
-                _ => "Open the 2025 client when checks finish",
+                _ => "Open Flux Rec when checks finish",
             };
             text_ellipsis(
                 hdc,

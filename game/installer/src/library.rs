@@ -23,8 +23,6 @@ pub enum LibCmd {
     Play,
     /// User clicked Uninstall (already confirmed in the GUI).
     Uninstall,
-    /// User requested a live player-count refresh.
-    RefreshPlayerCount,
     /// User explicitly requested an uncached update check.
     CheckForUpdates,
     /// Open the configured game install directory in Explorer.
@@ -261,12 +259,6 @@ pub fn run_library(
             }
             Ok(LibCmd::Uninstall) => {
                 do_uninstall(dir, &msg_tx);
-            }
-            Ok(LibCmd::RefreshPlayerCount) => {
-                let player_tx = msg_tx.clone();
-                std::thread::spawn(move || {
-                    let _ = player_tx.send(LibMsg::PlayerCount(fetch_player_count()));
-                });
             }
             Ok(LibCmd::CheckForUpdates) => {
                 let check_dir = dir.to_path_buf();
