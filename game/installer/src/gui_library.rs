@@ -141,6 +141,7 @@ mod imp {
     };
     use crate::library::{LibCmd, LibMsg};
     use std::ffi::c_void;
+    use std::{cell::RefCell, collections::HashMap};
     use std::sync::mpsc::{Receiver, Sender, TryRecvError};
     use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::*;
@@ -153,7 +154,7 @@ mod imp {
     // Window size.
     const WIN_W: i32 = 1360;
     const WIN_H: i32 = 820;
-    const SIDEBAR_W: i32 = 232;
+    const CONTENT_X: i32 = 32;
     const TITLE_H: i32 = 58;
     const CORNER: i32 = 24;
 
@@ -586,6 +587,54 @@ mod imp {
     // ------------------------------------------------------------------
     // Drawing helpers
     // ------------------------------------------------------------------
+    struct UiFontCache(HashMap<(i32, bool), HFONT>);
+
+    impl Drop for UiFontCache {
+        fn drop(&mut self) {
+            for (_, font) in self.0.drain() {
+                unsafe {
+                    let _ = DeleteObject(font);
+                }
+            }
+        }
+    }
+
+    thread_local! {
+        /// The launcher repaints often while checking or installing. Reuse its small,
+        /// finite font set instead of creating and deleting a GDI font for every label.
+        static UI_FONTS: RefCell<UiFontCache> = RefCell::new(UiFontCache(HashMap::new()));
+    }
+
+    unsafe fn cached_font(size: i32, bold: bool) -> HFONT {
+        let key = (size.max(1), bold);
+        UI_FONTS.with(|fonts| {
+            let mut fonts = fonts.borrow_mut();
+            if let Some(font) = fonts.0.get(&key) {
+                return *font;
+            }
+            let font = CreateFontW(
+                -key.0,
+                0,
+                0,
+                0,
+                if bold { FW_BOLD.0 as i32 } else { FW_NORMAL.0 as i32 },
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET.0 as u32,
+                OUT_DEFAULT_PRECIS.0 as u32,
+                CLIP_DEFAULT_PRECIS.0 as u32,
+                CLEARTYPE_QUALITY.0 as u32,
+                (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+                w!("Segoe UI"),
+            );
+            if !font.is_invalid() {
+                fonts.0.insert(key, font);
+            }
+            font
+        })
+    }
+
     unsafe fn fill_rect(hdc: HDC, r: &RECT, color: COLORREF) -> Silent {
         let br = CreateSolidBrush(color);
         if br.is_invalid() {
@@ -609,23 +658,7 @@ mod imp {
         center: bool,
     ) -> Silent {
         let mut wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        let weight = if bold { FW_BOLD } else { FW_NORMAL };
-        let font = CreateFontW(
-            -(size.max(12)),
-            0,
-            0,
-            0,
-            weight.0 as i32,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET.0 as u32,
-            OUT_DEFAULT_PRECIS.0 as u32,
-            CLIP_DEFAULT_PRECIS.0 as u32,
-            CLEARTYPE_QUALITY.0 as u32,
-            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
-            w!("Segoe UI"),
-        );
+        let font = cached_font(size.max(12), bold);
         if font.is_invalid() {
             return Err(());
         }
@@ -641,7 +674,6 @@ mod imp {
         let fmt = DT_WORDBREAK | if center { DT_CENTER } else { DT_LEFT };
         DrawTextW(hdc, &mut wide, &mut r, fmt);
         SelectObject(hdc, old);
-        DeleteObject(font);
         Ok(())
     }
 
@@ -656,22 +688,7 @@ mod imp {
         size: i32,
     ) -> Silent {
         let mut wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        let font = CreateFontW(
-            -size,
-            0,
-            0,
-            0,
-            FW_NORMAL.0 as i32,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET.0 as u32,
-            OUT_DEFAULT_PRECIS.0 as u32,
-            CLIP_DEFAULT_PRECIS.0 as u32,
-            CLEARTYPE_QUALITY.0 as u32,
-            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
-            w!("Segoe UI"),
-        );
+        let font = cached_font(size, false);
         if font.is_invalid() {
             return Err(());
         }
@@ -691,7 +708,6 @@ mod imp {
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_LEFT,
         );
         SelectObject(hdc, old);
-        let _ = DeleteObject(font);
         Ok(())
     }
 
@@ -920,37 +936,17 @@ mod imp {
     // Layout: compute button rects.
     // ------------------------------------------------------------------
     fn compute_rects() -> Rects {
-        let content_x = SIDEBAR_W + 28;
+        let content_x = CONTENT_X;
         let content_right = WIN_W - 28;
         let content_w = content_right - content_x;
         let action_y = TITLE_H + 500;
         let action_w = (content_w - 36) / 4;
         let action_x = |index: i32| content_x + index * (action_w + 12);
         Rects {
-            nav_store: RECT {
-                left: 16,
-                top: TITLE_H + 84,
-                right: SIDEBAR_W - 16,
-                bottom: TITLE_H + 126,
-            },
-            nav_library: RECT {
-                left: 16,
-                top: TITLE_H + 136,
-                right: SIDEBAR_W - 16,
-                bottom: TITLE_H + 178,
-            },
-            nav_downloads: RECT {
-                left: 16,
-                top: TITLE_H + 188,
-                right: SIDEBAR_W - 16,
-                bottom: TITLE_H + 230,
-            },
-            nav_settings: RECT {
-                left: 16,
-                top: TITLE_H + 240,
-                right: SIDEBAR_W - 16,
-                bottom: TITLE_H + 282,
-            },
+            nav_store: RECT { left: 378, top: 9, right: 462, bottom: 49 },
+            nav_library: RECT { left: 470, top: 9, right: 566, bottom: 49 },
+            nav_downloads: RECT { left: 574, top: 9, right: 690, bottom: 49 },
+            nav_settings: RECT { left: 698, top: 9, right: 790, bottom: 49 },
             // Home hero.
             card: RECT {
                 left: content_x,
@@ -1207,6 +1203,38 @@ mod imp {
             true,
             false,
         )?;
+        draw_nav(
+            mem,
+            &rects.nav_store,
+            "Store",
+            matches!(st.view, View::Store | View::Detail),
+            st.hover == Hot::NavStore,
+            p,
+        )?;
+        draw_nav(
+            mem,
+            &rects.nav_library,
+            "Library",
+            st.view == View::Library,
+            st.hover == Hot::NavLibrary,
+            p,
+        )?;
+        draw_nav(
+            mem,
+            &rects.nav_downloads,
+            "Downloads",
+            st.view == View::Downloads,
+            st.hover == Hot::NavDownloads,
+            p,
+        )?;
+        draw_nav(
+            mem,
+            &rects.nav_settings,
+            "Settings",
+            st.view == View::Settings,
+            st.hover == Hot::NavSettings,
+            p,
+        )?;
         // Window buttons.
         let close_hover = st.hover == Hot::Close;
         if close_hover {
@@ -1278,104 +1306,6 @@ mod imp {
             11,
             true,
             true,
-        )?;
-
-        // Sidebar.
-        let side_r = RECT {
-            left: 0,
-            top: TITLE_H,
-            right: SIDEBAR_W,
-            bottom: WIN_H,
-        };
-        fill_rect(mem, &side_r, p.bg_side)?;
-
-        // The launcher carries the studio mark; the game card below keeps the
-        // Flux Rec logo and the 2025 build label.
-        if draw_logo_bitmap(mem, st.team_logo_bitmap, 18, TITLE_H + 14, 54).is_err() {
-            draw_text(mem, "RT", 20, TITLE_H + 26, 50, 24, p.accent, 17, true, true)?;
-        }
-        draw_text(
-            mem,
-            "Ripo Team",
-            80,
-            TITLE_H + 22,
-            114,
-            22,
-            p.text,
-            14,
-            true,
-            false,
-        )?;
-        draw_text(
-            mem,
-            "GAME LIBRARY",
-            80,
-            TITLE_H + 43,
-            114,
-            18,
-            p.text_dim,
-            10,
-            false,
-            false,
-        )?;
-        // Nav buttons.
-        draw_nav(
-            mem,
-            &rects.nav_store,
-            "Store",
-            matches!(st.view, View::Store | View::Detail),
-            st.hover == Hot::NavStore,
-            p,
-        )?;
-        draw_nav(
-            mem,
-            &rects.nav_library,
-            "Library",
-            st.view == View::Library,
-            st.hover == Hot::NavLibrary,
-            p,
-        )?;
-        draw_nav(
-            mem,
-            &rects.nav_downloads,
-            "Downloads",
-            st.view == View::Downloads,
-            st.hover == Hot::NavDownloads,
-            p,
-        )?;
-        draw_nav(
-            mem,
-            &rects.nav_settings,
-            "Settings",
-            st.view == View::Settings,
-            st.hover == Hot::NavSettings,
-            p,
-        )?;
-
-        // Version at sidebar bottom.
-        draw_text(
-            mem,
-            &format!("v{}", st.version),
-            24,
-            WIN_H - 40,
-            180,
-            20,
-            p.text_dim,
-            12,
-            false,
-            false,
-        )?;
-        draw_text(
-            mem,
-            "© Ripo Team",
-            24,
-            WIN_H - 22,
-            180,
-            20,
-            p.text_dim,
-            11,
-            false,
-            false,
         )?;
 
         // Content.
@@ -1601,7 +1531,7 @@ mod imp {
     }
 
     unsafe fn draw_dashboard_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let content_x = SIDEBAR_W + 28;
+        let content_x = CONTENT_X;
         let content_right = WIN_W - 28;
         let status_x = content_right - 272;
         let card = &rects.card;
@@ -2104,7 +2034,7 @@ mod imp {
     }
 
     unsafe fn draw_library_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let cx = SIDEBAR_W;
+        let cx = CONTENT_X;
         draw_text(
             hdc,
             "My Games",
@@ -2408,7 +2338,7 @@ mod imp {
 
     /// v1.0.4: game detail view with screenshot carousel.
     unsafe fn draw_detail_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let cx = SIDEBAR_W;
+        let cx = CONTENT_X;
 
         // Back button.
         let back = &rects.back;
@@ -2649,7 +2579,7 @@ mod imp {
         rects: &Rects,
         p: &Palette,
     ) -> Silent {
-        let left = SIDEBAR_W + 28;
+        let left = CONTENT_X;
         let right = WIN_W - 28;
         draw_text(
             hdc,
@@ -2883,7 +2813,7 @@ mod imp {
     }
 
     unsafe fn draw_settings_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let cx = SIDEBAR_W;
+        let cx = CONTENT_X;
         draw_text(
             hdc,
             "Settings",
@@ -3036,7 +2966,7 @@ mod imp {
     }
 
     unsafe fn draw_downloads_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let x = SIDEBAR_W + 40;
+        let x = CONTENT_X + 8;
         draw_text(hdc, "Downloads", x, TITLE_H + 22, 420, 36, p.text, 28, true, false)?;
         draw_text(
             hdc,
@@ -3177,9 +3107,9 @@ mod imp {
     }
 
     unsafe fn draw_working_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let cx = SIDEBAR_W;
+        let cx = CONTENT_X;
         // Center the progress in the content area.
-        let content_w = WIN_W - SIDEBAR_W;
+        let content_w = WIN_W - CONTENT_X;
         let bx = cx + (content_w - 440) / 2;
         let by = TITLE_H + 200;
 
@@ -3380,7 +3310,9 @@ mod imp {
                     let mut repaint = false;
                     if st.view == View::Working {
                         st.anim_t = st.anim_t.wrapping_add(1);
-                        repaint = st.anim_t % 2 == 0;
+                        // TIMER_MS is 100 ms, so repaint once per tick: 10 fps rather than
+                        // the old 5 fps progress animation.
+                        repaint = true;
                     }
                     // Auto-advance the carousel every ~4s (50ms timer * 80).
                     if matches!(st.view, View::Library | View::Detail) && !st.carousel_bitmaps.is_empty() {
@@ -3412,7 +3344,13 @@ mod imp {
                 let mut pt = POINT { x, y };
                 let _ = ScreenToClient(hwnd, &mut pt);
                 let rects = compute_rects();
-                if pt_in(&rects.close, pt.x, pt.y) || pt_in(&rects.minimize, pt.x, pt.y) {
+                if pt_in(&rects.close, pt.x, pt.y)
+                    || pt_in(&rects.minimize, pt.x, pt.y)
+                    || pt_in(&rects.nav_store, pt.x, pt.y)
+                    || pt_in(&rects.nav_library, pt.x, pt.y)
+                    || pt_in(&rects.nav_downloads, pt.x, pt.y)
+                    || pt_in(&rects.nav_settings, pt.x, pt.y)
+                {
                     return LRESULT(HTCLIENT as isize);
                 }
                 if pt.y >= 0 && pt.y < TITLE_H {

@@ -1,15 +1,10 @@
 // Flux Rec Setup & Launcher — Ripo Team's light install and update flow.
 //
-// Full redesign:
-// - Borderless window, rounded corners, drop shadow, custom title bar
-//   (drag to move, minimize + close buttons).
-// - Real Flux Rec logo (embedded 32-bit BMP with alpha, drawn with
-//   AlphaBlend) instead of the "FR" text monogram.
-// - Setup mode: sidebar with logo, wordmark, version pill and a 4-step
-//   progress checklist; main area with headline, 2x2 feature grid and a
-//   modern rounded progress bar.
-// - Launcher mode (--play): compact centered window with logo, live
-//   status, detail line and a shimmer/determinate progress bar.
+// Ripo Team setup and update UI:
+// - Borderless, rounded windows with a custom draggable title bar.
+// - Setup pairs real Flux Rec artwork with an install timeline and live status.
+// - The automatic update window uses the same product frame before the game opens.
+// - Embedded logos and screenshots keep the UI self-contained and work offline.
 //
 // Design rules:
 //   * Raw Win32 only (no GUI framework) so the binary stays tiny.
@@ -88,8 +83,8 @@ mod imp {
     // Window dimensions (client area == window area: WS_POPUP has no frame).
     const SETUP_W: i32 = 1240;
     const SETUP_H: i32 = 780;
-    const LAUNCH_W: i32 = 920;
-    const LAUNCH_H: i32 = 520;
+    const LAUNCH_W: i32 = 1040;
+    const LAUNCH_H: i32 = 620;
     const CORNER: i32 = 24; // round-rect ellipse diameter for the window
     const TITLE_H: i32 = 46;
 
@@ -165,6 +160,9 @@ mod imp {
         team_logo_bmp: HBITMAP,
         team_logo_w: i32,
         team_logo_h: i32,
+        game_art_bmp: HBITMAP,
+        game_art_w: i32,
+        game_art_h: i32,
         f_big: HFONT,
         f_title: HFONT,
         f_word: HFONT,
@@ -180,10 +178,16 @@ mod imp {
     }
 
     unsafe fn run_inner(rx: Receiver<GuiMsg>, mode: GuiMode) -> Silent {
-        let (win_w, win_h) = match mode {
+        let (preferred_w, preferred_h) = match mode {
             GuiMode::Setup => (SETUP_W, SETUP_H),
             GuiMode::Launcher => (LAUNCH_W, LAUNCH_H),
         };
+        // Keep the complete install/update flow visible on laptop displays. The
+        // content uses these client dimensions for its card and progress layout.
+        let sx = GetSystemMetrics(SM_CXSCREEN);
+        let sy = GetSystemMetrics(SM_CYSCREEN);
+        let win_w = preferred_w.min((sx - 48).max(880));
+        let win_h = preferred_h.min((sy - 80).max(620));
         let class_name: PCWSTR = match mode {
             GuiMode::Setup => w!("FluxRecSetupGui"),
             GuiMode::Launcher => w!("FluxRecLauncherGui"),
@@ -215,8 +219,6 @@ mod imp {
         }
 
         // Borderless popup; taskbar presence via WS_EX_APPWINDOW.
-        let sx = GetSystemMetrics(SM_CXSCREEN);
-        let sy = GetSystemMetrics(SM_CYSCREEN);
         let (x, y) = ((sx - win_w) / 2, (sy - win_h) / 2);
 
         // Fonts (all Segoe UI; semibold via weight, no extra face needed).
@@ -250,6 +252,9 @@ mod imp {
             team_logo_bmp: HBITMAP::default(),
             team_logo_w: 0,
             team_logo_h: 0,
+            game_art_bmp: HBITMAP::default(),
+            game_art_w: 0,
+            game_art_h: 0,
             f_big,
             f_title,
             f_word,
@@ -306,6 +311,13 @@ mod imp {
                 s.team_logo_bmp = team_bmp;
                 s.team_logo_w = team_w;
                 s.team_logo_h = team_h;
+                let (art_bmp, art_w, art_h) = create_png_dib(
+                    dc,
+                    include_bytes!("../assets/screenshots/rec-center-1.jpg"),
+                );
+                s.game_art_bmp = art_bmp;
+                s.game_art_w = art_w;
+                s.game_art_h = art_h;
                 let _ = ReleaseDC(hwnd, dc);
             }
         }
@@ -672,6 +684,9 @@ mod imp {
                     if !s.team_logo_bmp.is_invalid() {
                         let _ = DeleteObject(s.team_logo_bmp);
                     }
+                    if !s.game_art_bmp.is_invalid() {
+                        let _ = DeleteObject(s.game_art_bmp);
+                    }
                     destroy_fonts(ptr);
                     let _ = Box::from_raw(ptr);
                     SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
@@ -841,6 +856,26 @@ mod imp {
         let _ = DeleteDC(mem);
     }
 
+    /// Fill a product artwork frame from an embedded game screenshot.
+    unsafe fn draw_game_art(hdc: HDC, s: &GuiState, x: i32, y: i32, w: i32, h: i32) {
+        if s.game_art_bmp.is_invalid() || s.game_art_w <= 0 || s.game_art_h <= 0 || w <= 0 || h <= 0 {
+            rr_fill(hdc, x, y, w, h, 0, BG_SIDE);
+            return;
+        }
+        let mem = CreateCompatibleDC(hdc);
+        if mem.is_invalid() {
+            return;
+        }
+        let old = SelectObject(mem, s.game_art_bmp);
+        let previous_mode = SetStretchBltMode(hdc, HALFTONE);
+        let _ = StretchBlt(hdc, x, y, w, h, mem, 0, 0, s.game_art_w, s.game_art_h, SRCCOPY);
+        if previous_mode != 0 {
+            let _ = SetStretchBltMode(hdc, previous_mode);
+        }
+        let _ = SelectObject(mem, old);
+        let _ = DeleteDC(mem);
+    }
+
     /// "FLUX " in white + "REC" in Flux blue, centered at cx.
     unsafe fn draw_wordmark(hdc: HDC, s: &GuiState, cx: i32, y: i32) {
         let _ = SelectObject(hdc, s.f_word);
@@ -979,7 +1014,7 @@ mod imp {
     }
 
     // ------------------------------------------------------------------
-    // Setup mode: sidebar + content
+    // Setup mode: product information + install activity
     // ------------------------------------------------------------------
 
     const SIDE_W: i32 = 300;
@@ -1300,110 +1335,71 @@ mod imp {
     }
 
     unsafe fn draw_setup_redesigned(hdc: HDC, s: &GuiState) {
-        let left = RECT { left: 28, top: 68, right: 356, bottom: s.win_h - 28 };
-        rr_fill(hdc, left.left, left.top, left.right - left.left, left.bottom - left.top, 24, BLUE);
-        draw_team_logo(hdc, s, left.left + 24, left.top + 26, 62);
-        text_at(hdc, s.f_h2, PURE_WHITE, "Ripo Team", left.left + 98, left.top + 34);
-        text_at(hdc, s.f_tiny, BLUE_DIM, "GAME LAUNCHER", left.left + 98, left.top + 59);
-        rr_fill(hdc, left.left + 94, left.top + 132, 140, 140, 28, PURE_WHITE);
-        draw_logo(hdc, s, left.left + 124, left.top + 162, 80);
-        draw_wordmark(hdc, s, (left.left + left.right) / 2, left.top + 294);
-        text_center(
-            hdc,
-            s.f_tiny,
-            PURE_WHITE,
-            "2025 CLIENT BUILD",
-            (left.left + left.right) / 2,
-            left.top + 334,
-            left.right - left.left - 44,
-            20,
-        );
-        text_block(
-            hdc,
-            s.f_body,
-            PURE_WHITE,
-            "Explore rooms, play with friends and create your own worlds. Flux Rec is the first game in the Ripo Team launcher.",
-            RECT {
-                left: left.left + 28,
-                top: left.top + 386,
-                right: left.right - 28,
-                bottom: left.top + 482,
-            },
-        );
-        text_at(
-            hdc,
-            s.f_tiny,
-            BLUE_DIM,
-            "RIPO TEAM  ·  FLUX REC",
-            left.left + 28,
-            left.bottom - 35,
-        );
+        let margin = 28;
+        let right = s.win_w - margin;
+        let content_w = right - margin;
 
-        let x = 384;
-        let right = s.win_w - 28;
-        text_at(hdc, s.f_tiny, BLUE, "SETUP  /  FLUX REC", x, 72);
-        text_at(hdc, s.f_title, WHITE, "Install Flux Rec", x, 92);
-        text_at(
-            hdc,
-            s.f_body,
-            GRAY,
-            "The launcher downloads and verifies the 2025 game files for you.",
-            x,
-            132,
-        );
+        // Product header and a compact four-stage rail keep identity and progress
+        // in the same frame, like the game page in the launcher.
+        draw_team_logo(hdc, s, margin, 61, 42);
+        text_at(hdc, s.f_title, WHITE, "Install Flux Rec", margin + 58, 62);
+        text_at(hdc, s.f_small, GRAY, "The 2025 game build, installed and verified by Ripo Team Launcher.", margin + 60, 99);
+        rr_fill(hdc, right - 164, 67, 164, 32, 16, BG_CARD);
+        rr_outline(hdc, right - 164, 67, 164, 32, 16, BORDER);
+        text_center(hdc, s.f_tiny, BLUE, "2025 GAME BUILD", right - 82, 73, 148, 18);
 
         let states = step_states(s.percent, s.finished);
-        let gap = 12;
-        let step_w = (right - x - gap * 3) / 4;
+        let gap = 10;
+        let step_w = (content_w - gap * 3) / 4;
         for (i, (title, sub)) in STEPS.iter().enumerate() {
-            let sx = x + i as i32 * (step_w + gap);
-            rr_fill(hdc, sx, 169, step_w, 70, 14, BG_CARD);
-            rr_outline(hdc, sx, 169, step_w, 70, 14, BORDER);
+            let x = margin + i as i32 * (step_w + gap);
+            rr_fill(hdc, x, 124, step_w, 64, 12, BG_CARD);
+            rr_outline(hdc, x, 124, step_w, 64, 12, BORDER);
             let state = states.get(i).copied().unwrap_or(StepState::Todo);
-            draw_step(hdc, s, sx + 24, 184, (i + 1) as i32, title, sub, state);
+            draw_step(hdc, s, x + 24, 137, (i + 1) as i32, title, sub, state);
         }
 
-        let card = RECT { left: x, top: 260, right, bottom: s.win_h - 62 };
-        rr_fill(hdc, card.left, card.top, card.right - card.left, card.bottom - card.top, 22, BG_CARD);
-        rr_outline(hdc, card.left, card.top, card.right - card.left, card.bottom - card.top, 22, BORDER);
-        let divider = card.left + 374;
-        let pen = CreatePen(PS_SOLID, 1, BORDER);
-        if !pen.is_invalid() {
-            let old = SelectObject(hdc, pen);
-            let _ = MoveToEx(hdc, divider, card.top + 24, None);
-            let _ = LineTo(hdc, divider, card.bottom - 24);
-            let _ = SelectObject(hdc, old);
-            let _ = DeleteObject(pen);
-        }
+        let top = 208;
+        let bottom = s.win_h - 30;
+        let panel_h = bottom - top;
+        let left_w = (content_w * 36 / 100).clamp(360, 438);
+        let left = RECT { left: margin, top, right: margin + left_w, bottom };
+        rr_fill(hdc, left.left, left.top, left.right - left.left, panel_h, 18, BG_CARD);
+        rr_outline(hdc, left.left, left.top, left.right - left.left, panel_h, 18, BORDER);
 
-        draw_logo(hdc, s, card.left + 24, card.top + 30, 72);
-        text_at(hdc, s.f_h2, WHITE, "Flux Rec", card.left + 112, card.top + 40);
-        text_at(hdc, s.f_tiny, BLUE, "RIPO TEAM  /  2025 GAME BUILD", card.left + 112, card.top + 68);
+        let art_h = ((left_w - 4) * 9 / 16).min(240);
+        draw_game_art(hdc, s, left.left + 2, left.top + 2, left_w - 4, art_h);
+        rr_fill(hdc, left.left + 2, left.top + art_h - 58, left_w - 4, 56, 0, COLORREF(0x00241A13));
+        text_at(hdc, s.f_h2, PURE_WHITE, "FLUX REC", left.left + 22, left.top + art_h - 48);
+        text_at(hdc, s.f_tiny, COLORREF(0x00F1E5D8), "RIPO TEAM  ·  2025 CLIENT", left.left + 22, left.top + art_h - 25);
+        draw_logo(hdc, s, left.left + 22, left.top + art_h + 22, 48);
+        text_at(hdc, s.f_h2, WHITE, "Play together", left.left + 84, left.top + art_h + 23);
         text_block(
             hdc,
-            s.f_body,
+            s.f_small,
             GRAY,
-            "Hang out with friends, play community games and build rooms together.",
+            "Explore rooms, meet friends and create your own worlds in Flux Rec.",
             RECT {
-                left: card.left + 26,
-                top: card.top + 132,
-                right: divider - 24,
-                bottom: card.top + 220,
+                left: left.left + 84,
+                top: left.top + art_h + 52,
+                right: left.right - 22,
+                bottom: left.top + art_h + 106,
             },
         );
-        for (i, label) in ["Automatic updates", "Verified game files", "Ripo Team launcher"]
-            .iter()
-            .enumerate()
-        {
-            let y = card.top + 250 + i as i32 * 40;
-            rr_fill(hdc, card.left + 26, y, 18, 18, 9, BLUE_DIM);
-            text_center(hdc, s.f_tiny, BLUE, "✓", card.left + 35, y - 1, 18, 18);
-            text_at(hdc, s.f_small, GRAY, label, card.left + 56, y - 2);
+        let feature_y = left.top + art_h + 126;
+        for (index, label) in ["Community games", "Room creation", "Avatar items"].iter().enumerate() {
+            let y = feature_y + index as i32 * 34;
+            rr_fill(hdc, left.left + 24, y + 3, 18, 18, 9, BLUE_DIM);
+            text_center(hdc, s.f_tiny, BLUE, "✓", left.left + 33, y + 2, 18, 18);
+            text_at(hdc, s.f_small, GRAY, label, left.left + 54, y + 2);
         }
 
-        let activity_x = divider + 28;
-        let activity_w = card.right - activity_x - 28;
-        text_at(hdc, s.f_tiny, BLUE, "INSTALL ACTIVITY", activity_x, card.top + 28);
+        let activity_x = left.right + 18;
+        let activity_w = right - activity_x;
+        let activity = RECT { left: activity_x, top, right, bottom };
+        rr_fill(hdc, activity.left, activity.top, activity_w, panel_h, 18, BG_CARD);
+        rr_outline(hdc, activity.left, activity.top, activity_w, panel_h, 18, BORDER);
+        text_at(hdc, s.f_tiny, BLUE, "INSTALL PROGRESS", activity_x + 28, top + 28);
         let status = if s.finished {
             "Setup complete"
         } else if s.stage.is_empty() {
@@ -1413,63 +1409,60 @@ mod imp {
         };
         text_ellipsis(
             hdc,
-            s.f_h2,
+            s.f_title,
             WHITE,
             status,
-            RECT {
-                left: activity_x,
-                top: card.top + 56,
-                right: activity_x + activity_w - 84,
-                bottom: card.top + 92,
-            },
+            RECT { left: activity_x + 28, top: top + 56, right: right - 118, bottom: top + 100 },
         );
-        let percent = format!("{}%", s.percent);
-        let _ = SelectObject(hdc, s.f_title);
+        let percent = format!("{}%", if s.finished { 100 } else { s.percent });
+        let _ = SelectObject(hdc, s.f_big);
         let percent_w = text_width(hdc, &percent);
-        text_at(hdc, s.f_title, if s.finished { GREEN } else { BLUE }, &percent, card.right - 28 - percent_w, card.top + 49);
-        let bar_x = activity_x;
-        let bar_y = card.top + 118;
+        text_at(hdc, s.f_big, if s.finished { GREEN } else { BLUE }, &percent, right - 28 - percent_w, top + 50);
+
+        let bar_x = activity_x + 28;
+        let bar_w = activity_w - 56;
+        let bar_y = top + 132;
         if s.percent == 0 && !s.finished {
-            draw_shimmer_bar(hdc, s, bar_x, bar_y, activity_w, 14);
+            draw_shimmer_bar(hdc, s, bar_x, bar_y, bar_w, 14);
         } else {
-            draw_progress_bar(hdc, bar_x, bar_y, activity_w, 14, s.percent);
+            draw_progress_bar(hdc, bar_x, bar_y, bar_w, 14, if s.finished { 100 } else { s.percent });
         }
         text_at(
             hdc,
-            s.f_tiny,
+            s.f_small,
             GRAY,
-            if s.finished { "Files verified and ready" } else { "Download, install and verification continue automatically" },
-            activity_x,
-            bar_y + 27,
+            if s.finished { "Files verified and ready to play." } else { "Downloading, installing and checking game files." },
+            bar_x,
+            bar_y + 25,
         );
-        if !s.detail.is_empty() {
+
+        let detail_top = bar_y + 74;
+        let detail_bottom = (top + panel_h - 150).max(detail_top + 44);
+        rr_fill(hdc, bar_x, detail_top, bar_w, 82, 12, BG);
+        text_at(hdc, s.f_tiny, DIM, "CURRENT TASK", bar_x + 16, detail_top + 12);
+        text_block(
+            hdc,
+            s.f_small,
+            WHITE,
+            if s.detail.is_empty() {
+                "The launcher will check for updates automatically before each game launch."
+            } else {
+                s.detail.as_str()
+            },
+            RECT { left: bar_x + 16, top: detail_top + 33, right: bar_x + bar_w - 16, bottom: detail_top + 72 },
+        );
+        if detail_bottom > detail_top + 90 {
+            let line_y = detail_bottom;
+            text_at(hdc, s.f_tiny, BLUE, "AFTER SETUP", bar_x, line_y);
             text_block(
                 hdc,
                 s.f_small,
                 GRAY,
-                &s.detail,
-                RECT {
-                    left: activity_x,
-                    top: bar_y + 66,
-                    right: card.right - 28,
-                    bottom: card.bottom - 74,
-                },
-            );
-        } else {
-            text_block(
-                hdc,
-                s.f_small,
-                GRAY,
-                "You can minimize this window while setup continues. The launcher checks for updates before each game launch.",
-                RECT {
-                    left: activity_x,
-                    top: bar_y + 66,
-                    right: card.right - 28,
-                    bottom: card.bottom - 74,
-                },
+                "Flux Rec will be ready in your Ripo Team Launcher library. The game shortcut also checks for updates before opening the client.",
+                RECT { left: bar_x, top: line_y + 22, right: right - 28, bottom: bottom - 26 },
             );
         }
-        text_at(hdc, s.f_tiny, DIM, "Ripo Team Launcher  ·  Flux Rec", x, s.win_h - 38);
+        text_at(hdc, s.f_tiny, DIM, "Ripo Team Launcher  ·  Flux Rec", margin, s.win_h - 20);
     }
 
     // ------------------------------------------------------------------
@@ -1675,61 +1668,39 @@ mod imp {
             BORDER,
         );
 
-        let brand_w = 258;
-        rr_fill(
-            hdc,
-            panel.left,
-            panel.top,
-            brand_w,
-            panel.bottom - panel.top,
-            22,
-            BLUE,
-        );
-        draw_team_logo(hdc, s, panel.left + 24, panel.top + 24, 46);
-        text_at(hdc, s.f_h2, PURE_WHITE, "Ripo Team", panel.left + 82, panel.top + 29);
-        text_at(hdc, s.f_tiny, BLUE_DIM, "GAME LAUNCHER", panel.left + 82, panel.top + 52);
-        rr_fill(hdc, panel.left + 75, panel.top + 112, 108, 108, 24, PURE_WHITE);
-        draw_logo(hdc, s, panel.left + 95, panel.top + 132, 68);
-        text_center(
-            hdc,
-            s.f_title,
-            PURE_WHITE,
-            "Flux Rec",
-            panel.left + brand_w / 2,
-            panel.top + 246,
-            brand_w - 40,
-            42,
-        );
-        text_center(
-            hdc,
-            s.f_tiny,
-            BLUE_DIM,
-            "2025 GAME BUILD",
-            panel.left + brand_w / 2,
-            panel.top + 292,
-            brand_w - 40,
-            22,
-        );
+        let panel_w = panel.right - panel.left;
+        let panel_h = panel.bottom - panel.top;
+        let art_w = (panel_w * 42 / 100).clamp(370, 430);
+        let art_h = ((art_w - 4) * 9 / 16).min(246);
+        draw_game_art(hdc, s, panel.left + 2, panel.top + 2, art_w - 4, art_h);
+        rr_fill(hdc, panel.left + 2, panel.top + art_h - 58, art_w - 4, 56, 0, COLORREF(0x00241A13));
+        text_at(hdc, s.f_h2, PURE_WHITE, "FLUX REC", panel.left + 24, panel.top + art_h - 48);
+        text_at(hdc, s.f_tiny, COLORREF(0x00F1E5D8), "RIPO TEAM  ·  2025 CLIENT", panel.left + 24, panel.top + art_h - 25);
+        draw_logo(hdc, s, panel.left + 24, panel.top + art_h + 24, 52);
+        text_at(hdc, s.f_word, WHITE, "Play together", panel.left + 92, panel.top + art_h + 24);
         text_block(
             hdc,
             s.f_small,
-            PURE_WHITE,
-            "Updates are verified before your game starts.",
+            GRAY,
+            "Explore rooms, meet friends and create your own worlds in the 2025 client.",
             RECT {
-                left: panel.left + 30,
-                top: panel.bottom - 94,
-                right: panel.left + brand_w - 30,
-                bottom: panel.bottom - 44,
+                left: panel.left + 24,
+                top: panel.top + art_h + 100,
+                right: panel.left + art_w - 24,
+                bottom: panel.bottom - 54,
             },
         );
+        text_at(hdc, s.f_tiny, DIM, "Automatic updates before every launch", panel.left + 24, panel.bottom - 34);
+        rr_outline(hdc, panel.left, panel.top, art_w, panel_h, 22, BORDER);
 
-        let x = panel.left + brand_w + 34;
-        let right = panel.right - 32;
+        let x = panel.left + art_w + 34;
+        let right = panel.right - 30;
         let width = right - x;
-        text_at(hdc, s.f_tiny, BLUE, "FLUX REC  /  AUTO UPDATE", x, panel.top + 28);
-        text_at(hdc, s.f_title, WHITE, "Getting your game ready", x, panel.top + 54);
+        draw_team_logo(hdc, s, x, panel.top + 24, 38);
+        text_at(hdc, s.f_tiny, BLUE, "RIPO TEAM LAUNCHER  /  AUTOMATIC UPDATE", x + 52, panel.top + 25);
+        text_at(hdc, s.f_title, WHITE, "Flux Rec update", x + 52, panel.top + 47);
         let state = if s.finished {
-            "All files are ready. Starting Flux Rec…"
+            "Update complete. Starting Flux Rec…"
         } else if s.stage.is_empty() {
             "Checking the latest game version…"
         } else {
@@ -1744,7 +1715,7 @@ mod imp {
                 left: x,
                 top: panel.top + 112,
                 right,
-                bottom: panel.top + 148,
+                bottom: panel.top + 145,
             },
         );
         if !s.detail.is_empty() {
@@ -1755,53 +1726,64 @@ mod imp {
                 &s.detail,
                 RECT {
                     left: x,
-                    top: panel.top + 153,
+                    top: panel.top + 151,
                     right,
-                    bottom: panel.top + 180,
+                    bottom: panel.top + 178,
                 },
             );
         } else {
-            text_at(hdc, s.f_small, DIM, "The game will launch when the update check finishes.", x, panel.top + 154);
+            text_at(hdc, s.f_small, DIM, "The game opens automatically when this check finishes.", x, panel.top + 152);
         }
 
-        let bar_y = panel.top + 218;
-        let percent = format!("{}%", s.percent);
-        let _ = SelectObject(hdc, s.f_h2);
+        let bar_y = panel.top + 220;
+        let percent = format!("{}%", if s.finished { 100 } else { s.percent });
+        let _ = SelectObject(hdc, s.f_title);
         let percent_w = text_width(hdc, &percent);
-        text_at(hdc, s.f_h2, BLUE, &percent, right - percent_w, bar_y - 33);
+        text_at(hdc, s.f_title, if s.finished { GREEN } else { BLUE }, &percent, right - percent_w, bar_y - 42);
         if s.percent == 0 && !s.finished {
             draw_shimmer_bar(hdc, s, x, bar_y, width, 14);
         } else {
-            draw_progress_bar(hdc, x, bar_y, width, 14, s.percent);
+            draw_progress_bar(hdc, x, bar_y, width, 14, if s.finished { 100 } else { s.percent });
         }
         text_at(
             hdc,
-            s.f_tiny,
-            DIM,
-            if s.finished { "Final verification complete" } else { "Download  ·  Install  ·  Verify" },
+            s.f_small,
+            GRAY,
+            if s.finished { "Files verified and ready." } else { "Checking files, applying updates and preparing the game." },
             x,
-            bar_y + 24,
+            bar_y + 25,
         );
 
-        let step_y = panel.top + 292;
-        for (i, label) in ["CHECK", "UPDATE", "LAUNCH"].iter().enumerate() {
-            let sx = x + i as i32 * 148;
-            let active = s.finished || s.percent >= [0, 35, 80][i];
-            rr_fill(hdc, sx, step_y, 132, 38, 12, if active { BLUE_DIM } else { BG_SIDE });
-            text_center(
-                hdc,
-                s.f_tiny,
-                if active { BLUE } else { DIM },
-                label,
-                sx + 66,
-                step_y + 9,
-                120,
-                20,
-            );
+        let step_y = panel.top + 296;
+        let step_gap = 10;
+        let step_w = (width - step_gap * 2) / 3;
+        let steps = ["Check files", "Apply update", "Start game"];
+        for (i, label) in steps.iter().enumerate() {
+            let sx = x + i as i32 * (step_w + step_gap);
+            let state = if s.finished || s.percent >= [30, 80, 100][i] {
+                StepState::Done
+            } else if i == 0 || s.percent >= [0, 30, 80][i] {
+                StepState::Active
+            } else {
+                StepState::Todo
+            };
+            rr_fill(hdc, sx, step_y, step_w, 54, 12, if state == StepState::Active { BLUE_DIM } else { BG });
+            rr_outline(hdc, sx, step_y, step_w, 54, 12, if state == StepState::Done { BLUE_DIM } else { BORDER });
+            draw_step(hdc, s, sx + 20, step_y + 8, (i + 1) as i32, label, "", state);
         }
 
-        let footer = format!("Ripo Team Launcher  v{}", env!("CARGO_PKG_VERSION"));
-        text_at(hdc, s.f_tiny, DIM, &footer, x, panel.bottom - 36);
+        let info_y = step_y + 94;
+        rr_fill(hdc, x, info_y, width, 74, 12, BG);
+        text_at(hdc, s.f_tiny, BLUE, "AUTOMATIC UPDATES", x + 18, info_y + 12);
+        text_block(
+            hdc,
+            s.f_small,
+            GRAY,
+            "Flux Rec checks for updates before it starts. Your Ripo Team Launcher and desktop shortcut use the same update flow.",
+            RECT { left: x + 18, top: info_y + 33, right: right - 18, bottom: info_y + 66 },
+        );
+        let footer = format!("Ripo Team Launcher  ·  v{}", env!("CARGO_PKG_VERSION"));
+        text_at(hdc, s.f_tiny, DIM, &footer, x, panel.bottom - 24);
     }
 }
 

@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { describeRoute } from 'hono-openapi'
-import { intVar } from '@repo/hono-helpers'
+import { intVar, logger } from '@repo/hono-helpers'
 import defaultAvatar from '../../static/default-avatar.json'
 
 import {
@@ -39,6 +39,7 @@ import {
 	deleteBlobs,
 	putBlob,
 } from '@repo/blob-store'
+import { NotificationType } from '../../../notify/src/notification-types'
 
 import { authedId, unauthorized } from '../http'
 import {
@@ -128,6 +129,49 @@ import { exceedsApiUploadLimit, maxApiUploadBytes } from '../upload-limit'
 import type { Context } from 'hono'
 import type { App } from '../context'
 import type { InventionTag, SavedInvention } from '../inventions-db'
+import type { ConsumableMappingPayload } from '../../../notify/src/notification-payloads'
+
+const HUB_INSTANCE = 'global'
+
+type OpenedConsumable = {
+	mappingId: number
+	itemDesc: string
+	count: number
+	preExistingCount: number
+	createdAt: string
+	preview: Partial<ConsumableMappingPayload>
+}
+
+/** Notify the 2025 client that a box revealed a consumable and provide its backpack model. */
+async function pushConsumableAdded(
+	c: Context<App>,
+	accountId: number,
+	consumable: OpenedConsumable
+): Promise<void> {
+	try {
+		await c.env.RECFLARE_NOTIFICATIONS_HUB.getByName(HUB_INSTANCE).notifyPlayer(
+			accountId,
+			NotificationType.ConsumableMappingAdded,
+			{
+				Id: consumable.mappingId,
+				ConsumableItemDesc: consumable.itemDesc,
+				...consumable.preview,
+				CreatedAt: consumable.createdAt,
+				Count: consumable.count,
+				InitialCount: consumable.preExistingCount,
+				IsActive: false,
+				ActiveDurationMinutes: 0,
+				IsTransferable: false,
+			} satisfies ConsumableMappingPayload
+		)
+	} catch (err) {
+		logger.error('failed to push ConsumableMappingAdded notification', {
+			accountId,
+			consumableItemDesc: consumable.itemDesc,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+}
 
 /**
  * The most ids `POST /api/customAvatarItems/v1/bulk` will resolve. A batch over this answers
@@ -355,7 +399,7 @@ async function openGiftBoxApi(
 	db: D1Database,
 	accountId: number,
 	giftId: number
-): Promise<{ granted: boolean } | null> {
+): Promise<{ granted: boolean; consumable: OpenedConsumable | null } | null> {
 	const row = await db
 		.prepare('SELECT data FROM received_gift WHERE id = ?1 AND account_id = ?2')
 		.bind(giftId, accountId)
@@ -365,8 +409,25 @@ async function openGiftBoxApi(
 
 	// Legacy box: contents were granted at creation — just delete it.
 	if (content.GrantOnOpen !== true) {
-		await consumeGift(db, accountId, giftId)
-		return { granted: false }
+		const consumed = await consumeGift(db, accountId, giftId)
+		if (!consumed) return { granted: false, consumable: null }
+		const itemDesc = consumed.ConsumableItemDesc
+		const mappingId = consumed.ConsumableMappingId ?? 0
+		const count = consumed.ConsumableCount ?? 0
+		return {
+			granted: false,
+			consumable:
+				typeof itemDesc === 'string' && itemDesc !== '' && mappingId > 0 && count > 0
+					? {
+							mappingId,
+							itemDesc,
+							count,
+							preExistingCount: consumed.ConsumablePreExistingCount ?? 0,
+							createdAt: consumed.CreatedAt,
+							preview: giftConsumablePreview(consumed),
+						}
+					: null,
+		}
 	}
 
 	const stmts: D1PreparedStatement[] = []
@@ -379,6 +440,7 @@ async function openGiftBoxApi(
 					count: content.ConsumableCount as number,
 				}
 			: null
+	const consumableCreatedAt = consumable ? new Date().toISOString() : null
 
 	if (consumable) {
 		stmts.push(
@@ -426,7 +488,7 @@ async function openGiftBoxApi(
 					SELECT ?1, ?2, ?3, ?4 FROM received_gift WHERE id = ?5 AND account_id = ?1
 					RETURNING id`
 				)
-				.bind(accountId, consumable.itemDesc, consumable.count, new Date().toISOString(), giftId)
+				.bind(accountId, consumable.itemDesc, consumable.count, consumableCreatedAt, giftId)
 		)
 	}
 
@@ -486,8 +548,18 @@ async function openGiftBoxApi(
 	// no-op re-open, not a grant to perform.
 	const deleted = results[results.length - 1]?.meta?.changes ?? 0
 	if (deleted === 0) {
-		return { granted: false }
+		return { granted: false, consumable: null }
 	}
+
+	let resultIndex = 0
+	const preExistingCount = consumable
+		? Number((results[resultIndex++] as D1Result<{ total: number }>)?.results?.[0]?.total ?? 0)
+		: 0
+	if (item && typeof item.AvatarItemDesc === 'string') resultIndex++
+	if (equipment && typeof equipment.ModificationGuid === 'string') resultIndex++
+	const consumableMappingId = consumable
+		? Number((results[resultIndex++] as D1Result<{ id: number }>)?.results?.[0]?.id ?? 0) || null
+		: null
 
 	// Apply level-ups if XP was granted.
 	if (xpAmount > 0) {
@@ -506,7 +578,45 @@ async function openGiftBoxApi(
 		}
 	}
 
-	return { granted: true }
+	return {
+		granted: true,
+		consumable:
+			consumable && consumableMappingId !== null
+				? {
+						mappingId: consumableMappingId,
+						itemDesc: consumable.itemDesc,
+						count: consumable.count,
+						preExistingCount,
+						createdAt: consumableCreatedAt ?? new Date().toISOString(),
+						preview: giftConsumablePreview(content),
+					}
+				: null,
+	}
+}
+
+/** Copy only recognized consumable model fields persisted on a gift package. */
+function giftConsumablePreview(content: Record<string, unknown>): Partial<ConsumableMappingPayload> {
+	return {
+		...(Number.isInteger(content.ConsumableItemId)
+			? { ConsumableItemId: content.ConsumableItemId as number }
+			: {}),
+		...(typeof content.ConfigurationData === 'string' || content.ConfigurationData === null
+			? { ConfigurationData: content.ConfigurationData as string | null }
+			: {}),
+		...(Number.isInteger(content.ConfigurationVersion)
+			? { ConfigurationVersion: content.ConfigurationVersion as number }
+			: {}),
+		...(typeof content.ConsumableToolName === 'string' || content.ConsumableToolName === null
+			? { ConsumableToolName: content.ConsumableToolName as string | null }
+			: {}),
+		...(typeof content.IsRRO === 'boolean' ? { IsRRO: content.IsRRO } : {}),
+		...(Number.isInteger(content.RoomieCategory)
+			? { RoomieCategory: content.RoomieCategory as number }
+			: {}),
+		...(typeof content.ThumbnailImageName === 'string' || content.ThumbnailImageName === null
+			? { ThumbnailImageName: content.ThumbnailImageName as string | null }
+			: {}),
+	}
 }
 
 // ---- Avatar gifts ----------------------------------------------------------
@@ -615,7 +725,9 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 		const giftId = typeof body.Id === 'string' ? Number.parseInt(body.Id, 10) || 0 : 0
 		if (id !== null && giftId !== 0) {
 			const opened = await openGiftBoxApi(c.env.DB, id, giftId)
-			if (opened === null) {
+			if (opened?.consumable !== null && opened?.consumable !== undefined) {
+				await pushConsumableAdded(c, id, opened.consumable)
+			} else if (opened === null) {
 				// Nothing was consumed: either the box is already gone (harmless no-op)
 				// or it belongs to another player (forbidden).
 				const other = await getGift(c.env.DB, giftId)
