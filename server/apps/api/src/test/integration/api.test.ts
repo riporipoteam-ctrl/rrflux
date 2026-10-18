@@ -6,6 +6,7 @@ import { getBlob, headBlob, putBlob } from '@repo/blob-store'
 import {
 	addXp,
 	applyLevelUps,
+	createGift,
 	createImage,
 	GAME_VERSION,
 	getImageByName,
@@ -9837,5 +9838,83 @@ describe('ban evasion', () => {
 		expect(banEvasionMatch('off,ip')).toEqual({ ip: false, platform: false })
 		expect(banEvasionMatch('ipv6')).toEqual({ ip: false, platform: false })
 		expect(banEvasionMatch('ip,typo')).toEqual({ ip: true, platform: false })
+	})
+})
+
+describe('2025 backpack gift reveals', () => {
+	test('opening a consumable box on the API worker pushes its model configuration once', async () => {
+		await env.DB.prepare(
+			`CREATE TABLE IF NOT EXISTS consumable (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				account_id INTEGER NOT NULL,
+				consumable_item_desc TEXT NOT NULL,
+				count INTEGER NOT NULL,
+				created_at TEXT NOT NULL
+			)`
+		).run()
+		const hub = env.RECFLARE_NOTIFICATIONS_HUB.getByName('global')
+		await hub.fetch('http://do/all', { method: 'DELETE' })
+		const config = JSON.stringify({ UnityAssetData: { UnityAssetId: 317 } })
+		const { id } = await createGift(env.DB, 42, {
+			FromPlayerId: 1,
+			GrantOnOpen: true,
+			GrantedAvatarItem: null,
+			GrantedEquipment: null,
+			ConsumableItemDesc: 'Apple',
+			ConsumableCount: 3,
+			ConsumableItemId: 317,
+			ConfigurationData: config,
+			ConfigurationVersion: 2,
+			ConsumableToolName: 'AppleTool',
+			IsRRO: true,
+			RoomieCategory: 1,
+			ThumbnailImageName: 'Apple.png',
+			AvatarItemDesc: '',
+			AvatarItemType: 0,
+			CurrencyType: 2,
+			Currency: 0,
+			Xp: 0,
+			PackageType: 0,
+			Message: 'A test reward',
+			EquipmentPrefabName: '',
+			EquipmentModificationGuid: '',
+			GiftRarity: 10,
+			Platform: -1,
+			PlatformsToSpawnOn: -1,
+			BalanceType: null,
+		})
+
+		const open = async () =>
+			exports.default.fetch(`${ORIGIN}/api/avatar/v2/gifts/consume`, {
+				method: 'POST',
+				headers: {
+					...(await bearer('42')),
+					'Content-Type': 'application/x-www-form-urlencoded',
+				},
+				body: `Id=${id}&UnlockedLevel=0`,
+			})
+		expect((await open()).status).toBe(200)
+		expect((await open()).status).toBe(200)
+
+		const sent = (await (await hub.fetch('http://do/all')).json()) as Array<{
+			notificationType: number
+			data: Record<string, unknown>
+		}>
+		const revealed = sent.filter((frame) => frame.notificationType === 70)
+		expect(revealed).toHaveLength(1)
+		expect(revealed[0]?.data).toMatchObject({
+			ConsumableItemDesc: 'Apple',
+			ConsumableItemId: 317,
+			ConfigurationData: config,
+			ConfigurationVersion: 2,
+			ConsumableToolName: 'AppleTool',
+			ThumbnailImageName: 'Apple.png',
+			Count: 3,
+			InitialCount: 0,
+		})
+		const owned = await env.DB.prepare(
+			"SELECT SUM(count) AS total FROM consumable WHERE account_id = 42 AND consumable_item_desc = 'Apple'"
+		).first<{ total: number }>()
+		expect(owned?.total).toBe(3)
 	})
 })
