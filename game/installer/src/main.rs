@@ -1,35 +1,15 @@
-// FluxRec-Setup — zero-touch installer for the RecFlare-pipeline Flux Rec client.
+// Ripo Team Launcher — installer and updater for the Flux Rec 2025 client.
 //
-// Flow:
-//   0. (Upgrade mode) If RecRoom.exe is already present in the install dir,
-//      skip step 1 (the ~3.8GB client.zip download + extract) and only
-//      refresh the Steam bypass, logo bundle, BepInEx, plugin, config, and
-//      shortcuts in place. The game dir is never wiped. The dir of every
-//      successful install is remembered in
-//      %LOCALAPPDATA%\FluxRec\install_dir.txt so later runs (and the
-//      launcher) find it without needing --dir again.
-//   1. Download the 2023 Rec Room client zip from the public mirror, verify MD5,
-//      extract into the install dir. (We host no game binaries ourselves.
-//      Skipped entirely in upgrade mode, see step 0.)
-//   1b. Download the Flux Rec logo bundle (gzipped patched Addressables UI
-//      bundle, hosted on our Hugging Face dataset), verify MD5, gunzip, and
-//      overwrite the stock bundle so the loading screen shows Flux Rec
-//      branding. The stock bundle is backed up as *.bundle.stock once.
-//   2. Download BepInEx 6.0.0-pre.2 (Unity IL2CPP win-x64), extract into the dir.
-//   3. Write the embedded RecNetPlugin.dll (RecFlare redirect plugin,
-//      BepInEx build) into BepInEx/plugins/.
-//   4. Write BepInEx/config/net.rec.plugin.cfg — ns host and Photon App IDs
-//      baked in at packaging time from FLUXREC_NS_HOST / FLUXREC_PHOTON_RT /
-//      FLUXREC_PHOTON_VOICE / FLUXREC_PHOTON_CHAT env vars (or pass --ns-host /
-//      --photon-rt / --photon-voice / --photon-chat at install time).
-//   5. Steam bypass pipeline (see bypass.rs): VC++ 2022 x64 runtime first
-//      (the vs22-built emulator DLL crashes without it), then the Goldberg
-//      emulator swap (stock DLL backed up once), steam_settings/
-//      steam_appid.txt = 471710 + steam_interfaces.txt. If Goldberg fails,
-//      a minimal Flux Rec stub DLL (no VC++ dependency) is used instead.
-//      No Steam client installed, none needed.
-//   6. Create Ripo Team Launcher and Flux Rec shortcuts (Windows only), each
-//      using its own brand icon.
+// Install flow:
+//   1. Download and verify the 2025 game client when it is not installed.
+//   2. Install or repair 2025Patch, Flux Rec branding bundles, Steam bypass,
+//      and launcher/game shortcuts without deleting the game directory.
+//   3. Remember the successful install location in
+//      %LOCALAPPDATA%\FluxRec\install_dir.txt for future launches.
+//   4. The Ripo Team Launcher checks for updates before opening the client.
+//
+// Legacy 2023-era files are detected only to move an incompatible old install
+// aside before installing the supported 2025 client.
 //
 // Exit 0 on success, 1 with an ERROR line on failure.
 // Usage: FluxRec-Setup [--dir <path>] [--ns-host <url>] [--photon-rt <id>] [--photon-voice <id>] [--photon-chat <id>]
@@ -92,7 +72,7 @@ const LOGO_BUNDLES: &[(&str, &str, u64)] = &[
 const LOGO_BUNDLE_BASE_URL: &str = "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/logo-patch-v5/";
 
 /// Goldberg Steam emulator (gbe_fork) release — pinned. This is the exact
-/// archive our cloud test runs use to make the 2023 client boot with no
+/// archive our cloud test runs use to make the 2025 client boot with no
 /// Steam client installed.
 const GBE_URL: &str =
     "https://github.com/Detanup01/gbe_fork/releases/download/release-2026_09_16_2/emu-win-release-vs22.7z";
@@ -1780,7 +1760,7 @@ fn verify_install(dir: &Path) -> Result<(), String> {
 }
 
 /// Steam bypass via the Goldberg emulator (gbe_fork) — the exact approach
-/// our cloud test runs use to boot the 2023 client with no Steam client
+/// our cloud test runs use to boot the 2025 client with no Steam client
 /// installed anywhere on the machine.
 ///
 /// v0.3.1: retargeted to the 2025 client layout (`Recroom_Release_Data`,

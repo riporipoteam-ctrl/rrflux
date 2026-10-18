@@ -1,7 +1,7 @@
 //! Steam bypass orchestration.
 //!
 //! Primary method: the Goldberg emulator (gbe_fork) — proven on cloud
-//! Windows runners to boot the 2023 client with no Steam client installed.
+//! Windows runners to boot the 2025 client with no Steam client installed.
 //! Fallback: a minimal Flux Rec stub `steam_api64.dll` (plain C, MinGW-built,
 //! zero VC++ runtime dependency) whose `SteamAPI_Init` returns true.
 //!
