@@ -9917,4 +9917,66 @@ describe('2025 backpack gift reveals', () => {
 		).first<{ total: number }>()
 		expect(owned?.total).toBe(3)
 	})
+
+	test('opening an older consumable box resolves missing model metadata from the backpack catalog', async () => {
+		await env.DB.prepare(
+			`CREATE TABLE IF NOT EXISTS consumable (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				account_id INTEGER NOT NULL,
+				consumable_item_desc TEXT NOT NULL,
+				count INTEGER NOT NULL,
+				created_at TEXT NOT NULL
+			)`
+		).run()
+		const hub = env.RECFLARE_NOTIFICATIONS_HUB.getByName('global')
+		await hub.fetch('http://do/all', { method: 'DELETE' })
+		const { id } = await createGift(env.DB, 43, {
+			FromPlayerId: 1,
+			GrantOnOpen: true,
+			GrantedAvatarItem: null,
+			GrantedEquipment: null,
+			ConsumableItemDesc: 'test-legacy-apple-desc',
+			ConsumableCount: 2,
+			AvatarItemDesc: '',
+			AvatarItemType: 0,
+			CurrencyType: 2,
+			Currency: 0,
+			Xp: 0,
+			PackageType: 0,
+			Message: 'A legacy test reward',
+			EquipmentPrefabName: '',
+			EquipmentModificationGuid: '',
+			GiftRarity: 10,
+			Platform: -1,
+			PlatformsToSpawnOn: -1,
+			BalanceType: null,
+		})
+
+		const response = await exports.default.fetch(`${ORIGIN}/api/avatar/v2/gifts/consume`, {
+			method: 'POST',
+			headers: {
+				...(await bearer('43')),
+				'Content-Type': 'application/x-www-form-urlencoded',
+			},
+			body: `Id=${id}`,
+		})
+		expect(response.status).toBe(200)
+
+		const sent = (await (await hub.fetch('http://do/all')).json()) as Array<{
+			notificationType: number
+			data: Record<string, unknown>
+		}>
+		const revealed = sent.filter((frame) => frame.notificationType === 70)
+		expect(revealed).toHaveLength(1)
+		expect(revealed[0]?.data).toMatchObject({
+			ConsumableItemDesc: 'test-legacy-apple-desc',
+			ConsumableItemId: 317,
+			ConfigurationData: '{"UnityAssetData":{"UnityAssetId":"test-fixture-asset"}}',
+			ConfigurationVersion: 2,
+			ConsumableToolName: 'AppleTool',
+			ThumbnailImageName: 'Apple.png',
+			Count: 2,
+			InitialCount: 0,
+		})
+	})
 })

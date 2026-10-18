@@ -359,6 +359,14 @@ async function persistPostedOutfit(c: Context<App>): Promise<Outfit | Response> 
 
 /** The notifications hub is a single global DO instance (see the `notify` worker). */
 const HUB_INSTANCE = 'global'
+const GIFT_NOTIFICATION_HUB_RETRIES = 2
+
+/** Cloudflare marks Durable Object resets retryable; other errors must remain visible. */
+function isRetryableGiftNotificationError(err: unknown): boolean {
+	if (typeof err !== 'object' || err === null) return false
+	const fields = err as { retryable?: unknown; durableObjectReset?: unknown }
+	return fields.retryable === true || fields.durableObjectReset === true
+}
 
 /**
  * The messages the room-currency failure paths carry. One string per endpoint, not per
@@ -1808,34 +1816,55 @@ async function pushGiftReceived(
 	fromPlayerId: number,
 	giftContext: number | null = null
 ): Promise<void> {
+	const payload = {
+		Id: gift.id,
+		FromGiftDropId: 0,
+		FromPlayerId: fromPlayerId,
+		ConsumableItemDesc: gift.drop.ConsumableItemDesc,
+		...consumablePreviewFor(gift.drop.ConsumableItemDesc),
+		AvatarItemDesc: gift.drop.AvatarItemDesc,
+		AvatarItemType: gift.drop.AvatarItemType ?? 0,
+		EquipmentPrefabName: gift.drop.EquipmentPrefabName,
+		EquipmentModificationGuid: gift.drop.EquipmentModificationGuid,
+		CurrencyType: gift.drop.CurrencyType,
+		Currency: gift.drop.Currency,
+		Xp: gift.drop.Xp ?? 0,
+		Level: 0,
+		Platform: -1,
+		PlatformsToSpawnOn: -1,
+		BalanceType: ALL_PLATFORMS,
+		PackageType: 0,
+		CustomAvatarItemId: null,
+		GiftContext: giftContext ?? gift.drop.Context,
+		GiftRarity: gift.drop.Rarity,
+		Message: message,
+	}
 	try {
-		await c.env.RECFLARE_NOTIFICATIONS_HUB.getByName(HUB_INSTANCE).notifyPlayer(
-			accountId,
-			NotificationType.GiftPackageReceivedImmediate,
-			{
-				Id: gift.id,
-				FromGiftDropId: 0,
-				FromPlayerId: fromPlayerId,
-				ConsumableItemDesc: gift.drop.ConsumableItemDesc,
-				...consumablePreviewFor(gift.drop.ConsumableItemDesc),
-				AvatarItemDesc: gift.drop.AvatarItemDesc,
-				AvatarItemType: gift.drop.AvatarItemType ?? 0,
-				EquipmentPrefabName: gift.drop.EquipmentPrefabName,
-				EquipmentModificationGuid: gift.drop.EquipmentModificationGuid,
-				CurrencyType: gift.drop.CurrencyType,
-				Currency: gift.drop.Currency,
-				Xp: gift.drop.Xp ?? 0,
-				Level: 0,
-				Platform: -1,
-				PlatformsToSpawnOn: -1,
-				BalanceType: ALL_PLATFORMS,
-				PackageType: 0,
-				CustomAvatarItemId: null,
-				GiftContext: giftContext ?? gift.drop.Context,
-				GiftRarity: gift.drop.Rarity,
-				Message: message,
+		// Econ calls the hub directly, so it needs the same reset retry used by the notify
+		// worker's internal endpoint. A reset aborts the RPC before its durable write/send;
+		// retries use a fresh stub and prevent an already-persisted box losing its arrival.
+		let lastError: unknown
+		for (let attempt = 0; attempt <= GIFT_NOTIFICATION_HUB_RETRIES; attempt++) {
+			try {
+				await c.env.RECFLARE_NOTIFICATIONS_HUB.getByName(HUB_INSTANCE).notifyPlayer(
+					accountId,
+					NotificationType.GiftPackageReceivedImmediate,
+					payload
+				)
+				return
+			} catch (err) {
+				if (!isRetryableGiftNotificationError(err)) throw err
+				lastError = err
+				logger.warn('gift-arrival notification hub reset, retrying', {
+					accountId,
+					giftId: gift.id,
+					attempt: attempt + 1,
+					of: GIFT_NOTIFICATION_HUB_RETRIES + 1,
+					error: err instanceof Error ? err.message : String(err),
+				})
 			}
-		)
+		}
+		throw lastError
 	} catch (err) {
 		logger.error('failed to push GiftPackageReceivedImmediate notification', {
 			accountId,

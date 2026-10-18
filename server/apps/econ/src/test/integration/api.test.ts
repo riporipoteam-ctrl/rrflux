@@ -3812,6 +3812,30 @@ describe('econ endpoints', () => {
 		return (await res.json()) as Array<Record<string, unknown>>
 	}
 
+	test('POST /api/storefronts/v2/buyItem retries a gift arrival after a transient hub reset', async () => {
+		const buyerId = 999101
+		await creditCurrency(env.DB, buyerId, CurrencyType.RecCenterTokens, 10000, DEFAULT_STARTING_TOKENS)
+		await drainFrames()
+		await (
+			env.RECFLARE_NOTIFICATIONS_HUB.getByName('global') as unknown as {
+				failNextGiftNotificationOnce(): Promise<void>
+			}
+		).failNextGiftNotificationOnce()
+
+		const response = await giftBackpack(String(buyerId), null)
+		expect(response.status).toBe(200)
+		const [gift] = await pendingGifts(String(buyerId))
+		expect(gift).toBeDefined()
+
+		const frames = await drainFrames()
+		const arrivals = frames.filter(
+			(frame) => frame.notificationType === NotificationType.GiftPackageReceivedImmediate
+		)
+		expect(arrivals).toHaveLength(1)
+		expect(arrivals[0]?.accountId).toBe(buyerId)
+		expect(arrivals[0]?.payload.Id).toBe(gift?.Id)
+	})
+
 	test('POST /api/storefronts/v2/buyItem charges the buyer and hands the receiver a box they open for the item', async () => {
 		await seedAccount(205, 'GiftReceiver')
 		// The buyer pays 600 for the fixture — more than the 500 default grant.

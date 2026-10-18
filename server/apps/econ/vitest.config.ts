@@ -31,11 +31,20 @@ export default defineConfig({
 							import { DurableObject } from 'cloudflare:workers'
 							export class NotificationsHub extends DurableObject {
 								frames = []
+								failNextGiftNotification = false
 								async notifyPlayer(accountId, notificationType, payload) {
+									if (notificationType === 31 && this.failNextGiftNotification) {
+										this.failNextGiftNotification = false
+										const error = new Error('simulated Durable Object reset')
+										error.retryable = true
+										error.durableObjectReset = true
+										throw error
+									}
 									this.frames.push({ accountId, notificationType, payload })
 									return { delivered: 0, queued: true }
 								}
 								async broadcast() { return { delivered: 0 } }
+								async failNextGiftNotificationOnce() { this.failNextGiftNotification = true }
 								/** Everything pushed since the last call, then forget it. */
 								async drainFrames() {
 									const drained = this.frames
