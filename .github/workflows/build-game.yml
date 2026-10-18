@@ -10,8 +10,17 @@ on:
   push:
     branches: [main]
     paths:
-      - "game/**"
-      - ".github/workflows/build-game.yml"
+      # This workflow builds the headless bootstrapper + legacy NSIS setup.
+      # The Ripo Team Launcher is built by build-recflare-installer.yml; its
+      # Rust UI/plugin sources must not publish this game-only installer.
+      - "game/Cargo.toml"
+      - "game/Cargo.lock"
+      - "game/bootstrap/**"
+      - "game/common/**"
+      - "game/downloader/**"
+      - "game/selfupdate/**"
+      - "game/installer/fluxrec.nsi"
+      - "game/installer/fluxrec.ico"
 
 jobs:
   build-windows:
