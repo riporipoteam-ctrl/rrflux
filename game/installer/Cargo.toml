@@ -1,6 +1,6 @@
 [package]
 name = "fluxrec-installer"
-version = "1.0.33"
+version = "1.0.34"
 edition = "2021"
 description = "Zero-touch Flux Rec setup: fetches the 2025 Rec Room client, 2025Patch and config, no Steam client needed."
 
@@ -43,3 +43,4 @@ windows = { version = "0.58", features = [
     "Win32_Security",
     "Win32_System_Threading",
 ] }
+

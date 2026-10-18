@@ -1,10 +1,10 @@
-//! Ripo Team Launcher v1.0.33 — game store UI.
+//! Ripo Team Launcher — multi-game storefront and library UI.
 //!
 //! A game-library style launcher (inspired by Steam/EGS):
-//! - Sidebar with Ripo Team branding, Store/Settings nav.
+//! - Ripo Team shell with Store, Library, Downloads and Settings navigation.
 //! - Flux Rec game card: banner, logo, description, live player count,
 //!   PLAY button, uninstall.
-//! - Settings: light/dark theme toggle (default: light).
+//! - Settings: install location and light/dark theme (default: light).
 //! - PLAY flow: update check -> install update if needed -> launch game ->
 //!   close library -> "Launching..." splash.
 //!
@@ -53,6 +53,8 @@ pub struct LibraryConfig {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum View {
     Library,
+	Store,
+	Downloads,
     Detail, // v1.0.4: game detail view with screenshot carousel
     Settings,
     Working, // PLAY was clicked; showing progress
@@ -149,17 +151,17 @@ mod imp {
     type Silent = std::result::Result<(), ()>;
 
     // Window size.
-    const WIN_W: i32 = 1120;
-    const WIN_H: i32 = 720;
-    const SIDEBAR_W: i32 = 206;
-    const TITLE_H: i32 = 54;
-    const CORNER: i32 = 28;
+    const WIN_W: i32 = 1360;
+    const WIN_H: i32 = 820;
+    const SIDEBAR_W: i32 = 232;
+    const TITLE_H: i32 = 58;
+    const CORNER: i32 = 24;
 
     const SPLASH_W: i32 = 480;
     const SPLASH_H: i32 = 320;
 
     const TIMER_ID: usize = 1;
-    const TIMER_MS: u32 = 50;
+    const TIMER_MS: u32 = 100;
 
     // ---- Palettes (COLORREF = 0x00BBGGRR) ----
     struct Palette {
@@ -221,7 +223,9 @@ mod imp {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Hot {
         None,
+		NavStore,
         NavLibrary,
+		NavDownloads,
         NavSettings,
         Play,
         Uninstall,
@@ -276,7 +280,9 @@ mod imp {
 
     // Button rects (computed per paint).
     struct Rects {
+		nav_store: RECT,
         nav_library: RECT,
+		nav_downloads: RECT,
         nav_settings: RECT,
         play: RECT,
         uninstall: RECT,
@@ -321,7 +327,7 @@ mod imp {
                 theme: config.theme,
                 version: config.version,
                 install_dir: config.install_dir.to_string_lossy().into_owned(),
-                view: View::Library,
+                view: View::Store,
                 cmd_tx: config.cmd_tx,
                 ready: false,
                 install_required: false,
@@ -917,48 +923,58 @@ mod imp {
         let content_x = SIDEBAR_W + 28;
         let content_right = WIN_W - 28;
         let content_w = content_right - content_x;
-        let status_x = content_right - 272;
-        let hero_right = status_x - 18;
         let action_y = TITLE_H + 500;
         let action_w = (content_w - 36) / 4;
         let action_x = |index: i32| content_x + index * (action_w + 12);
         Rects {
+            nav_store: RECT {
+                left: 16,
+                top: TITLE_H + 84,
+                right: SIDEBAR_W - 16,
+                bottom: TITLE_H + 126,
+            },
             nav_library: RECT {
                 left: 16,
-                top: TITLE_H + 88,
+                top: TITLE_H + 136,
                 right: SIDEBAR_W - 16,
-                bottom: TITLE_H + 130,
+                bottom: TITLE_H + 178,
+            },
+            nav_downloads: RECT {
+                left: 16,
+                top: TITLE_H + 188,
+                right: SIDEBAR_W - 16,
+                bottom: TITLE_H + 230,
             },
             nav_settings: RECT {
                 left: 16,
-                top: TITLE_H + 140,
+                top: TITLE_H + 240,
                 right: SIDEBAR_W - 16,
-                bottom: TITLE_H + 182,
+                bottom: TITLE_H + 282,
             },
             // Home hero.
             card: RECT {
                 left: content_x,
                 top: TITLE_H + 60,
-                right: hero_right,
+                right: content_right,
                 bottom: TITLE_H + 486,
             },
             play: RECT {
-                left: status_x + 14,
-                top: TITLE_H + 395,
-                right: content_right - 14,
-                bottom: TITLE_H + 449,
+                left: content_right - 270,
+                top: TITLE_H + 354,
+                right: content_right - 22,
+                bottom: TITLE_H + 408,
             },
             uninstall: RECT {
-                left: action_x(3),
-                top: action_y,
-                right: action_x(3) + action_w,
-                bottom: action_y + 58,
+                left: content_right - 270,
+                top: TITLE_H + 500,
+                right: content_right - 22,
+                bottom: TITLE_H + 548,
             },
             details: RECT {
-                left: action_x(2),
-                top: action_y,
-                right: action_x(2) + action_w,
-                bottom: action_y + 58,
+                left: content_right - 270,
+                top: TITLE_H + 294,
+                right: content_right - 22,
+                bottom: TITLE_H + 340,
             },
             // Settings view
             theme_light: RECT {
@@ -974,10 +990,10 @@ mod imp {
                 bottom: TITLE_H + 210,
             },
             refresh_players: RECT {
-                left: status_x + 180,
-                top: TITLE_H + 78,
-                right: content_right - 12,
-                bottom: TITLE_H + 110,
+                left: content_right - 136,
+                top: TITLE_H + 186,
+                right: content_right - 22,
+                bottom: TITLE_H + 218,
             },
             check_updates: RECT {
                 left: action_x(0),
@@ -1048,31 +1064,39 @@ mod imp {
         if pt_in(&rects.minimize, x, y) {
             return Hot::Minimize;
         }
+        if pt_in(&rects.nav_store, x, y) {
+            return Hot::NavStore;
+        }
         if pt_in(&rects.nav_library, x, y) {
             return Hot::NavLibrary;
+        }
+        if pt_in(&rects.nav_downloads, x, y) {
+            return Hot::NavDownloads;
         }
         if pt_in(&rects.nav_settings, x, y) {
             return Hot::NavSettings;
         }
         match view {
-            View::Library => {
+            View::Store => {
                 if pt_in(&rects.refresh_players, x, y) {
                     return Hot::RefreshPlayers;
                 }
-                if pt_in(&rects.check_updates, x, y) {
-                    return Hot::CheckForUpdates;
+                if pt_in(&rects.play, x, y) {
+                    return Hot::Play;
                 }
-                if pt_in(&rects.open_folder, x, y) {
-                    return Hot::OpenInstallFolder;
+                if pt_in(&rects.details, x, y) {
+                    return Hot::Details;
                 }
+                if pt_in(&rects.card, x, y) {
+                    return Hot::Card;
+                }
+            }
+            View::Library => {
                 if pt_in(&rects.play, x, y) {
                     return Hot::Play;
                 }
                 if pt_in(&rects.uninstall, x, y) {
                     return Hot::Uninstall;
-                }
-                if pt_in(&rects.details, x, y) {
-                    return Hot::Details;
                 }
                 if pt_in(&rects.card, x, y) {
                     return Hot::Card;
@@ -1090,6 +1114,17 @@ mod imp {
                 }
                 if pt_in(&rects.detail_play, x, y) {
                     return Hot::DetailPlay;
+                }
+            }
+            View::Downloads => {
+                if pt_in(&rects.play, x, y) {
+                    return Hot::Play;
+                }
+                if pt_in(&rects.check_updates, x, y) {
+                    return Hot::CheckForUpdates;
+                }
+                if pt_in(&rects.open_folder, x, y) {
+                    return Hot::OpenInstallFolder;
                 }
             }
             View::Settings => {
@@ -1157,11 +1192,14 @@ mod imp {
             bottom: TITLE_H,
         };
         fill_rect(mem, &title_r, p.bg_title)?;
+        if draw_logo_bitmap(mem, st.team_logo_bitmap, 14, 7, 42).is_err() {
+            draw_text(mem, "RT", 18, 16, 38, 24, p.accent, 15, true, true)?;
+        }
         draw_text(
             mem,
-            "RIPO TEAM LAUNCHER",
-            20,
-            12,
+            "Ripo Team Launcher",
+            64,
+            17,
             300,
             24,
             p.text,
@@ -1270,7 +1308,7 @@ mod imp {
         )?;
         draw_text(
             mem,
-            "RIPO TEAM GAMES",
+            "GAME LIBRARY",
             80,
             TITLE_H + 43,
             114,
@@ -1283,10 +1321,26 @@ mod imp {
         // Nav buttons.
         draw_nav(
             mem,
-            &rects.nav_library,
+            &rects.nav_store,
             "Store",
+            matches!(st.view, View::Store | View::Detail),
+            st.hover == Hot::NavStore,
+            p,
+        )?;
+        draw_nav(
+            mem,
+            &rects.nav_library,
+            "Library",
             st.view == View::Library,
             st.hover == Hot::NavLibrary,
+            p,
+        )?;
+        draw_nav(
+            mem,
+            &rects.nav_downloads,
+            "Downloads",
+            st.view == View::Downloads,
+            st.hover == Hot::NavDownloads,
             p,
         )?;
         draw_nav(
@@ -1326,7 +1380,9 @@ mod imp {
 
         // Content.
         match st.view {
-            View::Library => draw_dashboard_view(mem, st, &rects, p)?,
+            View::Store => draw_store_view(mem, st, &rects, p)?,
+            View::Library => draw_library_installed(mem, st, &rects, p)?,
+            View::Downloads => draw_downloads_view(mem, st, &rects, p)?,
             View::Detail => draw_detail_view(mem, st, &rects, p)?,
             View::Settings => draw_settings_console(mem, st, &rects, p)?,
             View::Working => draw_working_view(mem, st, &rects, p)?,
@@ -1421,6 +1477,126 @@ mod imp {
         let _ = SelectObject(hdc, old_pen);
         let _ = SelectObject(hdc, old_brush);
         let _ = DeleteObject(pen);
+        Ok(())
+    }
+
+    unsafe fn draw_store_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
+        let card = RECT {
+            left: rects.card.left,
+            top: rects.card.top,
+            right: rects.card.right,
+            bottom: TITLE_H + 420,
+        };
+        let content_x = card.left;
+        let content_w = card.right - card.left;
+        draw_text(hdc, "RIPO TEAM STORE", content_x, TITLE_H + 11, 220, 18, p.accent, 11, true, false)?;
+        draw_text(hdc, "Discover games", content_x, TITLE_H + 29, 340, 34, p.text, 26, true, false)?;
+        draw_text(
+            hdc,
+            "A growing collection from Ripo Team, starting with Flux Rec.",
+            content_x + 354,
+            TITLE_H + 37,
+            content_w - 354,
+            22,
+            p.text_dim,
+            12,
+            false,
+            false,
+        )?;
+
+        // Store hero uses a real game screenshot, brand-backed title treatment, and one
+        // visible install/play action. This is the product page entry, not a status dashboard.
+        round_rect_path(hdc, &card, 22, p.bg_card)?;
+        round_rect_outline(hdc, &card, 22, p.border)?;
+        let banner = card;
+        let banner_w = banner.right - banner.left;
+        let banner_h = banner.bottom - banner.top;
+        if !st.carousel_bitmaps.is_empty() {
+            let mem_dc = CreateCompatibleDC(hdc);
+            if !mem_dc.is_invalid() {
+                let old = SelectObject(mem_dc, st.carousel_bitmaps[0]);
+                let source_h = ((640 * banner_h) / banner_w).clamp(1, 360);
+                let source_y = (360 - source_h) / 2;
+                let _ = StretchBlt(hdc, banner.left, banner.top, banner_w, banner_h, mem_dc, 0, source_y, 640, source_h, SRCCOPY);
+                let _ = SelectObject(mem_dc, old);
+                let _ = DeleteDC(mem_dc);
+            }
+        } else {
+            fill_gradient(hdc, &banner, p.banner_top, p.banner_bot)?;
+        }
+        let info_panel = RECT { left: banner.right - 292, top: banner.top, right: banner.right, bottom: banner.bottom };
+        fill_rect(hdc, &info_panel, p.banner_bot)?;
+        fill_rect(
+            hdc,
+            &RECT { left: banner.left, top: banner.top, right: info_panel.left, bottom: banner.top + 112 },
+            COLORREF(0x0017100B),
+        )?;
+        fill_rect(
+            hdc,
+            &RECT { left: banner.left, top: banner.bottom - 78, right: info_panel.left, bottom: banner.bottom },
+            COLORREF(0x0017100B),
+        )?;
+        if draw_logo_bitmap(hdc, st.logo_bitmap, banner.left + 28, banner.top + 22, 64).is_err() {
+            draw_logo(hdc, banner.left + 28, banner.top + 22, 64, COLORREF(0x00FFFFFF))?;
+        }
+        draw_text(hdc, "FLUX REC", banner.left + 108, banner.top + 29, 370, 38, COLORREF(0x00FFFFFF), 28, true, false)?;
+        draw_text(hdc, "RIPO TEAM  ·  2025 GAME BUILD", banner.left + 110, banner.top + 69, 420, 22, COLORREF(0x00FFFFFF), 11, true, false)?;
+        draw_text(hdc, "Explore. Play. Create together.", banner.left + 28, banner.bottom - 67, 570, 26, COLORREF(0x00FFFFFF), 19, true, false)?;
+        draw_text(hdc, "A community game built on the 2025 Rec Room client.", banner.left + 28, banner.bottom - 38, 620, 21, COLORREF(0x00FFFFFF), 12, false, false)?;
+
+        draw_status_pulse(hdc, info_panel.left + 22, info_panel.top + 29, st.anim_t, COLORREF(0x0038A169))?;
+        draw_text(hdc, "AVAILABLE NOW", info_panel.left + 38, info_panel.top + 20, 210, 20, COLORREF(0x00FFFFFF), 10, true, false)?;
+        let update = if st.checking {
+            "Checking for updates"
+        } else if st.install_required {
+            "Ready to install"
+        } else if st.update_available {
+            "Update available"
+        } else if !st.check_error.is_empty() {
+            "Check will retry at launch"
+        } else {
+            "Up to date"
+        };
+        draw_text_ellipsis(hdc, update, info_panel.left + 22, info_panel.top + 63, 246, 28, COLORREF(0x00FFFFFF), 15)?;
+        let players = match (st.players, st.player_count_pending) {
+            (Some(count), _) => format!("{count} playing online"),
+            (None, true) => "Checking online players".to_string(),
+            (None, false) => "Online status unavailable".to_string(),
+        };
+        draw_text_ellipsis(hdc, &players, info_panel.left + 22, info_panel.top + 97, 242, 20, COLORREF(0x00EADFD4), 11)?;
+        round_rect_path(hdc, &rects.refresh_players, 10, COLORREF(0x00FFFFFF))?;
+        draw_text(hdc, if st.player_count_pending { "…" } else { "Refresh" }, rects.refresh_players.left, rects.refresh_players.top + 5, rects.refresh_players.right - rects.refresh_players.left, 20, p.banner_bot, 10, true, true)?;
+        draw_text(hdc, "PC  ·  ONLINE MULTIPLAYER", info_panel.left + 22, info_panel.top + 170, 250, 18, COLORREF(0x00EADFD4), 10, true, false)?;
+        draw_text(hdc, "Free to install", info_panel.left + 22, info_panel.top + 198, 250, 20, COLORREF(0x00FFFFFF), 12, false, false)?;
+        let play_label = if st.install_required { "INSTALL FLUX REC" } else if st.update_available { "UPDATE & PLAY" } else { "PLAY FLUX REC" };
+        round_rect_path(hdc, &rects.play, 13, if st.hover == Hot::Play { p.accent_dark } else { p.accent })?;
+        draw_text(hdc, play_label, rects.play.left + 5, rects.play.top + 12, rects.play.right - rects.play.left - 10, 25, COLORREF(0x00FFFFFF), 13, true, true)?;
+        round_rect_path(hdc, &rects.details, 12, COLORREF(0x00FFFFFF))?;
+        round_rect_outline(hdc, &rects.details, 12, COLORREF(0x00FFFFFF))?;
+        draw_text(hdc, "VIEW GAME DETAILS", rects.details.left + 4, rects.details.top + 11, rects.details.right - rects.details.left - 8, 22, p.banner_bot, 10, true, true)?;
+
+        let section_y = TITLE_H + 432;
+        draw_text(hdc, "WHY FLUX REC", content_x, section_y, 240, 18, p.accent, 10, true, false)?;
+        draw_text(hdc, "A little of everything to play", content_x, section_y + 17, 500, 28, p.text, 20, true, false)?;
+        let items = [
+            ("Explore", "Join community rooms, meet friends and discover new games."),
+            ("Play", "Jump into paintball, quests, parties and player-made worlds."),
+            ("Create", "Build rooms and experiences with the maker tools."),
+        ];
+        let gap = 14;
+        let tile_w = (content_w - gap * 2) / 3;
+        let tile_y = section_y + 54;
+        for (i, (title, description)) in items.iter().enumerate() {
+            let x = content_x + i as i32 * (tile_w + gap);
+            let tile = RECT { left: x, top: tile_y, right: x + tile_w, bottom: tile_y + 132 };
+            round_rect_path(hdc, &tile, 16, p.bg_card)?;
+            round_rect_outline(hdc, &tile, 16, p.border)?;
+            let icon = RECT { left: x + 18, top: tile_y + 18, right: x + 42, bottom: tile_y + 42 };
+            round_rect_path(hdc, &icon, 12, p.accent)?;
+            draw_text(hdc, &format!("{}", i + 1), icon.left, icon.top + 2, 24, 20, COLORREF(0x00FFFFFF), 11, true, true)?;
+            draw_text(hdc, title, x + 54, tile_y + 18, tile_w - 72, 24, p.text, 15, true, false)?;
+            draw_text(hdc, description, x + 18, tile_y + 58, tile_w - 36, 60, p.text_dim, 11, false, false)?;
+        }
         Ok(())
     }
 
@@ -1857,6 +2033,72 @@ mod imp {
                 false,
                 true,
             )?;
+        }
+        Ok(())
+    }
+
+    unsafe fn draw_library_installed(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
+        let card = &rects.card;
+        let x = card.left;
+        draw_text(hdc, "YOUR LIBRARY", x, TITLE_H + 12, 260, 18, p.accent, 10, true, false)?;
+        draw_text(hdc, "Installed games", x, TITLE_H + 30, 360, 32, p.text, 24, true, false)?;
+
+        let panel_x = card.right - 336;
+        let artwork = RECT { left: card.left, top: card.top, right: panel_x, bottom: card.bottom };
+        if !st.carousel_bitmaps.is_empty() {
+            let mem_dc = CreateCompatibleDC(hdc);
+            if !mem_dc.is_invalid() {
+                let old = SelectObject(mem_dc, st.carousel_bitmaps[0]);
+                let source_h = ((640 * (artwork.bottom - artwork.top)) / (artwork.right - artwork.left)).clamp(1, 360);
+                let source_y = (360 - source_h) / 2;
+                let _ = StretchBlt(hdc, artwork.left, artwork.top, artwork.right - artwork.left, artwork.bottom - artwork.top, mem_dc, 0, source_y, 640, source_h, SRCCOPY);
+                let _ = SelectObject(mem_dc, old);
+                let _ = DeleteDC(mem_dc);
+            }
+        } else {
+            fill_gradient(hdc, &artwork, p.banner_top, p.banner_bot)?;
+        }
+        fill_rect(hdc, &RECT { left: artwork.left, top: artwork.bottom - 112, right: artwork.right, bottom: artwork.bottom }, COLORREF(0x0017100B))?;
+        if draw_logo_bitmap(hdc, st.logo_bitmap, artwork.left + 28, artwork.bottom - 91, 66).is_err() {
+            draw_logo(hdc, artwork.left + 28, artwork.bottom - 91, 66, COLORREF(0x00FFFFFF))?;
+        }
+        draw_text(hdc, "FLUX REC", artwork.left + 112, artwork.bottom - 80, 360, 34, COLORREF(0x00FFFFFF), 25, true, false)?;
+        draw_text(hdc, "2025 client  ·  Ripo Team", artwork.left + 114, artwork.bottom - 48, 360, 20, COLORREF(0x00FFFFFF), 12, false, false)?;
+
+        let panel = RECT { left: panel_x, top: card.top, right: card.right, bottom: card.bottom };
+        fill_rect(hdc, &panel, p.banner_bot)?;
+        let state = if st.checking {
+            "Checking for updates"
+        } else if st.install_required {
+            "Ready to install"
+        } else if st.update_available {
+            "Update available"
+        } else if !st.check_error.is_empty() {
+            "Update check will retry"
+        } else {
+            "Up to date"
+        };
+        draw_text(hdc, "FLUX REC", panel.left + 24, panel.top + 30, panel.right - panel.left - 48, 20, COLORREF(0x00EADFD4), 10, true, false)?;
+        draw_text(hdc, "Flux Rec", panel.left + 24, panel.top + 58, panel.right - panel.left - 48, 34, COLORREF(0x00FFFFFF), 23, true, false)?;
+        draw_text_ellipsis(hdc, state, panel.left + 24, panel.top + 102, panel.right - panel.left - 48, 26, COLORREF(0x00FFFFFF), 14)?;
+        let version = if st.update_available {
+            format!("Version {} is ready to install", display_update_version(&st.update_version))
+        } else {
+            "2025 game build".to_string()
+        };
+        draw_text_ellipsis(hdc, &version, panel.left + 24, panel.top + 137, panel.right - panel.left - 48, 24, COLORREF(0x00EADFD4), 11)?;
+        let players = match (st.players, st.player_count_pending) {
+            (Some(count), _) => format!("{count} players online"),
+            (None, true) => "Checking online players".to_string(),
+            (None, false) => "Online status unavailable".to_string(),
+        };
+        draw_text_ellipsis(hdc, &players, panel.left + 24, panel.top + 181, panel.right - panel.left - 48, 22, COLORREF(0x00EADFD4), 11)?;
+        let play_label = if st.install_required { "INSTALL" } else if st.update_available { "UPDATE & PLAY" } else { "PLAY" };
+        round_rect_path(hdc, &rects.play, 14, if st.hover == Hot::Play { p.accent_dark } else { p.accent })?;
+        draw_text(hdc, play_label, rects.play.left, rects.play.top + 13, rects.play.right - rects.play.left, 26, COLORREF(0x00FFFFFF), 14, true, true)?;
+        if !st.install_required {
+            round_rect_path(hdc, &rects.uninstall, 12, if st.hover == Hot::Uninstall { COLORREF(0x004A4ADD) } else { COLORREF(0x00FFFFFF) })?;
+            draw_text(hdc, "UNINSTALL GAME", rects.uninstall.left, rects.uninstall.top + 12, rects.uninstall.right - rects.uninstall.left, 22, if st.hover == Hot::Uninstall { COLORREF(0x00FFFFFF) } else { COLORREF(0x00B34430) }, 11, true, true)?;
         }
         Ok(())
     }
@@ -2793,6 +3035,147 @@ mod imp {
         Ok(())
     }
 
+    unsafe fn draw_downloads_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
+        let x = SIDEBAR_W + 40;
+        draw_text(hdc, "Downloads", x, TITLE_H + 22, 420, 36, p.text, 28, true, false)?;
+        draw_text(
+            hdc,
+            "Game installs and updates are checked before launch.",
+            x,
+            TITLE_H + 62,
+            620,
+            24,
+            p.text_dim,
+            13,
+            false,
+            false,
+        )?;
+
+        let card = RECT {
+            left: x,
+            top: TITLE_H + 112,
+            right: WIN_W - 40,
+            bottom: TITLE_H + 400,
+        };
+        round_rect_path(hdc, &card, 20, p.bg_card)?;
+        round_rect_outline(hdc, &card, 20, p.border)?;
+        if draw_logo_bitmap(hdc, st.logo_bitmap, card.left + 28, card.top + 34, 76).is_err() {
+            draw_logo(hdc, card.left + 28, card.top + 34, 76, p.accent)?;
+        }
+        draw_text(
+            hdc,
+            "Flux Rec",
+            card.left + 126,
+            card.top + 35,
+            360,
+            34,
+            p.text,
+            22,
+            true,
+            false,
+        )?;
+        let state = if st.percent > 0 && st.percent < 100 {
+            "Installing or updating"
+        } else if st.install_required {
+            "Not installed yet"
+        } else if st.update_available {
+            "Update available"
+        } else if st.checking {
+            "Checking for updates"
+        } else if !st.check_error.is_empty() {
+            "Update check needs a retry"
+        } else {
+            "Up to date"
+        };
+        draw_text(
+            hdc,
+            state,
+            card.left + 126,
+            card.top + 74,
+            420,
+            24,
+            if st.update_available || st.install_required { p.accent } else { p.text_dim },
+            13,
+            true,
+            false,
+        )?;
+
+        let stage = if st.stage.is_empty() {
+            if st.install_required {
+                "Install starts when you choose Flux Rec in the Store."
+            } else {
+                "No active download. Flux Rec checks for updates when you launch it."
+            }
+        } else {
+            st.stage.as_str()
+        };
+        draw_text_ellipsis(
+            hdc,
+            stage,
+            card.left + 28,
+            card.top + 146,
+            card.right - card.left - 56,
+            28,
+            p.text,
+            15,
+        )?;
+        if st.percent > 0 && st.percent < 100 {
+            let bar = RECT {
+                left: card.left + 28,
+                top: card.top + 196,
+                right: card.right - 28,
+                bottom: card.top + 212,
+            };
+            round_rect_path(hdc, &bar, 12, p.track)?;
+            let fill = RECT {
+                left: bar.left,
+                top: bar.top,
+                right: bar.left + ((bar.right - bar.left) * st.percent as i32 / 100).max(12),
+                bottom: bar.bottom,
+            };
+            fill_gradient(hdc, &fill, p.accent, p.accent_dark)?;
+            draw_text(
+                hdc,
+                &format!("{}%", st.percent),
+                bar.left,
+                bar.bottom + 10,
+                120,
+                22,
+                p.text_dim,
+                12,
+                false,
+                false,
+            )?;
+        } else {
+            draw_text(
+                hdc,
+                if !st.detail.is_empty() { &st.detail } else { "Automatic updates are applied before the game starts." },
+                card.left + 28,
+                card.top + 188,
+                card.right - card.left - 56,
+                42,
+                p.text_dim,
+                12,
+                false,
+                false,
+            )?;
+        }
+
+        let primary = &rects.play;
+        let label = if st.install_required { "INSTALL FLUX REC" } else if st.update_available { "UPDATE & PLAY" } else { "LAUNCH FLUX REC" };
+        round_rect_path(hdc, primary, 14, if st.hover == Hot::Play { p.accent_dark } else { p.accent })?;
+        draw_text(hdc, label, primary.left + 8, primary.top + 12, primary.right - primary.left - 16, 26, COLORREF(0x00FFFFFF), 14, true, true)?;
+        for (r, label, hot) in [
+            (&rects.check_updates, "Check for updates", Hot::CheckForUpdates),
+            (&rects.open_folder, "Open game folder", Hot::OpenInstallFolder),
+        ] {
+            round_rect_path(hdc, r, 12, if st.hover == hot { p.bg_hover } else { p.bg_card })?;
+            round_rect_outline(hdc, r, 12, p.border)?;
+            draw_text(hdc, label, r.left + 8, r.top + 13, r.right - r.left - 16, 24, p.text, 12, true, true)?;
+        }
+        Ok(())
+    }
+
     unsafe fn draw_working_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
         let cx = SIDEBAR_W;
         // Center the progress in the content area.
@@ -3000,7 +3383,7 @@ mod imp {
                         repaint = st.anim_t % 2 == 0;
                     }
                     // Auto-advance the carousel every ~4s (50ms timer * 80).
-                    if st.view == View::Detail && !st.carousel_bitmaps.is_empty() {
+                    if matches!(st.view, View::Library | View::Detail) && !st.carousel_bitmaps.is_empty() {
                         st.anim_t = st.anim_t.wrapping_add(1);
                         st.carousel_tick += 1;
                         if st.carousel_tick >= 80 {
@@ -3110,8 +3493,16 @@ mod imp {
             Hot::Minimize => {
                 let _ = ShowWindow(hwnd, SW_MINIMIZE);
             }
+            Hot::NavStore => {
+                st.view = View::Store;
+                let _ = InvalidateRect(hwnd, None, false);
+            }
             Hot::NavLibrary => {
                 st.view = View::Library;
+                let _ = InvalidateRect(hwnd, None, false);
+            }
+            Hot::NavDownloads => {
+                st.view = View::Downloads;
                 let _ = InvalidateRect(hwnd, None, false);
             }
             Hot::NavSettings => {
@@ -3119,29 +3510,29 @@ mod imp {
                 let _ = InvalidateRect(hwnd, None, false);
             }
             Hot::Play => {
-                if st.view == View::Library {
+                if matches!(st.view, View::Store | View::Library | View::Downloads) {
                     start_play(hwnd, st);
                 }
             }
             Hot::DetailPlay => {
-                if st.view == View::Detail {
+                if matches!(st.view, View::Library | View::Detail) {
                     start_play(hwnd, st);
                 }
             }
             Hot::Card | Hot::Details => {
-                if st.view == View::Library {
+                if matches!(st.view, View::Store | View::Library) {
                     st.view = View::Detail;
                     let _ = InvalidateRect(hwnd, None, false);
                 }
             }
             Hot::Back => {
                 if st.view == View::Detail {
-                    st.view = View::Library;
+                    st.view = View::Store;
                     let _ = InvalidateRect(hwnd, None, false);
                 }
             }
             Hot::CarouselPrev => {
-                if st.view == View::Detail && !st.carousel_bitmaps.is_empty() {
+                if matches!(st.view, View::Library | View::Detail) && !st.carousel_bitmaps.is_empty() {
                     let n = st.carousel_bitmaps.len();
                     st.carousel_idx = (st.carousel_idx + n - 1) % n;
                     st.carousel_tick = 0;
@@ -3149,7 +3540,7 @@ mod imp {
                 }
             }
             Hot::CarouselNext => {
-                if st.view == View::Detail && !st.carousel_bitmaps.is_empty() {
+                if matches!(st.view, View::Library | View::Detail) && !st.carousel_bitmaps.is_empty() {
                     let n = st.carousel_bitmaps.len();
                     st.carousel_idx = (st.carousel_idx + 1) % n;
                     st.carousel_tick = 0;
@@ -3249,3 +3640,4 @@ mod imp {
         }
     }
 }
+

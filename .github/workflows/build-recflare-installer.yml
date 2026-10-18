@@ -1,9 +1,9 @@
-# Builds the zero-touch RecFlare-pipeline Flux Rec installer (game/installer)
+# Builds the Ripo Team branded Flux Rec installer (game/installer)
 # on Windows and publishes it as a prerelease asset. The ns host and Photon
 # App IDs are baked in at compile time from repository secrets, so they never
 # appear in the repo.
 
-name: Build RecFlare installer
+name: Build Ripo Team Launcher
 # v0.2.20 trigger
 # v0.2.19 trigger
 # v0.2.18 trigger
@@ -60,7 +60,7 @@ jobs:
           # skipped release creation in v0.1.4.
           gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --prerelease --title "Flux Rec setup (2025 client) v$ver" --notes "Flux Rec setup for the 2025 client. Includes the refreshed launcher and automatic update screens."
+            gh release create $tag --prerelease --title "Ripo Team Launcher — Flux Rec v$ver" --notes "Ripo Team Launcher setup for the 2025 Flux Rec client. Includes the refreshed setup, launcher, and automatic update screens."
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
           }
           gh release upload $tag "game\installer\target\release\FluxRec-Setup.exe" --clobber
@@ -74,5 +74,6 @@ jobs:
       - name: Upload setup.exe
         uses: actions/upload-artifact@v4
         with:
-          name: FluxRec-Setup-RecFlare
+          name: Ripo-Team-Launcher-Setup
           path: game/installer/target/release/FluxRec-Setup.exe
+

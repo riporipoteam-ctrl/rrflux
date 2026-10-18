@@ -1,4 +1,4 @@
-// Flux Rec Setup & Launcher — dark, branded progress UI.
+// Flux Rec Setup & Launcher — Ripo Team's light install and update flow.
 //
 // Full redesign:
 // - Borderless window, rounded corners, drop shadow, custom title bar
@@ -86,11 +86,11 @@ mod imp {
     type Silent = std::result::Result<(), ()>;
 
     // Window dimensions (client area == window area: WS_POPUP has no frame).
-    const SETUP_W: i32 = 1100;
-    const SETUP_H: i32 = 700;
-    const LAUNCH_W: i32 = 680;
-    const LAUNCH_H: i32 = 360;
-    const CORNER: i32 = 36; // round-rect ellipse diameter for the window
+    const SETUP_W: i32 = 1240;
+    const SETUP_H: i32 = 780;
+    const LAUNCH_W: i32 = 920;
+    const LAUNCH_H: i32 = 520;
+    const CORNER: i32 = 24; // round-rect ellipse diameter for the window
     const TITLE_H: i32 = 46;
 
     const TIMER_ID: usize = 1;
@@ -99,21 +99,20 @@ mod imp {
     // changed, which wasted CPU on slower PCs.
     const TIMER_MS: u32 = 100;
 
-    // Palette (COLORREF = 0x00BBGGRR).
-    // Neutral surfaces keep installation state readable at a glance.
-    const BG: COLORREF = COLORREF(0x001B110C); // #0C111B
-    const BG_TITLE: COLORREF = COLORREF(0x00231710); // #101723
-    const BG_SIDE: COLORREF = COLORREF(0x002B1D15); // #151D2B
-    const BG_CARD: COLORREF = COLORREF(0x0035251B); // #1B2535
-    const BLUE: COLORREF = COLORREF(0x00FFAB4A); // #4AABFF
-    const BLUE_LIGHT: COLORREF = COLORREF(0x00FFC889); // #89C8FF highlight
-    const BLUE_DIM: COLORREF = COLORREF(0x00593E27); // #273E59
-    const WHITE: COLORREF = COLORREF(0x00FBF7F4); // #F4F7FB primary text
-    const GRAY: COLORREF = COLORREF(0x00D3C3B7); // #B7C3D3 secondary text
-    const DIM: COLORREF = COLORREF(0x009A8373); // #73839A dim text
-    const TRACK: COLORREF = COLORREF(0x0045352A); // #2A3545 progress track
-    const BORDER: COLORREF = COLORREF(0x004C3A2C); // #2C3A4C card border
-    const GREEN: COLORREF = COLORREF(0x0093D462); // #62D493 checkmarks
+    // Palette (COLORREF = 0x00BBGGRR), shared with the light launcher shell.
+    const BG: COLORREF = COLORREF(0x00F8F6F3); // cool paper
+    const BG_TITLE: COLORREF = COLORREF(0x00FFFFFF);
+    const BG_SIDE: COLORREF = COLORREF(0x00FFFFFF);
+    const BG_CARD: COLORREF = COLORREF(0x00FFFFFF);
+    const BLUE: COLORREF = COLORREF(0x00FF9B2E); // Ripo blue, shared with the launcher shell
+    const BLUE_LIGHT: COLORREF = COLORREF(0x00FFB869);
+    const BLUE_DIM: COLORREF = COLORREF(0x00FFEEDC);
+    const WHITE: COLORREF = COLORREF(0x002D241E); // primary text
+    const GRAY: COLORREF = COLORREF(0x00675A50); // secondary text
+    const DIM: COLORREF = COLORREF(0x00978A7E); // muted text
+    const TRACK: COLORREF = COLORREF(0x00EAE4DE);
+    const BORDER: COLORREF = COLORREF(0x00DFD8D1);
+    const GREEN: COLORREF = COLORREF(0x005A8C2D);
     const PURE_WHITE: COLORREF = COLORREF(0x00FFFFFF); // actual white (on colored bg)
 
     // Setup sidebar steps: (title, subtitle).
@@ -163,6 +162,9 @@ mod imp {
         logo_bmp: HBITMAP,
         logo_w: i32,
         logo_h: i32,
+        team_logo_bmp: HBITMAP,
+        team_logo_w: i32,
+        team_logo_h: i32,
         f_big: HFONT,
         f_title: HFONT,
         f_word: HFONT,
@@ -245,6 +247,9 @@ mod imp {
             logo_bmp: HBITMAP::default(),
             logo_w: 0,
             logo_h: 0,
+            team_logo_bmp: HBITMAP::default(),
+            team_logo_w: 0,
+            team_logo_h: 0,
             f_big,
             f_title,
             f_word,
@@ -296,6 +301,11 @@ mod imp {
                 s.logo_bmp = bmp;
                 s.logo_w = w;
                 s.logo_h = h;
+                let (team_bmp, team_w, team_h) =
+                    create_png_dib(dc, crate::assets::RIPO_TEAM_LOGO_PNG);
+                s.team_logo_bmp = team_bmp;
+                s.team_logo_w = team_w;
+                s.team_logo_h = team_h;
                 let _ = ReleaseDC(hwnd, dc);
             }
         }
@@ -424,6 +434,50 @@ mod imp {
             }
         }
         (hbmp, w, ha as i32)
+    }
+
+    /// Build a premultiplied 32-bit DIB from the studio PNG mark.
+    unsafe fn create_png_dib(hdc: HDC, bytes: &[u8]) -> (HBITMAP, i32, i32) {
+        let Ok(image) = image::load_from_memory(bytes) else {
+            return (HBITMAP::default(), 0, 0);
+        };
+        let rgba = image.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        if width == 0 || height == 0 || width > i32::MAX as u32 || height > i32::MAX as u32 {
+            return (HBITMAP::default(), 0, 0);
+        }
+        let mut bmi = BITMAPINFO::default();
+        bmi.bmiHeader.biSize = 40;
+        bmi.bmiHeader.biWidth = width as i32;
+        bmi.bmiHeader.biHeight = -(height as i32);
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB.0;
+        let mut bits: *mut c_void = std::ptr::null_mut();
+        let hbmp = match CreateDIBSection(
+            hdc,
+            &bmi as *const BITMAPINFO,
+            DIB_RGB_COLORS,
+            &mut bits,
+            HANDLE(std::ptr::null_mut()),
+            0,
+        ) {
+            Ok(h) => h,
+            Err(_) => return (HBITMAP::default(), 0, 0),
+        };
+        if hbmp.is_invalid() || bits.is_null() {
+            return (HBITMAP::default(), 0, 0);
+        }
+        let dst = bits as *mut u8;
+        for (index, pixel) in rgba.pixels().enumerate() {
+            let alpha = pixel[3] as u32;
+            let offset = index * 4;
+            *dst.add(offset) = ((pixel[2] as u32 * alpha) / 255) as u8;
+            *dst.add(offset + 1) = ((pixel[1] as u32 * alpha) / 255) as u8;
+            *dst.add(offset + 2) = ((pixel[0] as u32 * alpha) / 255) as u8;
+            *dst.add(offset + 3) = pixel[3];
+        }
+        (hbmp, width as i32, height as i32)
     }
 
     fn loword(v: isize) -> i32 {
@@ -615,6 +669,9 @@ mod imp {
                     if !s.logo_bmp.is_invalid() {
                         let _ = DeleteObject(s.logo_bmp);
                     }
+                    if !s.team_logo_bmp.is_invalid() {
+                        let _ = DeleteObject(s.team_logo_bmp);
+                    }
                     destroy_fonts(ptr);
                     let _ = Box::from_raw(ptr);
                     SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
@@ -738,9 +795,26 @@ mod imp {
 
     /// Draw the real Flux Rec logo with per-pixel alpha.
     unsafe fn draw_logo(hdc: HDC, s: &GuiState, x: i32, y: i32, size: i32) {
-        if s.logo_bmp.is_invalid() || s.logo_w <= 0 || s.logo_h <= 0 || size <= 0 {
+        draw_bitmap(hdc, s.logo_bmp, s.logo_w, s.logo_h, x, y, size, BLUE);
+    }
+
+    unsafe fn draw_team_logo(hdc: HDC, s: &GuiState, x: i32, y: i32, size: i32) {
+        draw_bitmap(hdc, s.team_logo_bmp, s.team_logo_w, s.team_logo_h, x, y, size, BLUE);
+    }
+
+    unsafe fn draw_bitmap(
+        hdc: HDC,
+        bitmap: HBITMAP,
+        width: i32,
+        height: i32,
+        x: i32,
+        y: i32,
+        size: i32,
+        fallback: COLORREF,
+    ) {
+        if bitmap.is_invalid() || width <= 0 || height <= 0 || size <= 0 {
             // Fallback: plain blue ring so the layout never looks broken.
-            let pen = CreatePen(PS_SOLID, 6, BLUE);
+            let pen = CreatePen(PS_SOLID, 6, fallback);
             if !pen.is_invalid() {
                 let old_p = SelectObject(hdc, pen);
                 let old_b = SelectObject(hdc, GetStockObject(NULL_BRUSH));
@@ -755,14 +829,14 @@ mod imp {
         if mem.is_invalid() {
             return;
         }
-        let old = SelectObject(mem, s.logo_bmp);
+        let old = SelectObject(mem, bitmap);
         let bf = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
             BlendFlags: 0,
             SourceConstantAlpha: 255,
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
-        let _ = AlphaBlend(hdc, x, y, size, size, mem, 0, 0, s.logo_w, s.logo_h, bf);
+        let _ = AlphaBlend(hdc, x, y, size, size, mem, 0, 0, width, height, bf);
         let _ = SelectObject(mem, old);
         let _ = DeleteDC(mem);
     }
@@ -797,8 +871,9 @@ mod imp {
             GuiMode::Setup => "Ripo Team Launcher Setup",
             GuiMode::Launcher => "Ripo Team Launcher",
         };
+        draw_team_logo(hdc, s, 18, 9, 28);
         let rc = RECT {
-            left: 20,
+            left: 56,
             top: 0,
             right: w - 100,
             bottom: TITLE_H,
@@ -899,7 +974,7 @@ mod imp {
         draw_titlebar(hdc, s);
         match s.mode {
             GuiMode::Setup => draw_setup(hdc, s),
-            GuiMode::Launcher => draw_launcher(hdc, s),
+            GuiMode::Launcher => draw_launcher_redesigned(hdc, s),
         }
     }
 
@@ -910,7 +985,7 @@ mod imp {
     const SIDE_W: i32 = 300;
 
     unsafe fn draw_setup(hdc: HDC, s: &GuiState) {
-        draw_setup_content(hdc, s);
+        draw_setup_redesigned(hdc, s);
     }
 
     unsafe fn draw_setup_sidebar(hdc: HDC, s: &GuiState) {
@@ -1224,8 +1299,181 @@ mod imp {
         );
     }
 
+    unsafe fn draw_setup_redesigned(hdc: HDC, s: &GuiState) {
+        let left = RECT { left: 28, top: 68, right: 356, bottom: s.win_h - 28 };
+        rr_fill(hdc, left.left, left.top, left.right - left.left, left.bottom - left.top, 24, BLUE);
+        draw_team_logo(hdc, s, left.left + 24, left.top + 26, 62);
+        text_at(hdc, s.f_h2, PURE_WHITE, "Ripo Team", left.left + 98, left.top + 34);
+        text_at(hdc, s.f_tiny, BLUE_DIM, "GAME LAUNCHER", left.left + 98, left.top + 59);
+        rr_fill(hdc, left.left + 94, left.top + 132, 140, 140, 28, PURE_WHITE);
+        draw_logo(hdc, s, left.left + 124, left.top + 162, 80);
+        draw_wordmark(hdc, s, (left.left + left.right) / 2, left.top + 294);
+        text_center(
+            hdc,
+            s.f_tiny,
+            PURE_WHITE,
+            "2025 CLIENT BUILD",
+            (left.left + left.right) / 2,
+            left.top + 334,
+            left.right - left.left - 44,
+            20,
+        );
+        text_block(
+            hdc,
+            s.f_body,
+            PURE_WHITE,
+            "Explore rooms, play with friends and create your own worlds. Flux Rec is the first game in the Ripo Team launcher.",
+            RECT {
+                left: left.left + 28,
+                top: left.top + 386,
+                right: left.right - 28,
+                bottom: left.top + 482,
+            },
+        );
+        text_at(
+            hdc,
+            s.f_tiny,
+            BLUE_DIM,
+            "RIPO TEAM  ·  FLUX REC",
+            left.left + 28,
+            left.bottom - 35,
+        );
+
+        let x = 384;
+        let right = s.win_w - 28;
+        text_at(hdc, s.f_tiny, BLUE, "SETUP  /  FLUX REC", x, 72);
+        text_at(hdc, s.f_title, WHITE, "Install Flux Rec", x, 92);
+        text_at(
+            hdc,
+            s.f_body,
+            GRAY,
+            "The launcher downloads and verifies the 2025 game files for you.",
+            x,
+            132,
+        );
+
+        let states = step_states(s.percent, s.finished);
+        let gap = 12;
+        let step_w = (right - x - gap * 3) / 4;
+        for (i, (title, sub)) in STEPS.iter().enumerate() {
+            let sx = x + i as i32 * (step_w + gap);
+            rr_fill(hdc, sx, 169, step_w, 70, 14, BG_CARD);
+            rr_outline(hdc, sx, 169, step_w, 70, 14, BORDER);
+            let state = states.get(i).copied().unwrap_or(StepState::Todo);
+            draw_step(hdc, s, sx + 24, 184, (i + 1) as i32, title, sub, state);
+        }
+
+        let card = RECT { left: x, top: 260, right, bottom: s.win_h - 62 };
+        rr_fill(hdc, card.left, card.top, card.right - card.left, card.bottom - card.top, 22, BG_CARD);
+        rr_outline(hdc, card.left, card.top, card.right - card.left, card.bottom - card.top, 22, BORDER);
+        let divider = card.left + 374;
+        let pen = CreatePen(PS_SOLID, 1, BORDER);
+        if !pen.is_invalid() {
+            let old = SelectObject(hdc, pen);
+            let _ = MoveToEx(hdc, divider, card.top + 24, None);
+            let _ = LineTo(hdc, divider, card.bottom - 24);
+            let _ = SelectObject(hdc, old);
+            let _ = DeleteObject(pen);
+        }
+
+        draw_logo(hdc, s, card.left + 24, card.top + 30, 72);
+        text_at(hdc, s.f_h2, WHITE, "Flux Rec", card.left + 112, card.top + 40);
+        text_at(hdc, s.f_tiny, BLUE, "RIPO TEAM  /  2025 GAME BUILD", card.left + 112, card.top + 68);
+        text_block(
+            hdc,
+            s.f_body,
+            GRAY,
+            "Hang out with friends, play community games and build rooms together.",
+            RECT {
+                left: card.left + 26,
+                top: card.top + 132,
+                right: divider - 24,
+                bottom: card.top + 220,
+            },
+        );
+        for (i, label) in ["Automatic updates", "Verified game files", "Ripo Team launcher"]
+            .iter()
+            .enumerate()
+        {
+            let y = card.top + 250 + i as i32 * 40;
+            rr_fill(hdc, card.left + 26, y, 18, 18, 9, BLUE_DIM);
+            text_center(hdc, s.f_tiny, BLUE, "✓", card.left + 35, y - 1, 18, 18);
+            text_at(hdc, s.f_small, GRAY, label, card.left + 56, y - 2);
+        }
+
+        let activity_x = divider + 28;
+        let activity_w = card.right - activity_x - 28;
+        text_at(hdc, s.f_tiny, BLUE, "INSTALL ACTIVITY", activity_x, card.top + 28);
+        let status = if s.finished {
+            "Setup complete"
+        } else if s.stage.is_empty() {
+            "Preparing installation…"
+        } else {
+            s.stage.as_str()
+        };
+        text_ellipsis(
+            hdc,
+            s.f_h2,
+            WHITE,
+            status,
+            RECT {
+                left: activity_x,
+                top: card.top + 56,
+                right: activity_x + activity_w - 84,
+                bottom: card.top + 92,
+            },
+        );
+        let percent = format!("{}%", s.percent);
+        let _ = SelectObject(hdc, s.f_title);
+        let percent_w = text_width(hdc, &percent);
+        text_at(hdc, s.f_title, if s.finished { GREEN } else { BLUE }, &percent, card.right - 28 - percent_w, card.top + 49);
+        let bar_x = activity_x;
+        let bar_y = card.top + 118;
+        if s.percent == 0 && !s.finished {
+            draw_shimmer_bar(hdc, s, bar_x, bar_y, activity_w, 14);
+        } else {
+            draw_progress_bar(hdc, bar_x, bar_y, activity_w, 14, s.percent);
+        }
+        text_at(
+            hdc,
+            s.f_tiny,
+            GRAY,
+            if s.finished { "Files verified and ready" } else { "Download, install and verification continue automatically" },
+            activity_x,
+            bar_y + 27,
+        );
+        if !s.detail.is_empty() {
+            text_block(
+                hdc,
+                s.f_small,
+                GRAY,
+                &s.detail,
+                RECT {
+                    left: activity_x,
+                    top: bar_y + 66,
+                    right: card.right - 28,
+                    bottom: card.bottom - 74,
+                },
+            );
+        } else {
+            text_block(
+                hdc,
+                s.f_small,
+                GRAY,
+                "You can minimize this window while setup continues. The launcher checks for updates before each game launch.",
+                RECT {
+                    left: activity_x,
+                    top: bar_y + 66,
+                    right: card.right - 28,
+                    bottom: card.bottom - 74,
+                },
+            );
+        }
+        text_at(hdc, s.f_tiny, DIM, "Ripo Team Launcher  ·  Flux Rec", x, s.win_h - 38);
+    }
+
     // ------------------------------------------------------------------
-    // Launcher mode: split-pane automatic update console
+    // Launcher mode: update status and game launch view
     // ------------------------------------------------------------------
 
     unsafe fn draw_launcher(hdc: HDC, s: &GuiState) {
@@ -1400,4 +1648,160 @@ mod imp {
         let footer = format!("Launcher v{}  ·  2025 game build", env!("CARGO_PKG_VERSION"));
         text_at(hdc, s.f_tiny, DIM, &footer, content_x + 24, s.win_h - 31);
     }
+
+    unsafe fn draw_launcher_redesigned(hdc: HDC, s: &GuiState) {
+        let panel = RECT {
+            left: 28,
+            top: TITLE_H + 20,
+            right: s.win_w - 28,
+            bottom: s.win_h - 24,
+        };
+        rr_fill(
+            hdc,
+            panel.left,
+            panel.top,
+            panel.right - panel.left,
+            panel.bottom - panel.top,
+            22,
+            BG_CARD,
+        );
+        rr_outline(
+            hdc,
+            panel.left,
+            panel.top,
+            panel.right - panel.left,
+            panel.bottom - panel.top,
+            22,
+            BORDER,
+        );
+
+        let brand_w = 258;
+        rr_fill(
+            hdc,
+            panel.left,
+            panel.top,
+            brand_w,
+            panel.bottom - panel.top,
+            22,
+            BLUE,
+        );
+        draw_team_logo(hdc, s, panel.left + 24, panel.top + 24, 46);
+        text_at(hdc, s.f_h2, PURE_WHITE, "Ripo Team", panel.left + 82, panel.top + 29);
+        text_at(hdc, s.f_tiny, BLUE_DIM, "GAME LAUNCHER", panel.left + 82, panel.top + 52);
+        rr_fill(hdc, panel.left + 75, panel.top + 112, 108, 108, 24, PURE_WHITE);
+        draw_logo(hdc, s, panel.left + 95, panel.top + 132, 68);
+        text_center(
+            hdc,
+            s.f_title,
+            PURE_WHITE,
+            "Flux Rec",
+            panel.left + brand_w / 2,
+            panel.top + 246,
+            brand_w - 40,
+            42,
+        );
+        text_center(
+            hdc,
+            s.f_tiny,
+            BLUE_DIM,
+            "2025 GAME BUILD",
+            panel.left + brand_w / 2,
+            panel.top + 292,
+            brand_w - 40,
+            22,
+        );
+        text_block(
+            hdc,
+            s.f_small,
+            PURE_WHITE,
+            "Updates are verified before your game starts.",
+            RECT {
+                left: panel.left + 30,
+                top: panel.bottom - 94,
+                right: panel.left + brand_w - 30,
+                bottom: panel.bottom - 44,
+            },
+        );
+
+        let x = panel.left + brand_w + 34;
+        let right = panel.right - 32;
+        let width = right - x;
+        text_at(hdc, s.f_tiny, BLUE, "FLUX REC  /  AUTO UPDATE", x, panel.top + 28);
+        text_at(hdc, s.f_title, WHITE, "Getting your game ready", x, panel.top + 54);
+        let state = if s.finished {
+            "All files are ready. Starting Flux Rec…"
+        } else if s.stage.is_empty() {
+            "Checking the latest game version…"
+        } else {
+            s.stage.as_str()
+        };
+        text_ellipsis(
+            hdc,
+            s.f_h2,
+            GRAY,
+            state,
+            RECT {
+                left: x,
+                top: panel.top + 112,
+                right,
+                bottom: panel.top + 148,
+            },
+        );
+        if !s.detail.is_empty() {
+            text_ellipsis(
+                hdc,
+                s.f_small,
+                DIM,
+                &s.detail,
+                RECT {
+                    left: x,
+                    top: panel.top + 153,
+                    right,
+                    bottom: panel.top + 180,
+                },
+            );
+        } else {
+            text_at(hdc, s.f_small, DIM, "The game will launch when the update check finishes.", x, panel.top + 154);
+        }
+
+        let bar_y = panel.top + 218;
+        let percent = format!("{}%", s.percent);
+        let _ = SelectObject(hdc, s.f_h2);
+        let percent_w = text_width(hdc, &percent);
+        text_at(hdc, s.f_h2, BLUE, &percent, right - percent_w, bar_y - 33);
+        if s.percent == 0 && !s.finished {
+            draw_shimmer_bar(hdc, s, x, bar_y, width, 14);
+        } else {
+            draw_progress_bar(hdc, x, bar_y, width, 14, s.percent);
+        }
+        text_at(
+            hdc,
+            s.f_tiny,
+            DIM,
+            if s.finished { "Final verification complete" } else { "Download  ·  Install  ·  Verify" },
+            x,
+            bar_y + 24,
+        );
+
+        let step_y = panel.top + 292;
+        for (i, label) in ["CHECK", "UPDATE", "LAUNCH"].iter().enumerate() {
+            let sx = x + i as i32 * 148;
+            let active = s.finished || s.percent >= [0, 35, 80][i];
+            rr_fill(hdc, sx, step_y, 132, 38, 12, if active { BLUE_DIM } else { BG_SIDE });
+            text_center(
+                hdc,
+                s.f_tiny,
+                if active { BLUE } else { DIM },
+                label,
+                sx + 66,
+                step_y + 9,
+                120,
+                20,
+            );
+        }
+
+        let footer = format!("Ripo Team Launcher  v{}", env!("CARGO_PKG_VERSION"));
+        text_at(hdc, s.f_tiny, DIM, &footer, x, panel.bottom - 36);
+    }
 }
+

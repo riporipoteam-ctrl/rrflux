@@ -182,6 +182,14 @@ export interface RewardBalanceModificationPayload {
 export interface ConsumableMappingPayload {
 	Id: number
 	ConsumableItemDesc: string
+	/** 2025 clients use these fields to load the newly-unlocked backpack model immediately. */
+	ConsumableItemId?: number
+	ConfigurationData?: string | null
+	ConfigurationVersion?: number
+	ConsumableToolName?: string | null
+	IsRRO?: boolean
+	RoomieCategory?: number
+	ThumbnailImageName?: string | null
 	Count: number
 	InitialCount: number
 	/** ISO-8601. */
@@ -561,6 +569,16 @@ export interface GiftPackagePayload {
 	Id: number | null
 	FromPlayerId: number | null
 	ConsumableItemDesc: string
+	/** Optional 2025 client model/config metadata for the consumable reveal. */
+	ConsumableItemId?: number
+	ConfigurationData?: string | null
+	ConfigurationVersion?: number
+	ConsumableToolName?: string | null
+	IsRRO?: boolean
+	RoomieCategory?: number
+	ThumbnailImageName?: string | null
+	PackageType?: number
+	CustomAvatarItemId?: string | null
 	AvatarItemType: number | null
 	AvatarItemDesc: string
 	EquipmentPrefabName: string
@@ -600,3 +618,4 @@ export interface RewardSelectionPayload {
  * the frame. Send `{}`; anything else is ignored.
  */
 export type NoPayload = Record<string, never>
+
