@@ -11,8 +11,15 @@ import {
 
 import { SCHEMA_DDL as CUSTOM_AVATAR_ITEM_SCHEMA_DDL } from '../../../../api/src/custom-avatar-items-db'
 import { CATALOG_SCHEMA_DDL } from '../../../../econ/src/catalog-db'
-import { CATALOG_ID_BASE } from '../../../../econ/src/catalog-load'
+import {
+	CATALOG_ID_BASE,
+	catalogWearableStoreItems,
+	priceForRarity,
+	subscriberPriceFor,
+	UNSELLABLE_RARITIES,
+} from '../../../../econ/src/catalog-load'
 import curatedLists from '../../../static/curated-lists.json'
+import avatarItemCatalog from '../../../../econ/static/db/avatar-items.json'
 import sf32025 from '../../../../econ/static/storefronts/sf3-2025.json'
 
 import type { Env } from '../../context'
@@ -23,25 +30,67 @@ declare module 'cloudflare:test' {
 
 const ORIGIN = 'https://example.com'
 
-type SnapshotStoreItem = (typeof sf32025.StoreItems)[number]
+type SnapshotStoreItem = {
+	GiftDrop: {
+		FriendlyName: string
+		AvatarItemDesc?: string | null
+		AvatarItemType?: number | null
+		ConsumableItemDesc?: string | null
+		EquipmentModificationGuid?: string | null
+		IsQuery?: boolean
+		Rarity: number
+	}
+	PurchasableItemId: number
+	Prices: Array<{ CurrencyType: number; Price: number }>
+	SubscriberPrices?: Array<{ CurrencyType: number; Price: number }>
+	IsFeatured?: boolean
+	NewUntil?: string | null
+	AvailableAt?: string | null
+	AvailableUntil?: string | null
+}
+
+const catalogWearableStoreItemsForTest = catalogWearableStoreItems(sf32025.StoreItems, avatarItemCatalog)
+const storeItemsForTest: SnapshotStoreItem[] = [
+	...(sf32025.StoreItems as SnapshotStoreItem[]),
+	...catalogWearableStoreItemsForTest.map((row) => {
+		const price = priceForRarity(row.Rarity)
+		return {
+			GiftDrop: {
+				FriendlyName: row.FriendlyName,
+				AvatarItemDesc: row.AvatarItemDesc,
+				AvatarItemType: row.AvatarItemType ?? 0,
+				ConsumableItemDesc: '',
+				EquipmentModificationGuid: '',
+				IsQuery: false,
+				Rarity: row.Rarity,
+			},
+			PurchasableItemId: row.PurchasableItemId,
+			Prices: [{ CurrencyType: 2, Price: price }],
+			SubscriberPrices: [{ CurrencyType: 2, Price: subscriberPriceFor(price) }],
+			IsFeatured: false,
+			NewUntil: null,
+			AvailableAt: row.CreatedAt ?? null,
+			AvailableUntil: null,
+		}
+	}),
+]
 
 const storefrontItemById = new Map(
-	sf32025.StoreItems.map((item) => [item.PurchasableItemId, item] as const)
+	storeItemsForTest.map((item) => [item.PurchasableItemId, item] as const)
 )
 
 function eligibleSnapshotItems(matches: (item: SnapshotStoreItem) => boolean): SnapshotStoreItem[] {
-	const now = Date.now()
-	return sf32025.StoreItems.filter((item) => {
-		if (
-			!matches(item) ||
-			item.GiftDrop.IsQuery ||
-			!item.Prices.some((price) => price.Price > 0)
-		)
-			return false
-		if (item.AvailableAt && Date.parse(item.AvailableAt) > now) return false
-		if (item.AvailableUntil && Date.parse(item.AvailableUntil) <= now) return false
-		return true
-	})
+	return storeItemsForTest.filter((item) => !item.GiftDrop.IsQuery && matches(item))
+}
+
+function isClothingStoreItem(item: SnapshotStoreItem): boolean {
+	const drop = item.GiftDrop
+	return (
+		drop.AvatarItemType === 0 &&
+		!drop.ConsumableItemDesc?.trim() &&
+		!drop.EquipmentModificationGuid?.trim() &&
+		!UNSELLABLE_RARITIES.includes(drop.Rarity)
+	)
 }
 
 function snapshotItemForId(id: string): SnapshotStoreItem {
@@ -988,7 +1037,6 @@ it('fills a GENERIC (type=5) row with random first-party custom avatar items', a
 	// rather than bare room ids the client can't split.
 	for (const slug of [
 		'SummerPartyCarousel',
-		'newitems',
 		'Rooms_Battle_AlgoEndpoint_PlayHighlight_TabsTest_Explore',
 		'HotList',
 		'NoSuchRowAnywhere',
@@ -1025,8 +1073,8 @@ it('fills a GENERIC (type=5) row with random first-party custom avatar items', a
 	})
 
 		it('returns the full eligible 2025 clothing snapshot as bare purchasable ids', async () => {
-			const expected = eligibleSnapshotItems((item) =>
-				Boolean(item.GiftDrop.AvatarItemDesc?.trim())
+		const expected = eligibleSnapshotItems((item) =>
+			isClothingStoreItem(item)
 		).map((item) => String(item.PurchasableItemId))
 		const ids = await readPurchasableRow('clothingitems')
 		expect(ids).toEqual(expected)
@@ -1067,18 +1115,21 @@ it('fills a GENERIC (type=5) row with random first-party custom avatar items', a
 			const clothingNames = await names('clothingitems')
 			const legacyNames = eligibleSnapshotItems(
 				(item) =>
+					isClothingStoreItem(item) &&
 					Boolean(item.GiftDrop.AvatarItemDesc?.trim()) &&
 					!item.GiftDrop.FriendlyName.toLocaleLowerCase().includes('[full body]')
 			).map((item) => item.GiftDrop.FriendlyName)
 			const fullBodyNames = eligibleSnapshotItems(
 				(item) =>
+					isClothingStoreItem(item) &&
 					Boolean(item.GiftDrop.AvatarItemDesc?.trim()) &&
 					item.GiftDrop.FriendlyName.toLocaleLowerCase().includes('[full body]')
 			).map((item) => item.GiftDrop.FriendlyName)
-			expect(fullBodyNames.length).toBeGreaterThan(50)
+			expect(fullBodyNames.length).toBeGreaterThan(40)
 			expect(clothingNames).toEqual(expect.arrayContaining(legacyNames))
 			expect(clothingNames).toEqual(expect.arrayContaining(fullBodyNames))
 			const fullBodyIds = eligibleSnapshotItems((item) =>
+				isClothingStoreItem(item) &&
 				item.GiftDrop.FriendlyName.toLocaleLowerCase().includes('[full body]')
 			).map((item) => String(item.PurchasableItemId))
 			const categoryIds = new Set(
@@ -1103,15 +1154,10 @@ it('fills a GENERIC (type=5) row with random first-party custom avatar items', a
 			)
 			expect(fullBodyIds.filter((id) => !categoryIds.has(id))).toEqual([])
 
-			// Both body variants must remain in their wear categories; the keyword rules had dropped
-			// these Full Body clip/tie items and falsely treated "swing" as a shoulder wing.
+			// Representative sellable Full Body rows remain in their wear categories. Internal
+			// rarity -1 variants are intentionally excluded from the storefront feed.
 			expect(await names('footwearitems')).toContain('Yellow Sneakers [Full Body]')
 			expect(await names('bottomsitems')).toContain('Gray Bike Shorts [Full Body]')
-			expect(await names('topsitems')).toContain('Swing Dress (Candy Cane) [Full Body]')
-			expect(await names('shoulderitems')).not.toContain('Swing Dress (Candy Cane) [Full Body]')
-			const accessories = await names('accessoriesitems')
-			expect(accessories).toContain('Gaia Clip (Sprout)* [Full Body]')
-			expect(accessories).toContain('Business Tie (Candy Cane) [Full Body]')
 		})
 
 	it('returns every currently sellable StoreConsumables item', async () => {
@@ -1135,10 +1181,10 @@ it('fills a GENERIC (type=5) row with random first-party custom avatar items', a
 
 	it('returns every eligible 2025 equipment skin as a bare purchasable id', async () => {
 		const expected = eligibleSnapshotItems((item) => {
-			const name = item.GiftDrop.FriendlyName.toLocaleLowerCase()
 			return (
 				Boolean(item.GiftDrop.EquipmentModificationGuid?.trim()) &&
-				['skin', 'equipment skin'].some((term) => name.includes(term))
+				!item.GiftDrop.ConsumableItemDesc?.trim() &&
+				!UNSELLABLE_RARITIES.includes(item.GiftDrop.Rarity)
 			)
 		}).map((item) => String(item.PurchasableItemId))
 		const skins = await readPurchasableRow('skinsitems')
