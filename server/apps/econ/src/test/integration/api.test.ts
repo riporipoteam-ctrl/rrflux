@@ -2499,6 +2499,9 @@ describe('econ endpoints', () => {
 			definitions.find((definition) => definition.FriendlyName === 'Assorted Donuts')
 				?.ThumbnailImageName
 		).toBe('store-backpack-food-v2.png')
+		expect(
+			definitions.find((definition) => definition.FriendlyName === 'Red Apples')?.ThumbnailImageName
+		).toBe('store-backpack-food-v2.png')
 
 		const potion = definitions.find(
 			(definition) => definition.FriendlyName === 'Blue Pulse Potion'
@@ -2509,6 +2512,10 @@ describe('econ endpoints', () => {
 		const form = new URLSearchParams()
 		form.append('descriptors', apple.ConsumableItemDesc)
 		form.append('descriptors', potion.ConsumableItemDesc)
+		form.append(
+			'descriptors',
+			definitions.find((definition) => definition.FriendlyName === 'Red Apples')!.ConsumableItemDesc
+		)
 		form.append('descriptors', 'not-a-real-consumable')
 		const bulkResponse = await exports.default.fetch(`${ORIGIN}/api/consumables/v1/query/bulk`, {
 			method: 'POST',
@@ -2520,6 +2527,8 @@ describe('econ endpoints', () => {
 		expect(resolved.map((definition) => definition.ConsumableItemDesc)).toEqual([
 			apple.ConsumableItemDesc,
 			potion.ConsumableItemDesc,
+			definitions.find((definition) => definition.FriendlyName === 'Red Apples')!
+				.ConsumableItemDesc,
 		])
 		expect(
 			resolved.find((definition) => definition.ConsumableItemDesc === apple.ConsumableItemDesc)
@@ -2527,6 +2536,13 @@ describe('econ endpoints', () => {
 		expect(
 			resolved.find((definition) => definition.ConsumableItemDesc === potion.ConsumableItemDesc)
 		).toMatchObject({ ThumbnailImageName: 'store-backpack-potion-v2.png' })
+		expect(
+			resolved.find(
+				(definition) =>
+					definition.ConsumableItemDesc ===
+					definitions.find((entry) => entry.FriendlyName === 'Red Apples')!.ConsumableItemDesc
+			)
+		).toMatchObject({ ThumbnailImageName: 'store-backpack-food-v2.png' })
 	})
 
 	test('POST /api/consumables/v1/consume reduces the count and deletes the row at zero', async () => {
