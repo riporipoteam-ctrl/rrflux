@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "../Utils/globals.h"
 
 namespace RR::Methods::Referee {
