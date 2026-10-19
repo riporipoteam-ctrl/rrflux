@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "../Utils/globals.h"
 
 namespace RR::Methods::Referee {
@@ -82,6 +82,16 @@ namespace RR::Methods::PhotonVoice {
 	uintptr_t PhotonHandler_OnJoinedRoom = 0x75A7B60;
 	uintptr_t PhotonVoiceNetwork_GetInstance = 0x75FEB30;
 	uintptr_t PhotonVoiceNetwork_ConnectAndJoinRoom = 0x75FB160;
+}
+
+// PlayerChat on build 20250718.01. LocalSendChatMessage starts the outgoing request coroutine,
+// while OKOBCPLDFJM is the existing in-world bubble path used for messages received from others.
+// The broadcast handler intentionally skips the local sender, so route accepted local sends through
+// that same bubble path after the normal send method has run.
+namespace RR::Methods::PlayerChat {
+	uintptr_t LocalSendChatMessage = 0x142B360;
+	uintptr_t ShowChatBubble = 0x142BB30; // OKOBCPLDFJM(string, ChatType, bool)
+	constexpr std::ptrdiff_t SendCoroutine = 0xF8; // UnityEngine.Coroutine field on PlayerChat
 }
 
 // Photon transport encryption.
@@ -301,3 +311,4 @@ namespace RR::Offsets::Tachyon {
 	constexpr int       Class_StaticFields = 0x90;  // Il2CppClass -> static field block
 	constexpr int       Static_ServerKeyXml = 0x08; // DMIBBCKIGCG.KBANIKNNKKD (the <RSAKeyValue> XML)
 }
+
