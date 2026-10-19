@@ -1,4 +1,7 @@
-﻿#pragma once
+Warning: truncated output (original token count: 16787)
+Total output lines: 1247
+
+#pragma once
 #include "../Methods.h"
 #include "../Config.h"
 #include "../../Utils/scan.h"
@@ -389,511 +392,7 @@ void CheatQuit_H(void* self, void* mi) {
 // lives. Calling the original is safe -- the check only compares; the POST that hangs is issued by
 // the CALLER once the check returns true. It is still wrapped in __try, because this method's entry
 // is prologue-stolen (see RR::Methods::AntiCheat::CheckForDUIDMismatch) and the trampoline is the
-// one part of this hook that depends on MinHook reconstructing that correctly.
-// ---------------------------------------------------------------------------------------------
-bool (*DuidMismatch_O)(void*, Il2cppString**, void*);
-bool DuidMismatch_H(void* self, Il2cppString** stored, void* mi) {
-	bool orig = false;
-	Il2cppString* got = nullptr;
-	__try { orig = DuidMismatch_O(self, &got, mi); }
-	__except (EXCEPTION_EXECUTE_HANDLER) { orig = false; got = nullptr; }
-
-	// Log the first call, and separately the first genuine mismatch -- the mismatch is the event worth
-	// seeing but can happen long after the first call. Bounded at two lines either way; this runs on
-	// CheatManager's own schedule and must not become per-frame chatter.
-	static bool loggedOnce = false, loggedMismatch = false;
-	if (!loggedOnce || (orig && !loggedMismatch)) {
-		loggedOnce = true;
-		if (orig) loggedMismatch = true;
-		__try {
-			char* s = got ? ReadIl2CppString(got) : nullptr;
-			PatchLog("[DUID] CheatManager.CheckForDUIDMismatch original=%d stored=\"%s\" -> %s",
-				orig ? 1 : 0, s ? s : "<null>",
-				RR::Config::SuppressDuidMismatch ? "forcing FALSE (suppressed)" : "passing through");
-			if (s) delete[] s;
-		}
-		__except (EXCEPTION_EXECUTE_HANDLER) {}
-	}
-
-	if (!RR::Config::SuppressDuidMismatch) {
-		if (stored) *stored = got;
-		return orig;
-	}
-	if (stored) *stored = nullptr;
-	return false;
-}
-
-// ---------------------------------------------------------------------------------------------
-// Rec Room shutdown API tracers. See RR::Methods::AppLifecycle.
-//
-// FatalApplicationQuit(int, string) is the prize: it is handed the reason as a plain string, so this
-// turns "why did it quit" into a single log line instead of another stack walk. All static il2cpp
-// methods, so MethodInfo* is the LAST argument.
-// ---------------------------------------------------------------------------------------------
-void (*TryQuit0_O)(void*);
-void TryQuit0_H(void* mi) {
-	__try { PatchLog("[Shutdown] TryApplicationQuit()"); LogStack("Shutdown"); }
-	__except (EXCEPTION_EXECUTE_HANDLER) {}
-	TryQuit0_O(mi);
-}
-
-void (*TryQuit1_O)(int32_t, void*);
-void TryQuit1_H(int32_t code, void* mi) {
-	__try { PatchLog("[Shutdown] TryApplicationQuit(code=%d)", code); LogStack("Shutdown"); }
-	__except (EXCEPTION_EXECUTE_HANDLER) {}
-	TryQuit1_O(code, mi);
-}
-
-void (*FatalQuit_O)(int32_t, Il2cppString*, void*);
-void FatalQuit_H(int32_t code, Il2cppString* msg, void* mi) {
-	__try {
-		char* m = msg ? ReadIl2CppString(msg) : nullptr;
-		PatchLog("[Shutdown] FatalApplicationQuit(code=%d, msg=\"%s\")", code, m ? m : "<null>");
-		if (m) delete[] m;
-		LogStack("Shutdown");
-	}
-	__except (EXCEPTION_EXECUTE_HANDLER) {}
-	FatalQuit_O(code, msg, mi);
-}
-
-void* (*Logout_O)(void*);
-void* Logout_H(void* mi) {
-	__try { PatchLog("[Shutdown] LogoutToBootScene()"); LogStack("Shutdown"); }
-	__except (EXCEPTION_EXECUTE_HANDLER) {}
-	return Logout_O(mi);
-}
-
-void* (*LogoutAsync_O)(void*);
-void* LogoutAsync_H(void* mi) {
-	__try { PatchLog("[Shutdown] LogoutToBootSceneAsync()"); LogStack("Shutdown"); }
-	__except (EXCEPTION_EXECUTE_HANDLER) {}
-	return LogoutAsync_O(mi);
-}
-
-// ---------------------------------------------------------------------------------------------
-// Image content-signature bypass.  See RR::Methods::ImageSignature in Methods.h for the full
-// reasoning. Short version: mirrored images still carry rec.net's original `content-signature`
-// RSA header, the client verifies it against a baked-in public key, and no mirror can ever satisfy
-// it -- so the check is unsatisfiable rather than merely failing, and is dead weight for archival.
-//
-// Why this blocks ROOM LOAD and not just artwork: image fetches and the room save-data blob share
-// one request pump (CBACIMLIBPF.KOMEOKGFOBP, which drains a Queue). In the failing run every svc=7
-// request issued BEFORE the first signature failure (17:54:51.2) reached BestHTTP, and the first
-// one issued after it -- the room blob, 17:54:52.4 -- never did; it is absent from both our
-// SendRequest log and mitmproxy. That is a stalled pump, which is why the loading bar sits at
-// DOWNLOADING_DETAILS until the 30s timeout cancels FetchRoomLoadDetails > getRoomSaveData.
-//
-// Logs the ORIGINAL verdict once (same discipline as IsTransportEncrypted above): if that line ever
-// reads original=1 then signatures were verifying fine and this hook is masking a different fault.
-// ---------------------------------------------------------------------------------------------
-bool (*VerifyImageSig_O)(void*, void*, void*);
-bool VerifyImageSig_H(void* data, void* sig, void* mi) {
-	static bool logged = false;
-	if (!logged) {
-		logged = true;
-		bool orig = false;
-		__try { orig = VerifyImageSig_O(data, sig, mi); } __except (EXCEPTION_EXECUTE_HANDLER) {}
-		PatchLog("[ImgSig] HPJKKCCECLH.BLDFMLMAFLH original=%d -> forcing TRUE", orig ? 1 : 0);
-	}
-	return true;
-}
-
-// =============================================================================================
-// PHOTON BACKEND SELECTION
-//
-// The whole Photon story is ONE knob: RR::Config::PhotonHost (2025patch.ini; no compiled-in
-// default, so unset means off), plus PhotonPort for the initial connect port.
-//
-//   PhotonHost set   -> DNS for *.photonengine / exitgames / photonindustries is redirected to it,
-//                       and PhotonPort, if non-zero, overrides the connect port on AppSettings.
-//   PhotonHost empty -> NOTHING here runs. No DNS redirect, no AppSettings write, and the
-//                       ConnectUsingSettings hook is not installed at all. The client reaches
-//                       whatever Photon server its backend points it at.
-//
-// Swapping the server is genuinely all there is to do, because the app ids are NOT ours to set:
-// this client takes its Realtime/Voice/Chat ids from an endpoint on the server (Luxon hands out its
-// own "rf-..." ids). There used to be a UsePhotonCloud flag with CloudAppIdRealtime/Voice/Chat and
-// CloudFixedRegion knobs that wrote AppSettings.AppId* just before connect; all of it was removed
-// after those writes were seen to achieve nothing. To reach a different Photon deployment, point
-// the backend at it and set PhotonHost.
-//
-// ⚠️ The stated REASON for removing them was wrong, and it stayed wrong here for a long time. It
-// was recorded as "the client never reads AppSettings.AppId*". It does read them -- in
-// ConnectUsingSettings, which this client never calls, so the hook doing the writing never ran at
-// all. Nothing on AppSettings is consumed by this client, app ids included. The same mistake later
-// hid the PhotonPort bug (see the DEAD SEAM block in Methods.h): a hook that logs nothing is
-// evidence about the hook, not about the field.
-//
-// What that flag was for, kept because the answer still stands: against Luxon the client joins, gets
-// ~4 SetProperties answered, then receives NO responses for ~50s and dies with "Unable to send
-// message!". The same client was run against real Photon Cloud to tell a Luxon bug from a
-// client/patch bug -- Cloud reproduced the failure identically, proving Photon/Luxon are NOT the
-// cause.
-//
-// ⚠️ The cause was the BACKLOG OF BACKTRACE UPLOADS, which piles up until Photon disconnects.
-// submit.backtrace.io is in IsDeadHost below and BlockDeadHosts (default true) keeps that backlog
-// from forming.
-//
-// An earlier version of this block blamed "the room's missing save data" instead. That was WRONG,
-// and it is recorded here so it is not re-derived: rooms with no save blob load fine. The blob was
-// the loudest thing in the log, which is exactly what made it a convincing wrong answer -- the queue
-// is serial, so whatever is starving it shows up as the NEXT request failing, not as itself.
-// =============================================================================================
-
-// ---------------------------------------------------------------------------------------------
-// Apply PhotonPort to the name-server connect.
-//
-// The Photon host is redirected at the DNS layer, but a PORT never passes through getaddrinfo, so a
-// non-default one has to be written into the client instead. GetNameServerAddress is where that
-// decision is made: it formats "<NameServerHost>:<port>" and takes the port from
-// LoadBalancingClient.NameServerPortInAppSettings when that field is non-zero, otherwise from the
-// protocol default (5058 UDP, 27000 alternative UDP). Writing the field immediately before the
-// original runs therefore lands on every path that reaches the name server. The master still hands
-// out its own master/game-server ports afterwards; this only moves the initial connect.
-//
-// THIS REPLACED A HOOK ON ConnectUsingSettings, WHICH NEVER RAN. That method reads AppSettings.Port
-// and would have been the tidier seam, but this client never calls it -- the port silently stayed
-// at 5058 and the hook logged nothing at all. The full evidence is in the DEAD SEAM block in
-// Methods.h; the short version is that no [Photon] Port line ever appeared in a session log while
-// the getaddrinfo redirect on the same connect logged fine. If this hook ever goes quiet the same
-// way, that is the first thing to check -- the line below is unconditional on first call for
-// exactly that reason.
-//
-// Only installed when PhotonHost AND PhotonPort are both set (see Patch()), so reaching this hook
-// already means the caller wants the port changed. A managed string is returned by the original and
-// simply passed through; nothing here calls back into il2cpp.
-// ---------------------------------------------------------------------------------------------
-void* (*GetNameServerAddress_O)(void*, void*);
-
-void* GetNameServerAddress_H(void* self, void* mi) {
-	__try {
-		if (self && RR::Config::PhotonPort != 0) {
-			int32_t was = read<int32_t>(self, RR::Offsets::LoadBalancingClient::NameServerPortInAppSettings);
-			if (was != (int32_t)RR::Config::PhotonPort) {
-				set<int32_t>(self, RR::Offsets::LoadBalancingClient::NameServerPortInAppSettings,
-					(int32_t)RR::Config::PhotonPort);
-				static bool logged = false;
-				if (!logged) {
-					logged = true;
-					// 0 = the field was unset, i.e. the client was about to use the protocol default.
-					PatchLog("[Photon] NameServer port %d -> %d (PhotonPort, host %s via DNS redirect)",
-						(int)was, RR::Config::PhotonPort, RR::Config::PhotonHost);
-				}
-			}
-		}
-	}
-	__except (EXCEPTION_EXECUTE_HANDLER) {}
-	return GetNameServerAddress_O(self, mi);
-}
-
-bool IsPhotonHost(const std::string& node) {
-	return node.find("photonengine") != std::string::npos
-		|| node.find("exitgames") != std::string::npos
-		|| node.find("photonindustries") != std::string::npos;
-}
-
-// Telemetry/analytics/crash/feature-flag hosts that do not exist on the archival backend. They never
-// resolve, but every attempt still goes to the OS resolver and the client retries on a timer, and the
-// System.Net.Http ones (RudderStack/Unity) tie up connection-pool slots the room-load path
-// then waits behind -- Player.log fills with "Curl error 6: Could not resolve host" and a storm of
-// ServicePointScheduler.WaitAsync stalls. Failing the lookup ourselves (WSAHOST_NOT_FOUND) returns the
-// SAME "not found" the resolver eventually would, just instantly, so the client's existing
-// handle-the-failure path runs without the wait. Substring match -- these cover every subdomain seen
-// (recroom-dataplane.rudderstack.com, submit.backtrace.io, cdp/perf-events/config.uca.cloud.unity3d.com).
-// Gated by RR::Config::BlockDeadHosts (default true). NOTE: the list DOES include some *.recflare.net
-// subdomains -- see the warning inside about why blocking those is a trade-off, not a free win.
-bool IsDeadHost(const std::string& node) {
-	static const char* kDeadHosts[] = {
-		"rudderstack.com",    // RecNet analytics data plane
-		"backtrace.io",       // Backtrace crash upload -- LOAD-BEARING, not just telemetry hygiene:
-		                      // its upload backlog is what starves the queue until Photon
-		                      // disconnects. See the PHOTON BACKEND SELECTION block above.
-		"cloud.unity3d.com",  // Unity analytics / perf-events / remote config (uca)
-
-		// ⚠️ THIRD-PARTY HOSTS ONLY. Never add a *.recflare.net host here.
-		//
-		// These sit on CBACIMLIBPF's SINGLE SERIAL request queue -- the same one the room-save blob
-		// (cdn.recflare.net/room/...) waits in, at roughly position 100. Blocking a host on that queue
-		// is NOT free: the intuition "NXDOMAIN fails in milliseconds, so blocking costs nothing" is
-		// wrong, because the cost is the client's RETRY BACKOFF, not the lookup. Measured 2026-08-17 --
-		// one blocked `data/event` POST retried at ~5.5s and ~13.7s and held the queue for 24.68s, so
-		// the blob was sent at 36.6s against a 30s room-load timeout and missed by ~6s. Blocked and
-		// NXDOMAIN are equally bad; only an INSTANT response stops the backoff.
-		//
-		// All four recflare subdomains that used to be listed here were retired on 2026-08-17 once the
-		// mirror implemented them (datacollection -> 200; cards / moderation / platformnotifications ->
-		// fast 404, which is fine -- a definitive HTTP response does not trigger the transport-failure
-		// backoff. config.recflare.net is still NXDOMAIN but unused, and blocking it changed nothing).
-		// To retire any future entry the order matters: stub it server-side FIRST, then remove it here.
-	};
-	for (const char* h : kDeadHosts) {
-		if (node.find(h) != std::string::npos) return true;
-	}
-	return false;
-}
-
-int (WSAAPI* getaddrinfo_O)(PCSTR, PCSTR, const ADDRINFOA*, PADDRINFOA*);
-int WSAAPI getaddrinfo_H(PCSTR pNodeName, PCSTR pServiceName, const ADDRINFOA* pHints, PADDRINFOA* ppResult) {
-	if (RR::Config::BlockDeadHosts && pNodeName && IsDeadHost(pNodeName)) {
-		PatchLog("[DNS] %s -> BLOCKED (dead telemetry host)", pNodeName);
-		if (ppResult) *ppResult = nullptr;
-		WSASetLastError(WSAHOST_NOT_FOUND);
-		return WSAHOST_NOT_FOUND;
-	}
-	// No PhotonHost configured = no Photon swap; the lookup falls through to the log-and-forward path.
-	if (*RR::Config::PhotonHost && pNodeName && IsPhotonHost(pNodeName)) {
-		std::cout << "Photon: " << pNodeName << " -> " << RR::Config::PhotonHost << std::endl;
-		PatchLog("[Photon] getaddrinfo %s -> %s", pNodeName, RR::Config::PhotonHost);
-		return getaddrinfo_O(RR::Config::PhotonHost, pServiceName, pHints, ppResult);
-	}
-	// Log every other lookup too. The room-save download does NOT go through BestHTTP (it uses the
-	// System.Net.Http client, CBACIMLIBPF), so our SendRequest hook is blind to it -- but its DNS
-	// still comes through here, which is how we find out what host it is actually contacting.
-	if (pNodeName) PatchLog("[DNS] %s", pNodeName);
-	return getaddrinfo_O(pNodeName, pServiceName, pHints, ppResult);
-}
-
-int (WSAAPI* GetAddrInfoW_O)(PCWSTR, PCWSTR, const ADDRINFOW*, PADDRINFOW*);
-int WSAAPI GetAddrInfoW_H(PCWSTR pNodeName, PCWSTR pServiceName, const ADDRINFOW* pHints, PADDRINFOW* ppResult) {
-	if (pNodeName) {
-		char node[NI_MAXHOST] = {};
-		size_t converted = 0;
-		wcstombs_s(&converted, node, pNodeName, _TRUNCATE);
-
-		if (RR::Config::BlockDeadHosts && IsDeadHost(node)) {
-			PatchLog("[DNS] %s (W) -> BLOCKED (dead telemetry host)", node);
-			if (ppResult) *ppResult = nullptr;
-			WSASetLastError(WSAHOST_NOT_FOUND);
-			return WSAHOST_NOT_FOUND;
-		}
-		if (*RR::Config::PhotonHost && IsPhotonHost(node)) {
-			std::cout << "Photon: " << node << " -> " << RR::Config::PhotonHost << std::endl;
-
-			PatchLog("[Photon] GetAddrInfoW %s -> %s", node, RR::Config::PhotonHost);
-			wchar_t wideHost[NI_MAXHOST] = {};
-			mbstowcs_s(&converted, wideHost, RR::Config::PhotonHost, _TRUNCATE);
-			return GetAddrInfoW_O(wideHost, pServiceName, pHints, ppResult);
-		}
-		PatchLog("[DNS] %s (W)", node);
-	}
-	return GetAddrInfoW_O(pNodeName, pServiceName, pHints, ppResult);
-}
-
-// ---------------------------------------------------------------------------------------------
-// Photon protocol tracer (diagnostic). Luxon works with the 2023 client but the 2025 client reaches
-// the game server (5056) and then times out with "Unable to connect to game session" -- and Luxon
-// logs no error, meaning the 2025 client is waiting on an operation/response Luxon doesn't provide.
-// These two call-through hooks (RVAs from the RuntimeDump, build verified via SendRequest=0x77E0950)
-// print every operation the client SENDS and every connection STATUS it gets, so we can see exactly
-// what the 2025 client does that the 2023 client didn't:
-//   PhotonPeer.SendOperation(byte opCode, Dictionary, SendOptions)  GA+0x7534610
-//   PeerBase.EnqueueStatusCallback(StatusCode)                      GA+0x752C540
-// ---------------------------------------------------------------------------------------------
-
-static const char* PhotonOpName(unsigned op) {
-	switch (op) {
-	case 219: return "ExchangeKeysForEncryption";
-	case 220: return "GetRegions";
-	case 221: return "WebRpc";
-	case 222: return "GetGameList";
-	case 224: return "FindFriends";
-	case 225: return "JoinRandomGame";
-	case 226: return "JoinGame(JoinRoom)";
-	case 227: return "CreateGame";
-	case 228: return "LeaveLobby";
-	case 229: return "JoinLobby";
-	case 230: return "Authenticate";
-	case 231: return "AuthenticateOnce";
-	case 248: return "ChangeGroups";
-	case 250: return "Rpc";
-	case 251: return "GetProperties";
-	case 252: return "SetProperties";
-	case 253: return "RaiseEvent";
-	case 254: return "Leave";
-	case 255: return "Join(legacy)";
-	default:  return "?";
-	}
-}
-
-static const char* PhotonStatusName(unsigned s) {
-	switch (s) {
-	case 1022: return "SecurityExceptionOnConnect";
-	case 1023: return "ExceptionOnConnect";
-	case 1024: return "Connect";
-	case 1025: return "Disconnect";
-	case 1026: return "Exception";
-	case 1030: return "SendError";
-	case 1039: return "ExceptionOnReceive";
-	case 1040: return "TimeoutDisconnect";
-	case 1041: return "DisconnectByServerTimeout";
-	case 1042: return "DisconnectByServerUserLimit";
-	case 1043: return "DisconnectByServerLogic";
-	case 1044: return "DisconnectByServerReasonUnknown";
-	case 1048: return "EncryptionEstablished";
-	case 1049: return "EncryptionFailedToEstablish";
-	case 1050: return "ServerAddressInvalid";
-	case 1051: return "DnsExceptionOnConnect";
-	default:   return "?";
-	}
-}
-
-// PhotonPeer.SendOperation(this, byte opCode, Dictionary* params, SendOptions, MethodInfo*) -> bool.
-// SendOptions is <=8 bytes (fits R9); forward all args verbatim.
-typedef bool (*SendOp_t)(void* self, uint64_t opCode, void* params, uint64_t sendOptions, void* mi);
-SendOp_t SendOp_O = nullptr;
-bool SendOp_H(void* self, uint64_t opCode, void* params, uint64_t sendOptions, void* mi) {
-	unsigned op = (unsigned)(opCode & 0xFF);
-	// Log the RESULT, not just the attempt. SendOperation returns false when the peer refuses the
-	// send (not connected, outgoing queue full, or payload over the max size) -- nothing reaches the
-	// wire and no response can ever come back. Photon Cloud and the self-hosted server BOTH stop
-	// answering these identically, which only makes sense if the ops are never actually sent; then
-	// "Unable to send message!" means exactly what it says.
-	bool ok = SendOp_O(self, opCode, params, sendOptions, mi);
-	PatchLog("[Photon] --> SendOperation op=%u (%s) peer=%p sent=%d", op, PhotonOpName(op), self, ok ? 1 : 0);
-	return ok;
-}
-
-// PeerBase.EnqueueStatusCallback(this, StatusCode statusValue, MethodInfo*) -> void.
-typedef void (*EnqStatus_t)(void* self, uint32_t status, void* mi);
-EnqStatus_t EnqStatus_O = nullptr;
-void EnqStatus_H(void* self, uint32_t status, void* mi) {
-	PatchLog("[Photon] <-- Status %u (%s) peer=%p", status, PhotonStatusName(status), self);
-	EnqStatus_O(self, status, mi);
-}
-
-// OperationResponse layout (ExitGames.Client.Photon.OperationResponse):
-//   OperationCode uint8_t @16, ReturnCode int16_t @18, DebugMessage Il2CppString* @24
-// Log every response the SERVER sends, decoded, so we can see if Luxon returns an error code the
-// client treats as fatal -- and WHICH wire protocol is active (Protocol16 vs Protocol18; the 2023
-// vs 2025 client may negotiate different serialization, a prime suspect for "2023 works, 2025 not").
-static void LogOpResponse(const char* proto, void* resp) {
-	if (!resp) return;
-	unsigned opc = *(uint8_t*)((uint8_t*)resp + 16);
-	short  rc   = *(int16_t*)((uint8_t*)resp + 18);
-	Il2cppString* dbg = *(Il2cppString**)((uint8_t*)resp + 24);
-	char* msg = dbg ? ReadIl2CppString(dbg) : nullptr;
-	PatchLog("[Photon] <== Resp[%s] op=%u (%s) returnCode=%d%s%s", proto, opc, PhotonOpName(opc), (int)rc,
-		msg ? " msg=" : "", msg ? msg : "");
-	if (msg) delete[] msg;
-}
-
-// Incoming EVENTS -- a separate path from operation responses, and previously a blind spot: the
-// tracer logged outgoing ops, status callbacks and op responses, so a server-pushed event was
-// invisible. Photon reserves code 251 = ErrorInfo, which is exactly how a server tells a client
-// something is wrong, so "did Photon ask us to quit?" was unanswerable without this.
-//
-// EventData layout (ExitGames.Client.Photon.EventData): Code uint8_t @16.
-static const char* PhotonEventName(unsigned code) {
-	switch (code) {
-		case 251: return "ErrorInfo";
-		case 252: return "AzureNodeInfo";
-		case 253: return "PropertiesChanged";
-		case 254: return "Leave";
-		case 255: return "Join";
-		default:  return "game-event";
-	}
-}
-static void LogEventData(const char* proto, void* ev) {
-	if (!ev) return;
-	unsigned code = *(uint8_t*)((uint8_t*)ev + 16);
-	PatchLog("[Photon] <<= Event[%s] code=%u (%s)", proto, code, PhotonEventName(code));
-}
-
-typedef void* (*DeserEvent_t)(void* self, void* stream, int flags, void* mi);
-DeserEvent_t Ev16_O = nullptr, Ev18_O = nullptr;
-void* Ev16_H(void* self, void* stream, int flags, void* mi) {
-	void* r = Ev16_O(self, stream, flags, mi);
-	__try { LogEventData("P16", r); } __except (EXCEPTION_EXECUTE_HANDLER) {}
-	return r;
-}
-void* Ev18_H(void* self, void* stream, int flags, void* mi) {
-	void* r = Ev18_O(self, stream, flags, mi);
-	__try { LogEventData("P18", r); } __except (EXCEPTION_EXECUTE_HANDLER) {}
-	return r;
-}
-
-typedef void* (*DeserResp_t)(void* self, void* stream, int flags, void* mi);
-DeserResp_t Deser16_O = nullptr, Deser18_O = nullptr;
-void* Deser16_H(void* self, void* stream, int flags, void* mi) {
-	void* r = Deser16_O(self, stream, flags, mi);
-	__try { LogOpResponse("P16", r); } __except (EXCEPTION_EXECUTE_HANDLER) {}
-	return r;
-}
-void* Deser18_H(void* self, void* stream, int flags, void* mi) {
-	void* r = Deser18_O(self, stream, flags, mi);
-	__try { LogOpResponse("P18", r); } __except (EXCEPTION_EXECUTE_HANDLER) {}
-	return r;
-}
-
-namespace RR::Methods::Photon {
-	uintptr_t SendOperation = 0x7534610;
-	uintptr_t EnqueueStatusCallback = 0x752C540;
-	uintptr_t Protocol16_DeserializeOperationResponse = 0x75388D0;
-	uintptr_t Protocol18_DeserializeOperationResponse = 0x753E610;
-	// Server-pushed events (RVAs from il2cpp-2025/methods.pkl).
-	uintptr_t Protocol16_DeserializeEventData = 0x7537E30;
-	uintptr_t Protocol18_DeserializeEventData = 0x753E2F0;
-}
-
-// =================================================================================================
-// VOICE HANDSHAKE RE-KEY -- give the voice server a key it can actually decrypt with.
-//
-// TachyonClient's connect payload is {AI, AT, VB, CKA, CIA, CPK}. Only AI (the account id) is
-// plaintext, and it is client-asserted, so a self-hosted voice server has nothing it can trust: AT
-// (the Photon auth blob, which carries accountId/environment/accessToken) is AES-encrypted, and the
-// AES key and IV travel as CKA/CIA RSA-encrypted to a public key baked into the client. Reading any
-// of it needs Rec Room's private key.
-//
-// Swapping that public key for one of ours fixes it in a single field write. The ctor reads the XML
-// from DMIBBCKIGCG's statics immediately before calling rsa.FromXmlString (see Methods.h), so we
-// overwrite the static and let the game do the import itself -- deliberately, because the
-// alternative (calling FromXmlString ourselves) would put a managed method that CAN THROW behind a
-// spoofed return address, which is exactly the crash SendRequest_H documents.
-//
-// Ordering is the whole trick. The ctor runs DMIBBCKIGCG's .cctor a few instructions before it reads
-// the static (cctor check at 0x82796C3), and that .cctor is what installs the stock key -- so a
-// naive write before the original would simply be overwritten. Forcing the class init ourselves
-// first means the game's own check finds it already initialised, skips it, and reads our value.
-//
-// Off unless VoiceKeyXml is set in 2025patch.ini, and every failure path leaves Rec Room's key in
-// place, so the worst case is voice exactly as it behaved before.
-// =================================================================================================
-void (*TachyonCtor_O)(void*, void*);
-
-// A metadata-usage slot holds an ENCODED INDEX (type<<29 | index) until il2cpp resolves it, and it
-// is resolved by the method that uses it, at the start of that method's body. Reading 0xD1A9AF8 from
-// a hook on the TachyonClient ctor's ENTRY therefore always loses the race: the first (and only)
-// call handed back 0x20028E0D, which is index 0x28E0D, not a pointer -- and calling
-// il2cpp_runtime_class_init on it killed the process with nothing in the log (18 Sep). A pointer
-// under 4 GB is the signature of that bug; a real Il2CppClass* on x64 never is.
-static bool LooksLikeResolvedClass(void* p) {
-	return reinterpret_cast<uintptr_t>(p) >= 0x100000000ull;
-}
-
-static bool s_voiceKeyApplied = false;
-
-// Writes our public key over DMIBBCKIGCG's static. Callers must guarantee the cctor has ALREADY run
-// (see VoiceCctor_H) -- this deliberately does not force the class init, because doing that behind a
-// spoofed return address is what crashed.
-static bool ApplyVoiceKey(const char* when) {
-	__try {
-		auto klass = *reinterpret_cast<uint8_t**>(GA + RR::Offsets::Tachyon::KeyHolderTypeInfo);
-		if (!LooksLikeResolvedClass(klass)) {
-			PatchLog("[Voice] %s: key holder slot still unresolved (%p = metadata index 0x%X) -- "
-				"Rec Room's key kept", when, klass, (unsigned)(reinterpret_cast<uintptr_t>(klass) & 0x1FFFFFFF));
-			return false;
-		}
-
-		auto statics = read<uint8_t*>(klass, RR::Offsets::Tachyon::Class_StaticFields);
-		if (!statics) {
-			PatchLog("[Voice] %s: key holder has no static block -- Rec Room's key kept", when);
-			return false;
-		}
-
-		// Offset proof, logged once: if +0x08 really is KBANIKNNKKD this prints the head of Rec Room's
-		// own <RSAKeyValue>. Anything else means the offset is wrong for this build and the write
-		// below would be scribbling on an unrelated static.
-		auto cur = read<Il2cppString*>(statics, RR::Offsets::Tachyon::Static_ServerKeyXml);
+// one part of this hook that depend…6787 tokens truncated…chyon::Static_ServerKeyXml);
 		char* head = LooksLikeResolvedClass(cur) ? ReadIl2CppString(cur) : nullptr;
 		PatchLog("[Voice] %s: klass=%p statics=%p existing key=%p \"%.48s\"",
 			when, klass, statics, cur, head ? head : "(unreadable)");
@@ -999,13 +498,52 @@ void PhotonHandlerOnJoinedRoom_H(void* self, void* mi) {
 
 	__try {
 		PatchLog("[PhotonVoice] calling ConnectAndJoinRoom");
-		using ConnectAndJoinFn = void (*)(void*, void*);
+		using ConnectAndJoinFn = bool (*)(void*, void*);
 		auto connectAndJoin = reinterpret_cast<ConnectAndJoinFn>(GA + RR::Methods::PhotonVoice::PhotonVoiceNetwork_ConnectAndJoinRoom);
-		connectAndJoin(voice, nullptr);
-		PatchLog("[PhotonVoice] requested voice connect/join after PUN room join");
+		const bool accepted = connectAndJoin(voice, nullptr);
+		PatchLog("[PhotonVoice] ConnectAndJoinRoom returned %s", accepted ? "true" : "false");
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER) {
 		PatchLog("[PhotonVoice] connect/join call failed; PUN room remains active");
+	}
+}
+
+// LocalSendChatMessage starts a request coroutine but does not display a bubble for the local
+// avatar. ReceiveBroadcastRoomChat also deliberately avoids echoing the local sender, while remote
+// senders are displayed through OKOBCPLDFJM. Capture whether the client was able to start a new
+// send before forwarding; then reuse its normal ChatSpeechBubble coroutine for that local message.
+// This keeps the bubble tied to a real outgoing send attempt and avoids showing duplicates while a
+// prior chat request is still in flight.
+using LocalSendChatMessageFn = void (*)(void*, void*, int32_t, uint64_t, bool, void*, void*);
+static LocalSendChatMessageFn LocalSendChatMessage_O = nullptr;
+
+void LocalSendChatMessage_H(void* self, void* message, int32_t chatType,
+	uint64_t nullableMessageType, bool useChatBubble, void* palette, void* mi) {
+	bool canStartSend = false;
+	if (self) {
+		__try {
+			canStartSend = read<void*>(self, RR::Methods::PlayerChat::SendCoroutine) == nullptr;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER) {
+			canStartSend = false;
+		}
+	}
+
+	LocalSendChatMessage_O(self, message, chatType, nullableMessageType, useChatBubble, palette, mi);
+	if (!canStartSend || !message) return;
+
+	__try {
+		// Il2CppString.length is at 0x10. Empty input should not create an empty speech bubble.
+		if (read<int32_t>(message, 0x10) <= 0) return;
+
+		using ShowChatBubbleFn = void (*)(void*, void*, int32_t, bool, void*);
+		auto showBubble = reinterpret_cast<ShowChatBubbleFn>(GA + RR::Methods::PlayerChat::ShowChatBubble);
+		showBubble(self, message, chatType, true, nullptr);
+		PatchLog("[ChatBubble] local message bubble started (type=%d)", chatType);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		PatchLog("[ChatBubble] local bubble call failed (exception 0x%08X); chat send already continued",
+			GetExceptionCode());
 	}
 }
 
@@ -1037,6 +575,10 @@ namespace RR::Patches {
 		// is initialized and its app settings and Recorder/Speaker components are available.
 		MH_CreateHook((void*)(GA + RR::Methods::PhotonVoice::PhotonHandler_OnJoinedRoom), &PhotonHandlerOnJoinedRoom_H, (LPVOID*)&PhotonHandlerOnJoinedRoom_O);
 		MH_EnableHook((void*)(GA + RR::Methods::PhotonVoice::PhotonHandler_OnJoinedRoom));
+
+		// Add the local echo after a valid send attempt. Remote bubble handling remains in the game.
+		MH_CreateHook((void*)(GA + RR::Methods::PlayerChat::LocalSendChatMessage), &LocalSendChatMessage_H, (LPVOID*)&LocalSendChatMessage_O);
+		MH_EnableHook((void*)(GA + RR::Methods::PlayerChat::LocalSendChatMessage));
 
 		MH_CreateHook((void*)(Referee + RR::Methods::Referee::Check1), &nop_H, (LPVOID*)&nop_O);
 		MH_EnableHook((void*)(Referee + RR::Methods::Referee::Check1));
@@ -1201,3 +743,4 @@ namespace RR::Patches {
 		}
 	}
 }
+
