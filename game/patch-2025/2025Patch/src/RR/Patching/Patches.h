@@ -3,7 +3,6 @@
 #include "../Config.h"
 #include "../../Utils/scan.h"
 #include "../../Utils/deps/spoofcall/RetSpoof.hpp"
-#include <cstddef>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
 
@@ -977,108 +976,17 @@ void TachyonCtor_H(void* self, void* deps) {
 void (*PhotonHandlerAwake_O)(void*, void*) = nullptr;
 void (*PhotonHandlerOnJoinedRoom_O)(void*, void*) = nullptr;
 
-struct PhotonVoiceIl2CppApi {
-	using DomainGetFn = void* (*)();
-	using DomainGetAssembliesFn = const void** (*)(const void*, size_t*);
-	using AssemblyGetImageFn = const void* (*)(const void*);
-	using ClassFromNameFn = void* (*)(const void*, const char*, const char*);
-	using ClassGetMethodFn = const void* (*)(void*, const char*, int);
-	using RuntimeInvokeFn = void* (*)(const void*, void*, void**, void**);
-
-	DomainGetFn domainGet = nullptr;
-	DomainGetAssembliesFn domainGetAssemblies = nullptr;
-	AssemblyGetImageFn assemblyGetImage = nullptr;
-	ClassFromNameFn classFromName = nullptr;
-	ClassGetMethodFn classGetMethod = nullptr;
-	RuntimeInvokeFn runtimeInvoke = nullptr;
-	void* voiceNetworkClass = nullptr;
-	void* unityObjectClass = nullptr;
-	bool attemptedResolve = false;
-};
-
-static PhotonVoiceIl2CppApi& GetPhotonVoiceIl2CppApi() {
-	static PhotonVoiceIl2CppApi api;
-	if (api.attemptedResolve) return api;
-	api.attemptedResolve = true;
-	auto gameAssembly = GetModuleHandleA("GameAssembly.dll");
-	if (!gameAssembly) {
-		PatchLog("[PhotonVoice] GameAssembly.dll is not loaded");
-		return api;
-	}
-	api.domainGet = reinterpret_cast<PhotonVoiceIl2CppApi::DomainGetFn>(GetProcAddress(gameAssembly, "il2cpp_domain_get"));
-	api.domainGetAssemblies = reinterpret_cast<PhotonVoiceIl2CppApi::DomainGetAssembliesFn>(GetProcAddress(gameAssembly, "il2cpp_domain_get_assemblies"));
-	api.assemblyGetImage = reinterpret_cast<PhotonVoiceIl2CppApi::AssemblyGetImageFn>(GetProcAddress(gameAssembly, "il2cpp_assembly_get_image"));
-	api.classFromName = reinterpret_cast<PhotonVoiceIl2CppApi::ClassFromNameFn>(GetProcAddress(gameAssembly, "il2cpp_class_from_name"));
-	api.classGetMethod = reinterpret_cast<PhotonVoiceIl2CppApi::ClassGetMethodFn>(GetProcAddress(gameAssembly, "il2cpp_class_get_method_from_name"));
-	api.runtimeInvoke = reinterpret_cast<PhotonVoiceIl2CppApi::RuntimeInvokeFn>(GetProcAddress(gameAssembly, "il2cpp_runtime_invoke"));
-	if (!api.domainGet || !api.domainGetAssemblies || !api.assemblyGetImage || !api.classFromName || !api.classGetMethod || !api.runtimeInvoke) {
-		PatchLog("[PhotonVoice] IL2CPP reflection exports missing: domain=%p assemblies=%p image=%p class=%p method=%p invoke=%p",
-			api.domainGet, api.domainGetAssemblies, api.assemblyGetImage, api.classFromName, api.classGetMethod, api.runtimeInvoke);
-	}
-	return api;
-}
-
-static void* FindPhotonVoiceType(PhotonVoiceIl2CppApi& api, const char* namespaze, const char* name) {
-	if (!api.domainGet || !api.domainGetAssemblies || !api.assemblyGetImage || !api.classFromName) return nullptr;
-	void* domain = api.domainGet();
-	if (!domain) return nullptr;
-	size_t count = 0;
-	const void** assemblies = api.domainGetAssemblies(domain, &count);
-	if (!assemblies) return nullptr;
-	for (size_t i = 0; i < count; ++i) {
-		const void* image = api.assemblyGetImage(assemblies[i]);
-		if (!image) continue;
-		void* klass = api.classFromName(image, namespaze, name);
-		if (klass) return klass;
-	}
-	return nullptr;
-}
-
-static void* InvokePhotonVoiceMethod(PhotonVoiceIl2CppApi& api, const void* method, void* target, void** args, const char* label) {
-	if (!method || !api.runtimeInvoke) return nullptr;
-	void* exception = nullptr;
-	void* result = api.runtimeInvoke(method, target, args, &exception);
-	if (exception) {
-		PatchLog("[PhotonVoice] %s raised managed exception %p", label, exception);
-		return nullptr;
-	}
-	return result;
-}
-
 static void* EnsurePhotonVoiceNetwork(const char* stage) {
 	void* instance = nullptr;
 	__try {
-		auto& api = GetPhotonVoiceIl2CppApi();
-		if (!api.domainGet || !api.domainGetAssemblies || !api.assemblyGetImage || !api.classFromName || !api.classGetMethod || !api.runtimeInvoke) return nullptr;
-		if (!api.voiceNetworkClass) {
-			api.voiceNetworkClass = FindPhotonVoiceType(api, "Photon.Voice.PUN", "PhotonVoiceNetwork");
-			if (!api.voiceNetworkClass) {
-				PatchLog("[PhotonVoice] Photon.Voice.PUN.PhotonVoiceNetwork type not found (%s)", stage);
-				return nullptr;
-			}
-		}
-		auto getInstance = api.classGetMethod(api.voiceNetworkClass, "get_Instance", 0);
-		if (!getInstance) {
-			PatchLog("[PhotonVoice] get_Instance method not found (%s)", stage);
-			return nullptr;
-		}
-		instance = InvokePhotonVoiceMethod(api, getInstance, nullptr, nullptr, "get_Instance");
-		if (!instance) {
-			PatchLog("[PhotonVoice] Instance returned null (%s)", stage);
-			return nullptr;
-		}
-		if (!api.unityObjectClass) api.unityObjectClass = FindPhotonVoiceType(api, "UnityEngine", "Object");
-		if (api.unityObjectClass) {
-			auto keepAlive = api.classGetMethod(api.unityObjectClass, "DontDestroyOnLoad", 1);
-			if (keepAlive) {
-				void* args[] = { instance };
-				InvokePhotonVoiceMethod(api, keepAlive, nullptr, args, "DontDestroyOnLoad");
-			}
-		}
-		PatchLog("[PhotonVoice] network instance ready (%s): %p", stage, instance);
+		PatchLog("[PhotonVoice] calling PhotonVoiceNetwork.Instance (%s)", stage);
+		using GetInstanceFn = void* (*)(void*);
+		auto getInstance = reinterpret_cast<GetInstanceFn>(GA + RR::Methods::PhotonVoice::PhotonVoiceNetwork_GetInstance);
+		instance = getInstance(nullptr);
+		PatchLog("[PhotonVoice] Instance returned %p (%s)", instance, stage);
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER) {
-		PatchLog("[PhotonVoice] Instance initialization failed (%s), PUN left running", stage);
+		PatchLog("[PhotonVoice] Instance call failed (%s), PUN left running", stage);
 	}
 	return instance;
 }
@@ -1095,13 +1003,10 @@ void PhotonHandlerOnJoinedRoom_H(void* self, void* mi) {
 	if (!voice) return;
 
 	__try {
-		auto& api = GetPhotonVoiceIl2CppApi();
-		auto connectAndJoin = api.classGetMethod(api.voiceNetworkClass, "ConnectAndJoinRoom", 0);
-		if (!connectAndJoin) {
-			PatchLog("[PhotonVoice] ConnectAndJoinRoom method not found; PUN room remains active");
-			return;
-		}
-		InvokePhotonVoiceMethod(api, connectAndJoin, voice, nullptr, "ConnectAndJoinRoom");
+		PatchLog("[PhotonVoice] calling ConnectAndJoinRoom");
+		using ConnectAndJoinFn = void (*)(void*, void*);
+		auto connectAndJoin = reinterpret_cast<ConnectAndJoinFn>(GA + RR::Methods::PhotonVoice::PhotonVoiceNetwork_ConnectAndJoinRoom);
+		connectAndJoin(voice, nullptr);
 		PatchLog("[PhotonVoice] requested voice connect/join after PUN room join");
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER) {
