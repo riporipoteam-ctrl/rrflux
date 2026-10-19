@@ -966,14 +966,12 @@ void TachyonCtor_H(void* self, void* deps) {
 // Photon Voice activation.
 //
 // Build 20250718.01 contains Photon Voice PUN, PhotonPlayerVoiceInput and PhotonPlayerVoiceOutput,
-// but the PhotonHandler room callback never started the voice client. PhotonVoiceNetwork.Instance
-// creates its singleton when first accessed, so create it during PUN startup, keep it alive across
-// room scene changes, and explicitly connect it after each successful PUN room join. The server's
-// player/connection-info response supplies PhotonVoiceAppId; ConnectAndJoinRoom uses the matching
-// Voice settings and current PUN room name. This is deliberately best-effort: failure to initialize
-// voice must not roll back or break the already-successful PUN room join.
+// but the PhotonHandler room callback never started the voice client. Wait for PUN to finish joining
+// before getting PhotonVoiceNetwork.Instance: touching it in PhotonHandler.Awake creates a premature
+// singleton, then the room scene's real component is destroyed as a duplicate. Once the room callback
+// returns, connect Voice to the matching room. This remains best-effort so voice setup cannot undo a
+// successful game-room join.
 // ---------------------------------------------------------------------------------------------
-void (*PhotonHandlerAwake_O)(void*, void*) = nullptr;
 void (*PhotonHandlerOnJoinedRoom_O)(void*, void*) = nullptr;
 
 static void* EnsurePhotonVoiceNetwork(const char* stage) {
@@ -991,14 +989,11 @@ static void* EnsurePhotonVoiceNetwork(const char* stage) {
 	return instance;
 }
 
-void PhotonHandlerAwake_H(void* self, void* mi) {
-	PhotonHandlerAwake_O(self, mi);
-	EnsurePhotonVoiceNetwork("PhotonHandler.Awake");
-}
-
 void PhotonHandlerOnJoinedRoom_H(void* self, void* mi) {
 	// Let PUN finish its normal join callback before asking Voice to join the corresponding room.
+	PatchLog("[PhotonVoice] PUN OnJoinedRoom callback received");
 	PhotonHandlerOnJoinedRoom_O(self, mi);
+	PatchLog("[PhotonVoice] PUN OnJoinedRoom callback returned");
 	void* voice = EnsurePhotonVoiceNetwork("PhotonHandler.OnJoinedRoom");
 	if (!voice) return;
 
@@ -1038,12 +1033,8 @@ namespace RR::Patches {
 
 		MH_Initialize();
 
-		// The shipping 2025 client includes the Photon Voice SDK but never creates its PUN voice
-		// client or joins the matching voice room. Bootstrap the SDK on Unity's main thread, then
-		// join voice only after the ordinary Photon room callback succeeds.
-		MH_CreateHook((void*)(GA + RR::Methods::PhotonVoice::PhotonHandler_Awake), &PhotonHandlerAwake_H, (LPVOID*)&PhotonHandlerAwake_O);
-		MH_EnableHook((void*)(GA + RR::Methods::PhotonVoice::PhotonHandler_Awake));
-
+		// Start Photon Voice only after PUN has joined the game room, when the scene's voice singleton
+		// is initialized and its app settings and Recorder/Speaker components are available.
 		MH_CreateHook((void*)(GA + RR::Methods::PhotonVoice::PhotonHandler_OnJoinedRoom), &PhotonHandlerOnJoinedRoom_H, (LPVOID*)&PhotonHandlerOnJoinedRoom_O);
 		MH_EnableHook((void*)(GA + RR::Methods::PhotonVoice::PhotonHandler_OnJoinedRoom));
 

@@ -79,7 +79,6 @@ namespace RR::Methods::Photon {
 // Photon Voice PUN bootstrap for build 20250718.01. The client omits IL2CPP reflection exports, so
 // these build-specific method RVAs are called directly and guarded with SEH in Patches.h.
 namespace RR::Methods::PhotonVoice {
-	uintptr_t PhotonHandler_Awake = 0x75A6810;
 	uintptr_t PhotonHandler_OnJoinedRoom = 0x75A7B60;
 	uintptr_t PhotonVoiceNetwork_GetInstance = 0x75FEB30;
 	uintptr_t PhotonVoiceNetwork_ConnectAndJoinRoom = 0x75FB160;
