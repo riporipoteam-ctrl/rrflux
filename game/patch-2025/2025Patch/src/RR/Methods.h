@@ -84,6 +84,16 @@ namespace RR::Methods::PhotonVoice {
 	uintptr_t PhotonVoiceNetwork_ConnectAndJoinRoom = 0x75FB160;
 }
 
+// PlayerChat on build 20250718.01. LocalSendChatMessage starts the outgoing request coroutine,
+// while OKOBCPLDFJM is the existing in-world bubble path used for messages received from others.
+// The broadcast handler intentionally skips the local sender, so route accepted local sends through
+// that same bubble path after the normal send method has run.
+namespace RR::Methods::PlayerChat {
+	uintptr_t LocalSendChatMessage = 0x142B360;
+	uintptr_t ShowChatBubble = 0x142BB30; // OKOBCPLDFJM(string, ChatType, bool)
+	constexpr std::ptrdiff_t SendCoroutine = 0xF8; // UnityEngine.Coroutine field on PlayerChat
+}
+
 // Photon transport encryption.
 //
 // Luxon implements ONLY Photon's PayloadEncryption (it has Encrypt/DecryptPayload, and never reads

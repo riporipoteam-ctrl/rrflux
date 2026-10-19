@@ -999,13 +999,52 @@ void PhotonHandlerOnJoinedRoom_H(void* self, void* mi) {
 
 	__try {
 		PatchLog("[PhotonVoice] calling ConnectAndJoinRoom");
-		using ConnectAndJoinFn = void (*)(void*, void*);
+		using ConnectAndJoinFn = bool (*)(void*, void*);
 		auto connectAndJoin = reinterpret_cast<ConnectAndJoinFn>(GA + RR::Methods::PhotonVoice::PhotonVoiceNetwork_ConnectAndJoinRoom);
-		connectAndJoin(voice, nullptr);
-		PatchLog("[PhotonVoice] requested voice connect/join after PUN room join");
+		const bool accepted = connectAndJoin(voice, nullptr);
+		PatchLog("[PhotonVoice] ConnectAndJoinRoom returned %s", accepted ? "true" : "false");
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER) {
 		PatchLog("[PhotonVoice] connect/join call failed; PUN room remains active");
+	}
+}
+
+// LocalSendChatMessage starts a request coroutine but does not display a bubble for the local
+// avatar. ReceiveBroadcastRoomChat also deliberately avoids echoing the local sender, while remote
+// senders are displayed through OKOBCPLDFJM. Capture whether the client was able to start a new
+// send before forwarding; then reuse its normal ChatSpeechBubble coroutine for that local message.
+// This keeps the bubble tied to a real outgoing send attempt and avoids showing duplicates while a
+// prior chat request is still in flight.
+using LocalSendChatMessageFn = void (*)(void*, void*, int32_t, uint64_t, bool, void*, void*);
+static LocalSendChatMessageFn LocalSendChatMessage_O = nullptr;
+
+void LocalSendChatMessage_H(void* self, void* message, int32_t chatType,
+	uint64_t nullableMessageType, bool useChatBubble, void* palette, void* mi) {
+	bool canStartSend = false;
+	if (self) {
+		__try {
+			canStartSend = read<void*>(self, RR::Methods::PlayerChat::SendCoroutine) == nullptr;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER) {
+			canStartSend = false;
+		}
+	}
+
+	LocalSendChatMessage_O(self, message, chatType, nullableMessageType, useChatBubble, palette, mi);
+	if (!canStartSend || !message) return;
+
+	__try {
+		// Il2CppString.length is at 0x10. Empty input should not create an empty speech bubble.
+		if (read<int32_t>(message, 0x10) <= 0) return;
+
+		using ShowChatBubbleFn = void (*)(void*, void*, int32_t, bool, void*);
+		auto showBubble = reinterpret_cast<ShowChatBubbleFn>(GA + RR::Methods::PlayerChat::ShowChatBubble);
+		showBubble(self, message, chatType, true, nullptr);
+		PatchLog("[ChatBubble] local message bubble started (type=%d)", chatType);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		PatchLog("[ChatBubble] local bubble call failed (exception 0x%08X); chat send already continued",
+			GetExceptionCode());
 	}
 }
 
@@ -1037,6 +1076,10 @@ namespace RR::Patches {
 		// is initialized and its app settings and Recorder/Speaker components are available.
 		MH_CreateHook((void*)(GA + RR::Methods::PhotonVoice::PhotonHandler_OnJoinedRoom), &PhotonHandlerOnJoinedRoom_H, (LPVOID*)&PhotonHandlerOnJoinedRoom_O);
 		MH_EnableHook((void*)(GA + RR::Methods::PhotonVoice::PhotonHandler_OnJoinedRoom));
+
+		// Add the local echo after a valid send attempt. Remote bubble handling remains in the game.
+		MH_CreateHook((void*)(GA + RR::Methods::PlayerChat::LocalSendChatMessage), &LocalSendChatMessage_H, (LPVOID*)&LocalSendChatMessage_O);
+		MH_EnableHook((void*)(GA + RR::Methods::PlayerChat::LocalSendChatMessage));
 
 		MH_CreateHook((void*)(Referee + RR::Methods::Referee::Check1), &nop_H, (LPVOID*)&nop_O);
 		MH_EnableHook((void*)(Referee + RR::Methods::Referee::Check1));
