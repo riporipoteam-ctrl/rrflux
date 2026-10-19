@@ -1244,4 +1244,3 @@ namespace RR::Patches {
 		}
 	}
 }
-
