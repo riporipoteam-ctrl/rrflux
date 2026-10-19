@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "../Methods.h"
 #include "../Config.h"
 #include "../../Utils/scan.h"
