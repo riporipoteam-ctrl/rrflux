@@ -27,7 +27,7 @@
     "targets": ["nsis"],
     "windows": {
       "nsis": {
-        "installMode": "perUser",
+        "installMode": "currentUser",
         "startMenuFolder": "Ripo Team"
       }
     }
