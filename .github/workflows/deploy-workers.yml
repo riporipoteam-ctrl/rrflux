@@ -122,4 +122,3 @@ jobs:
               echo "=== fluxrec-econ deployed ==="
             fi
           done
-
