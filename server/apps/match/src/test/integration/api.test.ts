@@ -1271,10 +1271,10 @@ describe('auth-gated endpoints', () => {
 			value: {
 				// A signed JWT, not an opaque id — three base64url segments.
 				photonAuthToken: expect.stringMatching(/^[\w-]+\.[\w-]+\.[\w-]+$/),
-				// Empty until the operator names their own Photon apps — this server ships none,
-				// so there is no id to hand out.
-				photonRealtimeAppId: '',
-				photonVoiceAppId: '',
+				// Realtime and Voice have separate Photon application IDs. The client's
+				// custom-auth token is minted for Realtime; Voice gets its own app ID.
+				photonRealtimeAppId: 'ec2eaafc-0c8d-4e68-8f5f-fe4b1d3fb02f',
+				photonVoiceAppId: 'cfd2741f-4fab-46b3-a925-54d8bf922f0d',
 				photonChatAppId: '',
 				// Matches the region every room instance is stamped with. This one DOES have a
 				// default: an instance stamped with an empty region can't be connected to.
