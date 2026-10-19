@@ -66,16 +66,12 @@
 			"head_sampling_rate": 1 // 100%
 		}
 	},
-	// The operator's knobs — the room substitutions (ROOM_REDIRECTS), the Photon app ids
-	// and region (PHOTON_REALTIME_APP_ID, PHOTON_VOICE_APP_ID, PHOTON_CHAT_APP_ID,
-	// PHOTON_REGION), and the Tachyon server pool (TACHYON_HOST_PORT) —
-	// are deliberately NOT set here. They're injected at deploy time from
-	// the gitignored .env (RECFLARE_<VAR>, see .env.example), so swapping a room out or
-	// pointing at your own Photon apps never means editing a versioned file. Unset — the
-	// default — means every matchmake enters the room it asked for, the Photon app ids are
-	// empty (recflare ships none of its own), and sessions run in the `us` region.
+	// Realtime and Voice use distinct Photon application IDs. Keep the Voice ID supplied
+	// by the operator here; the match service returns both to the client separately.
 	"vars": {
 		"ENVIRONMENT": "development", // overridden during deployment
-		"SENTRY_RELEASE": "unknown" // overridden during deployment
+		"SENTRY_RELEASE": "unknown", // overridden during deployment
+		"PHOTON_REALTIME_APP_ID": "ec2eaafc-0c8d-4e68-8f5f-fe4b1d3fb02f",
+		"PHOTON_VOICE_APP_ID": "cfd2741f-4fab-46b3-a925-54d8bf922f0d"
 	}
 }
