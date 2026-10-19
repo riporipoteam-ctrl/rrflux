@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Ripo Team iPhone Installer",
+  "version": "0.1.0",
+  "identifier": "com.ripoteam.iphoneinstaller",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": { "csp": null },
+    "windows": [
+      {
+        "title": "Ripo Team iPhone Installer",
+        "width": 1060,
+        "height": 720,
+        "minWidth": 860,
+        "minHeight": 620,
+        "center": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "icon": ["icons/icon.ico"],
+    "resources": ["tools/**/*", "../THIRD_PARTY_NOTICES.md"],
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "installMode": "perUser",
+        "startMenuFolder": "Ripo Team"
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+name: RipoTeamLauncher
+options:
+  bundleIdPrefix: com.ripoteam
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  RipoTeamLauncher:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ripoteam.launcher
+        PRODUCT_NAME: Ripo Team Launcher
+        INFOPLIST_KEY_CFBundleDisplayName: Ripo Team Launcher
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.games
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_LSApplicationQueriesSchemes:
+          - fluxrec
+        FIREBASE_WEB_API_KEY: ""
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: Ripo Team Launcher
+        FirebaseWebAPIKey: $(FIREBASE_WEB_API_KEY)
+        LSApplicationQueriesSchemes:
+          - fluxrec
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIRequiresFullScreen: false
+    scheme:
+      testTargets: []
