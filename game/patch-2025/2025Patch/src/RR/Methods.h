@@ -76,15 +76,12 @@ namespace RR::Methods::Photon {
 	uintptr_t GetNameServerAddress = 0x757B960;
 }
 
-// Photon Voice PUN bootstrap for build 20250718.01. Photon Voice is present in the client, but its
-// PUN integration had no call path from PhotonHandler. Create the SDK singleton before room entry,
-// then explicitly join its voice room after PUN has joined the game room.
+// Photon Voice PUN bootstrap for build 20250718.01. These callbacks provide the stable hooks into
+// PUN; Photon Voice methods are resolved by IL2CPP reflection because their direct RVA calls failed
+// in the live client.
 namespace RR::Methods::PhotonVoice {
 	uintptr_t PhotonHandler_Awake = 0x75A6810;
 	uintptr_t PhotonHandler_OnJoinedRoom = 0x75A7B60;
-	uintptr_t PhotonVoiceNetwork_GetInstance = 0x75FEB30;
-	uintptr_t PhotonVoiceNetwork_ConnectAndJoinRoom = 0x75FB160;
-	uintptr_t UnityObject_DontDestroyOnLoad = 0x99AC360;
 }
 
 // Photon transport encryption.
