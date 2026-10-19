@@ -311,4 +311,3 @@ namespace RR::Offsets::Tachyon {
 	constexpr int       Class_StaticFields = 0x90;  // Il2CppClass -> static field block
 	constexpr int       Static_ServerKeyXml = 0x08; // DMIBBCKIGCG.KBANIKNNKKD (the <RSAKeyValue> XML)
 }
-
