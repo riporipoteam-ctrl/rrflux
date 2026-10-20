@@ -1,16 +1,18 @@
 # Flux Rec mobile delivery
 
-This directory contains three independent deliverables:
+This directory contains the launcher, installer, and native runtime packaging paths:
 
-- `android`: the native Ripo Team Launcher APK shell, with Firebase account login, guest mode, and the Flux Rec library. CI's APK is debug-signed and intended for testing; stable installs and updates need a release signing key.
-- `ios/RipoTeamLauncher`: the native SwiftUI launcher, including iOS 26 Liquid Glass and a fallback for older iOS versions.
+- `android`: the native Ripo Team Launcher APK, with Firebase account login, guest mode, split-XAPK installation/update, and installed-game launch.
+- `ios/RipoTeamLauncher`: the native SwiftUI launcher, including iOS 26 Liquid Glass, installed-game detection, and a fallback for older iOS versions.
 - `sideloader`: a Windows installer that discovers paired iPhones over USB or Wi-Fi and installs a signed launcher IPA.
+- `runtime/android`: the ARM64 IL2CPP runtime hook and split-XAPK patch/sign tool.
+- `runtime/ios`: the ARM64 IL2CPP runtime hook and decrypted-IPA patch/sign tool.
 
-## Game runtime boundary
+## Game runtime
 
-The repository contains a Windows Rec Room executable and a Windows x64 DLL patch. Neither binary can execute on Android or iOS. The launcher projects expose a `fluxrec://play` integration seam for an authorized native mobile game runtime. Cross-play requires that runtime to use the same Flux Rec API and Photon configuration as desktop.
+The Windows executable cannot run on a phone. The mobile runtime instead patches an authorized native ARM64 game package. It resolves the IL2CPP API after startup, redirects RecNet traffic to the Flux service, and installs the Flux Photon Realtime and Voice IDs used by desktop. The Android launcher installs every XAPK split in one PackageInstaller session. The iOS pipeline injects the dylib into a decrypted IPA, adds `fluxrec://`, and re-signs the result for the target device.
 
-An Android or iOS Rec Room package downloaded from a third party cannot be redistributed as part of Ripo Team Launcher without the necessary rights, and an App Store IPA cannot simply be nested inside another iOS app. iOS additionally validates the app signature and provisioning profile at install and launch.
+Game packages are intentionally excluded from the repository and launcher artifacts. Supply a package you are authorized to use. iOS also requires a decrypted executable and a certificate/provisioning profile that covers the target device.
 
 ## CI signing configuration
 
