@@ -1,0 +1,6 @@
+android/.gradle/
+android/app/build/
+ios/RipoTeamLauncher/DerivedData/
+ios/RipoTeamLauncher/RipoTeamLauncher.xcodeproj/
+sideloader/node_modules/
+sideloader/src-tauri/target/
