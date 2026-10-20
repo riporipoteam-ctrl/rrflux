@@ -5,6 +5,12 @@ if(NOT APPLE)
   message(FATAL_ERROR "The iOS runtime must be built with AppleClang on macOS")
 endif()
 
+# CMake's iOS toolchain may leave this empty even when
+# CMAKE_OSX_ARCHITECTURES is set. Dobby uses it to select its ARM64 backend.
+if(NOT CMAKE_SYSTEM_PROCESSOR)
+  set(CMAKE_SYSTEM_PROCESSOR "arm64" CACHE STRING "iOS target processor" FORCE)
+endif()
+
 include(FetchContent)
 set(DOBBY_DEBUG OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
