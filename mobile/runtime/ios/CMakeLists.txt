@@ -13,6 +13,7 @@ endif()
 
 include(FetchContent)
 set(DOBBY_DEBUG OFF CACHE BOOL "" FORCE)
+set(DOBBY_BUILD_SILICON ON CACHE BOOL "Select Dobby ARM64 backend" FORCE)
 FetchContent_Declare(
   dobby
   GIT_REPOSITORY https://github.com/jmpews/Dobby.git
