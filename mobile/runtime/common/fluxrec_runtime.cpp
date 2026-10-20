@@ -1,4 +1,3 @@
-#include <android/log.h>
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -9,10 +8,27 @@
 #include <string>
 #include <vector>
 
+#if defined(__ANDROID__)
+#include <android/log.h>
 #include "And64InlineHook.hpp"
-
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "FLUXREC", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "FLUXREC", __VA_ARGS__)
+#define IL2CPP_LIBRARY "libil2cpp.so"
+static void install_code_hook(void *target, void *replacement, void **original) {
+    A64HookFunction(target, replacement, original);
+}
+#elif defined(__APPLE__)
+#include <stdio.h>
+#include "dobby.h"
+#define LOGI(...) do { fprintf(stderr, "[FLUXREC] "); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } while (0)
+#define LOGE(...) do { fprintf(stderr, "[FLUXREC ERROR] "); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } while (0)
+#define IL2CPP_LIBRARY nullptr
+static void install_code_hook(void *target, void *replacement, void **original) {
+    DobbyHook(target, replacement, original);
+}
+#else
+#error Flux Rec mobile runtime supports Android and iOS only.
+#endif
 
 namespace {
 
@@ -78,7 +94,7 @@ bool bind(T &slot, const char *name) {
 }
 
 bool bind_api() {
-    il2cpp_handle = dlopen("libil2cpp.so", RTLD_NOW);
+    il2cpp_handle = dlopen(IL2CPP_LIBRARY, RTLD_NOW);
     if (!il2cpp_handle) return false;
     return bind(api.domain_get, "il2cpp_domain_get") &&
            bind(api.domain_get_assemblies, "il2cpp_domain_get_assemblies") &&
@@ -169,7 +185,7 @@ bool hook_method(const void *method, void *replacement, void **original, const c
         LOGE("method has no code pointer: %s", label);
         return false;
     }
-    A64HookFunction(address, replacement, original);
+    install_code_hook(address, replacement, original);
     LOGI("hooked %s at %p", label, address);
     return true;
 }

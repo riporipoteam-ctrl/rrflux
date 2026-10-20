@@ -10,7 +10,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(and64inlinehook)
 
 add_library(fluxrec_mobile SHARED
-  src/fluxrec_mobile.cpp
+  ../common/fluxrec_runtime.cpp
   ${and64inlinehook_SOURCE_DIR}/And64InlineHook.cpp
 )
 target_include_directories(fluxrec_mobile PRIVATE ${and64inlinehook_SOURCE_DIR})

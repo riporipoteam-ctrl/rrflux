@@ -11,4 +11,4 @@ xcodegen generate
 open RipoTeamLauncher.xcodeproj
 ```
 
-Set `FIREBASE_WEB_API_KEY` as an Xcode build setting. A device IPA additionally needs the Ripo Team Apple Developer team, signing certificate, and provisioning profile. The `fluxrec://play` action is the integration seam for a native Flux Rec iOS runtime. The Windows game binary and DLL patch cannot execute inside an iOS process.
+Set `FIREBASE_WEB_API_KEY` as an Xcode build setting. A device IPA additionally needs the Ripo Team Apple Developer team, signing certificate, and provisioning profile. The launcher detects the signed iOS runtime through `fluxrec://play`; build and inject that runtime with `mobile/runtime/ios` before installing it from the Windows iPhone Installer.
