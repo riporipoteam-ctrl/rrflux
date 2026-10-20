@@ -1,12 +1,19 @@
 package com.ripoteam.launcher;
 
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageInstaller;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -21,17 +28,27 @@ import android.widget.TextView;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 public final class MainActivity extends Activity {
+    private static final String GAME_PACKAGE = "com.AgainstGravity.RecRoom";
+    private static final int PICK_RUNTIME = 8101;
+    private static final String INSTALL_ACTION = "com.ripoteam.launcher.RUNTIME_INSTALL_STATUS";
     private final ExecutorService network = Executors.newSingleThreadExecutor();
+    private TextView runtimeStatus;
     private int blue;
     private int orange;
     private int text;
@@ -44,11 +61,18 @@ public final class MainActivity extends Activity {
         orange = getColor(R.color.launcher_orange);
         text = getColor(R.color.launcher_text);
         muted = getColor(R.color.launcher_muted);
+        IntentFilter filter = new IntentFilter(INSTALL_ACTION);
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(installReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(installReceiver, filter);
+        }
         showAuthentication();
     }
 
     @Override
     protected void onDestroy() {
+        try { unregisterReceiver(installReceiver); } catch (IllegalArgumentException ignored) { }
         network.shutdownNow();
         super.onDestroy();
     }
@@ -152,31 +176,135 @@ public final class MainActivity extends Activity {
         TextView gameTitle = label("FLUX REC", 36, Color.WHITE);
         gameTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         TextView tagline = label("Explore, play, and create together.", 17, Color.WHITE);
-        TextView status = label("Ready", 14, muted);
+        TextView status = label(isGameInstalled() ? "Installed and ready" : "Game runtime is not installed", 14, muted);
+        runtimeStatus = status;
+        Button install = secondaryButton(isGameInstalled() ? "Update game" : "Install game");
         Button play = primaryButton("Play");
         hero.setBackground(roundedGradient(orange, blue, 28));
         hero.addView(gameTitle);
         hero.addView(tagline);
         LinearLayout actions = card();
         actions.addView(status);
+        actions.addView(install);
         actions.addView(play);
         page.addView(hero);
         page.addView(actions);
 
-        TextView runtimeNote = label("This APK is the mobile launcher shell. A native Android Flux Rec runtime must be compiled into the game module before Play can start it inside this app.", 13, muted);
+        TextView runtimeNote = label("Install the Flux Rec Android runtime bundle once. The launcher installs every split APK together, handles updates, and starts the game from your library.", 13, muted);
         runtimeNote.setPadding(0, dp(18), 0, 0);
         page.addView(runtimeNote);
 
-        play.setOnClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("fluxrec://play"));
-            if (intent.resolveActivity(getPackageManager()) != null) {
-                startActivity(intent);
-                status.setText("Launching Flux Rec…");
-            } else {
-                status.setText("Flux Rec mobile runtime is not installed in this build.");
-            }
-        });
+        install.setOnClickListener(v -> chooseRuntimeBundle());
+        play.setOnClickListener(v -> launchGame());
         setContentView(scroll(page));
+    }
+
+    private void chooseRuntimeBundle() {
+        if (android.os.Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            runtimeStatus.setText("Allow Ripo Team Launcher to install game updates, then tap Install game again.");
+            startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+            return;
+        }
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("application/zip")
+            .putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/octet-stream", "application/vnd.android.package-archive"});
+        startActivityForResult(pick, PICK_RUNTIME);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != PICK_RUNTIME || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri source = data.getData();
+        runtimeStatus.setText("Preparing Flux Rec…");
+        network.execute(() -> installRuntimeBundle(source));
+    }
+
+    private void installRuntimeBundle(Uri source) {
+        File staged = new File(getCacheDir(), "fluxrec-runtime.xapk");
+        try (InputStream input = getContentResolver().openInputStream(source);
+             OutputStream output = new FileOutputStream(staged)) {
+            if (input == null) throw new IllegalStateException("The selected bundle could not be opened.");
+            byte[] buffer = new byte[1024 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+        } catch (Exception error) {
+            showRuntimeError(error);
+            return;
+        }
+
+        try (ZipFile bundle = new ZipFile(staged)) {
+            List<ZipEntry> apks = new ArrayList<>();
+            bundle.stream().filter(entry -> !entry.isDirectory() && entry.getName().toLowerCase().endsWith(".apk")).forEach(apks::add);
+            if (apks.isEmpty()) throw new IllegalStateException("This file contains no Android APK splits.");
+
+            PackageInstaller installer = getPackageManager().getPackageInstaller();
+            PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            params.setAppPackageName(GAME_PACKAGE);
+            int sessionId = installer.createSession(params);
+            try (PackageInstaller.Session session = installer.openSession(sessionId)) {
+                for (ZipEntry apk : apks) {
+                    String splitName = new File(apk.getName()).getName();
+                    try (InputStream input = bundle.getInputStream(apk);
+                         OutputStream output = session.openWrite(splitName, 0, apk.getSize())) {
+                        byte[] buffer = new byte[1024 * 1024];
+                        int read;
+                        while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+                        session.fsync(output);
+                    }
+                }
+                Intent callback = new Intent(INSTALL_ACTION).setPackage(getPackageName());
+                PendingIntent pending = PendingIntent.getBroadcast(this, sessionId, callback,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+                session.commit(pending.getIntentSender());
+            }
+            runOnUiThread(() -> runtimeStatus.setText("Waiting for Android to finish installation…"));
+        } catch (Exception error) {
+            showRuntimeError(error);
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            staged.delete();
+        }
+    }
+
+    private final BroadcastReceiver installReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+            if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                Intent confirmation = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+                if (confirmation != null) startActivity(confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                return;
+            }
+            if (status == PackageInstaller.STATUS_SUCCESS) {
+                runtimeStatus.setText("Flux Rec installed. Ready to play.");
+            } else {
+                runtimeStatus.setText("Install failed: " + intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE));
+            }
+        }
+    };
+
+    private boolean isGameInstalled() {
+        try {
+            getPackageManager().getPackageInfo(GAME_PACKAGE, 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException ignored) {
+            return false;
+        }
+    }
+
+    private void launchGame() {
+        Intent launch = getPackageManager().getLaunchIntentForPackage(GAME_PACKAGE);
+        if (launch == null) {
+            runtimeStatus.setText("Install the Flux Rec Android runtime first.");
+            return;
+        }
+        runtimeStatus.setText("Launching Flux Rec…");
+        startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    }
+
+    private void showRuntimeError(Exception error) {
+        runOnUiThread(() -> runtimeStatus.setText(error.getMessage() == null ? "Runtime installation failed." : error.getMessage()));
     }
 
     private ScrollView scroll(View child) {
