@@ -46,6 +46,7 @@ import java.util.zip.ZipFile;
 public final class MainActivity extends Activity {
     private static final String GAME_PACKAGE = "com.AgainstGravity.RecRoom";
     private static final int PICK_RUNTIME = 8101;
+    private static final long MAX_RUNTIME_BYTES = 4L * 1024 * 1024 * 1024;
     private static final String INSTALL_ACTION = "com.ripoteam.launcher.RUNTIME_INSTALL_STATUS";
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private TextView runtimeStatus;
@@ -201,7 +202,7 @@ public final class MainActivity extends Activity {
 
     private void chooseRuntimeBundle() {
         if (android.os.Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
-            runtimeStatus.setText("Allow Ripo Team Launcher to install game updates, then tap Install game again.");
+            setRuntimeStatus("Allow Ripo Team Launcher to install game updates, then tap Install game again.");
             startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
             return;
         }
@@ -217,7 +218,7 @@ public final class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != PICK_RUNTIME || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri source = data.getData();
-        runtimeStatus.setText("Preparing Flux Rec…");
+        setRuntimeStatus("Preparing Flux Rec…");
         network.execute(() -> installRuntimeBundle(source));
     }
 
@@ -228,7 +229,12 @@ public final class MainActivity extends Activity {
             if (input == null) throw new IllegalStateException("The selected bundle could not be opened.");
             byte[] buffer = new byte[1024 * 1024];
             int read;
-            while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+            long copied = 0;
+            while ((read = input.read(buffer)) != -1) {
+                copied += read;
+                if (copied > MAX_RUNTIME_BYTES) throw new IllegalStateException("The selected runtime exceeds 4 GiB.");
+                output.write(buffer, 0, read);
+            }
         } catch (Exception error) {
             showRuntimeError(error);
             return;
@@ -259,7 +265,7 @@ public final class MainActivity extends Activity {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
                 session.commit(pending.getIntentSender());
             }
-            runOnUiThread(() -> runtimeStatus.setText("Waiting for Android to finish installation…"));
+            setRuntimeStatus("Waiting for Android to finish installation…");
         } catch (Exception error) {
             showRuntimeError(error);
         } finally {
@@ -277,9 +283,9 @@ public final class MainActivity extends Activity {
                 return;
             }
             if (status == PackageInstaller.STATUS_SUCCESS) {
-                runtimeStatus.setText("Flux Rec installed. Ready to play.");
+                setRuntimeStatus("Flux Rec installed. Ready to play.");
             } else {
-                runtimeStatus.setText("Install failed: " + intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE));
+                setRuntimeStatus("Install failed: " + intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE));
             }
         }
     };
@@ -296,15 +302,21 @@ public final class MainActivity extends Activity {
     private void launchGame() {
         Intent launch = getPackageManager().getLaunchIntentForPackage(GAME_PACKAGE);
         if (launch == null) {
-            runtimeStatus.setText("Install the Flux Rec Android runtime first.");
+            setRuntimeStatus("Install the Flux Rec Android runtime first.");
             return;
         }
-        runtimeStatus.setText("Launching Flux Rec…");
+        setRuntimeStatus("Launching Flux Rec…");
         startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     }
 
     private void showRuntimeError(Exception error) {
-        runOnUiThread(() -> runtimeStatus.setText(error.getMessage() == null ? "Runtime installation failed." : error.getMessage()));
+        setRuntimeStatus(error.getMessage() == null ? "Runtime installation failed." : error.getMessage());
+    }
+
+    private void setRuntimeStatus(String value) {
+        runOnUiThread(() -> {
+            if (runtimeStatus != null) runtimeStatus.setText(value);
+        });
     }
 
     private ScrollView scroll(View child) {
