@@ -149,7 +149,7 @@
     "Visibility": 1,
     "AllowCycling": true,
     "RestrictToNewUsers": false,
-    "ImageName": "tip.jpg",
+    "ImageName": "flux-rec-loading-v2.png",
     "PlatformMask": 175,
     "CreatedAt": "2026-09-25T00:00:00Z"
   },

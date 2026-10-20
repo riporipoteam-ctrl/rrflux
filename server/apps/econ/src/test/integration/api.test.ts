@@ -40,6 +40,13 @@ import questRewards from '../../../static/quest-rewards.json'
 import sf2 from '../../../static/storefronts/sf2.json'
 import sf32025 from '../../../static/storefronts/sf3-2025.json'
 import sf3 from '../../../static/storefronts/sf3.json'
+import sf100 from '../../../static/storefronts/sf100.json'
+import sf101 from '../../../static/storefronts/sf101.json'
+import sf102 from '../../../static/storefronts/sf102.json'
+import sf103 from '../../../static/storefronts/sf103.json'
+import sf400 from '../../../static/storefronts/sf400.json'
+import sf500 from '../../../static/storefronts/sf500.json'
+import sf600 from '../../../static/storefronts/sf600.json'
 import { SCHEMA_DDL } from '../../avatar-db'
 import {
 	BALANCE_SCHEMA_DDL,
@@ -2869,9 +2876,45 @@ describe('econ endpoints', () => {
 				)
 		)
 		expect(expectedMissingWearables).toHaveLength(790)
-		expect((await store({})).StoreItems).toHaveLength(
-			sf32025.StoreItems.length + expectedMissingWearables.length + 1
+		const identity = (drop: {
+			ConsumableItemDesc?: string | null
+			EquipmentModificationGuid?: string | null
+			AvatarItemDesc?: string | null
+		}) =>
+			drop.ConsumableItemDesc?.trim()
+				? `consumable:${drop.ConsumableItemDesc.trim()}`
+				: drop.EquipmentModificationGuid?.trim()
+					? `equipment:${drop.EquipmentModificationGuid.trim()}`
+					: drop.AvatarItemDesc?.trim()
+						? `avatar:${drop.AvatarItemDesc.trim()}`
+						: null
+		const identities = new Set(
+			[
+				...sf32025.StoreItems.map(({ GiftDrop }) => identity(GiftDrop)),
+				...expectedMissingWearables.map(({ AvatarItemDesc }) => `avatar:${AvatarItemDesc}`),
+			].filter((id): id is string => id !== null)
 		)
+		const names = new Set(
+			[
+				...sf32025.StoreItems.map(({ GiftDrop }) => GiftDrop.FriendlyName),
+				...expectedMissingWearables.map(({ FriendlyName }) => FriendlyName),
+			].map((name) => name.trim().toLowerCase())
+		)
+		const expectedMissingRro = []
+		for (const source of [sf100, sf101, sf102, sf103, sf400, sf500, sf600]) {
+			for (const item of source.StoreItems) {
+				const id = identity(item.GiftDrop)
+				const name = item.GiftDrop.FriendlyName.trim().toLowerCase()
+				if (id === null || identities.has(id) || names.has(name)) continue
+				expectedMissingRro.push(item)
+				identities.add(id)
+				names.add(name)
+			}
+		}
+		expect(expectedMissingRro).toHaveLength(5)
+		const expectedCurrentLength =
+			sf32025.StoreItems.length + expectedMissingWearables.length + expectedMissingRro.length + 1
+		expect((await store({})).StoreItems).toHaveLength(expectedCurrentLength)
 		// A signed but unversioned token and malformed build remain on the legacy snapshot.
 		expect((await store(await bearer())).StoreItems).toHaveLength(sf3.StoreItems.length)
 		expect((await store(await at('not-a-build'))).StoreItems).toHaveLength(sf3.StoreItems.length)
@@ -2880,9 +2923,7 @@ describe('econ endpoints', () => {
 		for (const version of ['20230616', '20250424.01', '20250718.01']) {
 			const merged = await store(await at(version))
 			expect(merged.StorefrontType, version).toBe(3)
-			expect(merged.StoreItems.length, version).toBe(
-				sf32025.StoreItems.length + expectedMissingWearables.length + 1
-			)
+			expect(merged.StoreItems.length, version).toBe(expectedCurrentLength)
 			expect(merged.StoreItems.length, version).toBeGreaterThan(sf3.StoreItems.length)
 		}
 		const currentStore = await store(await at('20250718.01'))
@@ -2893,6 +2934,28 @@ describe('econ endpoints', () => {
 		)
 		for (const item of expectedMissingWearables) {
 			expect(currentDescSet.has(item.AvatarItemDesc), item.FriendlyName).toBe(true)
+		}
+		for (const name of [
+			'Scallywag Bracers (Brown)',
+			'Knight Helmet (Green)',
+			'Paintball Goggles',
+			'Runner Helmet (Orange)',
+		]) {
+			const item = currentStore.StoreItems.find(({ GiftDrop }) => GiftDrop.FriendlyName === name)
+			expect(item, name).toBeDefined()
+			expect(item!.Prices[0]?.CurrencyType, name).toBe(2)
+		}
+		for (const name of [
+			'Film (Ghost Beard)',
+			'High Five Potion (Explosive)',
+			'High Five Potion (Whip Crack)',
+			'Film (Dracula)',
+			'Sus(picious) Goblin Shirt',
+		]) {
+			const item = currentStore.StoreItems.find(({ GiftDrop }) => GiftDrop.FriendlyName === name)
+			expect(item, name).toBeDefined()
+			expect(item!.PurchasableItemId, name).toBeGreaterThanOrEqual(50_000)
+			expect(item!.Prices[0]?.CurrencyType, name).toBe(2)
 		}
 		const definitionsResponse = await exports.default.fetch(
 			`${ORIGIN}/api/consumables/v1/all?supportedVersion=2`
@@ -2972,7 +3035,13 @@ describe('econ endpoints', () => {
 				GiftDrop.EquipmentModificationGuid ||
 				GiftDrop.IsQuery === true
 		)
-		expect(backpackRows).toHaveLength(331)
+		const addedRroBackpackRows = expectedMissingRro.filter(
+			({ GiftDrop }) =>
+				GiftDrop.ConsumableItemDesc ||
+				GiftDrop.EquipmentModificationGuid ||
+				GiftDrop.IsQuery === true
+		).length
+		expect(backpackRows).toHaveLength(331 + addedRroBackpackRows)
 		expect(
 			backpackRows.every(
 				({ GiftDrop }) =>
