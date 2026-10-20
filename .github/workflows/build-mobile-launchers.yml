@@ -13,6 +13,47 @@ on:
   workflow_dispatch:
 
 jobs:
+  android-runtime:
+    name: Android game runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools ndk;27.2.12479018 cmake;3.22.1"
+      - name: Compile ARM64 runtime hook
+        shell: bash
+        run: |
+          cmake -S mobile/runtime/android -B build/fluxrec-android -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_SDK_ROOT/ndk/27.2.12479018/build/cmake/android.toolchain.cmake" \
+            -DCMAKE_MAKE_PROGRAM="$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26
+          cmake --build build/fluxrec-android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Flux-Rec-Android-Runtime
+          path: build/fluxrec-android/libfluxrec_mobile.so
+
+  ios-runtime:
+    name: iOS game runtime
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile ARM64 runtime hook
+        run: |
+          cmake -S mobile/runtime/ios -B build/fluxrec-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+          cmake --build build/fluxrec-ios --config Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Flux-Rec-iOS-Runtime
+          path: build/fluxrec-ios/Release-iphoneos/libfluxrec_mobile.dylib
+
   android:
     name: Android APK
     runs-on: ubuntu-latest
@@ -192,5 +233,6 @@ jobs:
         with:
           name: Ripo-Team-iPhone-Installer
           path: mobile/sideloader/src-tauri/target/release/bundle/nsis/*.exe
+
 
 
