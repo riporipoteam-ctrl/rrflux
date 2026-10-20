@@ -75,7 +75,7 @@
         <section class="card full">
           <h2>Launcher IPA</h2>
           <div class="row"><div class="path" id="ipa-path">No IPA selected</div><button class="secondary" id="browse">Choose IPA</button><button class="secondary" id="official">Download official</button></div>
-          <div class="warning">The IPA must be signed with a provisioning profile that includes this iPhone. The installer verifies the embedded profile and SHA-256 for official downloads.</div>
+          <div class="warning">This installer checks the IPA package and SHA-256 for official downloads. iPhone validates the signature and provisioning profile during installation; the profile must include this device.</div>
           <div class="options"><span></span><button class="primary" id="install" disabled>Install on iPhone</button></div>
           <div id="log">Waiting for a device and IPA…</div>
         </section>

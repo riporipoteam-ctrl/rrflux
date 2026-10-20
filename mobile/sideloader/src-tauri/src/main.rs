@@ -3,9 +3,26 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const MAX_IPA_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+struct TemporaryIpa {
+    path: PathBuf,
+    cleanup: bool,
+}
+
+impl Drop for TemporaryIpa {
+    fn drop(&mut self) {
+        if self.cleanup {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,9 +47,6 @@ fn candidate_tool_paths(name: &str) -> Vec<PathBuf> {
             paths.push(parent.join(name));
         }
     }
-    if let Ok(path) = std::env::var("PATH") {
-        paths.extend(std::env::split_paths(&path).map(|dir| dir.join(name)));
-    }
     paths
 }
 
@@ -55,9 +69,18 @@ fn diagnostics() -> Diagnostics {
     Diagnostics {
         apple_mobile_device_service: apple_service_running(),
         device_helper_path: find_tool("ripo-ios-device-helper.exe").map(|p| p.display().to_string()),
-        official_ipa_configured: option_env!("RIPO_LAUNCHER_IPA_URL").is_some()
-            && option_env!("RIPO_LAUNCHER_IPA_SHA256_URL").is_some(),
+        official_ipa_configured: official_ipa_setting("RIPO_LAUNCHER_IPA_URL").is_some()
+            && official_ipa_setting("RIPO_LAUNCHER_IPA_SHA256_URL").is_some(),
     }
+}
+
+fn official_ipa_setting(name: &str) -> Option<&'static str> {
+    let value = match name {
+        "RIPO_LAUNCHER_IPA_URL" => option_env!("RIPO_LAUNCHER_IPA_URL"),
+        "RIPO_LAUNCHER_IPA_SHA256_URL" => option_env!("RIPO_LAUNCHER_IPA_SHA256_URL"),
+        _ => None,
+    }?;
+    (!value.trim().is_empty()).then_some(value)
 }
 
 fn run_device_list(tool: &Path) -> Result<Vec<Device>, String> {
@@ -154,21 +177,11 @@ async fn install_ipa(ipa_path: String, udid: String, wireless: bool) -> Result<S
 
 #[tauri::command]
 async fn download_official_ipa() -> Result<String, String> {
-    let ipa_url = option_env!("RIPO_LAUNCHER_IPA_URL")
+    let ipa_url = official_ipa_setting("RIPO_LAUNCHER_IPA_URL")
         .ok_or("This build does not have an official launcher IPA URL configured.")?;
-    let checksum_url = option_env!("RIPO_LAUNCHER_IPA_SHA256_URL")
+    let checksum_url = official_ipa_setting("RIPO_LAUNCHER_IPA_SHA256_URL")
         .ok_or("This build does not have an official launcher checksum URL configured.")?;
     let client = reqwest::Client::new();
-    let bytes = client
-        .get(ipa_url)
-        .send()
-        .await
-        .map_err(|e| format!("IPA download failed: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("IPA download failed: {e}"))?
-        .bytes()
-        .await
-        .map_err(|e| format!("IPA download failed: {e}"))?;
     let expected = client
         .get(checksum_url)
         .send()
@@ -183,14 +196,58 @@ async fn download_official_ipa() -> Result<String, String> {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    let actual = hex::encode(Sha256::digest(&bytes));
-    if expected.len() != 64 || expected != actual {
+    if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("The official checksum response is invalid.".to_string());
+    }
+    let mut response = client
+        .get(ipa_url)
+        .send()
+        .await
+        .map_err(|e| format!("IPA download failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("IPA download failed: {e}"))?;
+    if response.content_length().is_some_and(|length| length > MAX_IPA_BYTES) {
+        return Err("The official IPA exceeds the 4 GiB download limit.".to_string());
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let mut temporary = TemporaryIpa {
+        path: std::env::temp_dir().join(format!(
+            "RipoTeamLauncher-{}-{unique}.ipa",
+            std::process::id()
+        )),
+        cleanup: false,
+    };
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary.path)
+        .map_err(|e| format!("could not save IPA: {e}"))?;
+    temporary.cleanup = true;
+    let mut hasher = Sha256::new();
+    let mut downloaded = 0_u64;
+    while let Some(chunk) = response.chunk().await.map_err(|e| format!("IPA download failed: {e}"))? {
+        downloaded = downloaded
+            .checked_add(chunk.len() as u64)
+            .ok_or("The IPA download size overflowed.")?;
+        if downloaded > MAX_IPA_BYTES {
+            return Err("The official IPA exceeds the 4 GiB download limit.".to_string());
+        }
+        hasher.update(&chunk);
+        file.write_all(&chunk).map_err(|e| format!("could not save IPA: {e}"))?;
+    }
+    file.flush().map_err(|e| format!("could not save IPA: {e}"))?;
+    drop(file);
+    let actual = hex::encode(hasher.finalize());
+    if expected != actual {
         return Err("The downloaded IPA failed SHA-256 verification.".to_string());
     }
-    let destination = std::env::temp_dir().join("RipoTeamLauncher.ipa");
-    std::fs::write(&destination, bytes).map_err(|e| format!("could not save IPA: {e}"))?;
-    validate_ipa(&destination)?;
-    Ok(destination.display().to_string())
+    validate_ipa(&temporary.path)?;
+    let result = temporary.path.display().to_string();
+    temporary.cleanup = false;
+    Ok(result)
 }
 
 fn main() {

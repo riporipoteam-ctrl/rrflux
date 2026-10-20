@@ -2,7 +2,7 @@
 
 This directory contains three independent deliverables:
 
-- `android`: the native Ripo Team Launcher APK shell, with Firebase account login, guest mode, and the Flux Rec library.
+- `android`: the native Ripo Team Launcher APK shell, with Firebase account login, guest mode, and the Flux Rec library. CI's APK is debug-signed and intended for testing; stable installs and updates need a release signing key.
 - `ios/RipoTeamLauncher`: the native SwiftUI launcher, including iOS 26 Liquid Glass and a fallback for older iOS versions.
 - `sideloader`: a Windows installer that discovers paired iPhones over USB or Wi-Fi and installs a signed launcher IPA.
 
@@ -14,7 +14,7 @@ An Android or iOS Rec Room package downloaded from a third party cannot be redis
 
 ## CI signing configuration
 
-The mobile workflow always builds the Android APK, the iOS simulator target, and the Windows sideloader. A device-installable IPA is also produced when these GitHub Actions secrets are configured:
+The mobile workflow always builds the Android debug APK, the iOS simulator target, and the Windows sideloader. A device-installable, ad hoc signed IPA is also produced when these GitHub Actions secrets are configured. Ad hoc profiles only install on devices registered in the profile; broader iOS distribution requires TestFlight or App Store Connect signing and release setup.
 
 - `IOS_CERTIFICATE_P12_BASE64`
 - `IOS_CERTIFICATE_PASSWORD`
