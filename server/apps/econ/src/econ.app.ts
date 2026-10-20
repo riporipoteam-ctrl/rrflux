@@ -1235,6 +1235,78 @@ function withCatalogWearables(items: StoreItem[]): StoreItem[] {
 	return [...items, ...additions]
 }
 
+/** Room-specific RRO shops whose themed inventory also belongs in the 2025 Watch store. */
+const RRO_GENERAL_STOREFRONTS = [100, 101, 102, 103, 400, 500, 600] as const
+
+/**
+ * Stable identity for the thing a GiftDrop grants. Consumables take precedence because some old
+ * captures also put a human sentence in AvatarItemDesc; treating that sentence as a wearable made
+ * Root Beer and donuts appear twice under different purchase ids.
+ */
+function giftDropIdentity(drop: StoreGiftDrop): string | null {
+	const consumable = drop.ConsumableItemDesc?.trim()
+	if (consumable) return `consumable:${consumable}`
+	const equipment = drop.EquipmentModificationGuid?.trim()
+	if (equipment) return `equipment:${equipment}`
+	const avatar = drop.AvatarItemDesc?.trim()
+	return avatar ? `avatar:${avatar}` : null
+}
+
+/**
+ * Add themed RRO shop items absent from the authentic 2025 Watch-store capture and catalog.
+ *
+ * Browsing and purchasing both pass through loadCachedStorefrontResponse, so the same synthetic
+ * ids and token prices are used on both sides. The room-shop captures remain unchanged and keep
+ * their activity-ticket prices; only their general-store copies are repriced in Rec Center tokens.
+ */
+async function withRroShopItems(c: Context<App>, items: StoreItem[]): Promise<StoreItem[]> {
+	const identities = new Set(
+		items
+			.map(({ GiftDrop }) => giftDropIdentity(GiftDrop))
+			.filter((id): id is string => id !== null)
+	)
+	const names = new Set(
+		items
+			.map(({ GiftDrop }) => GiftDrop.FriendlyName?.trim().toLowerCase())
+			.filter((name): name is string => Boolean(name))
+	)
+	const usedIds = new Set(items.map(({ PurchasableItemId }) => PurchasableItemId))
+	let nextId = 50_000
+	const additions: StoreItem[] = []
+	const storefronts = await Promise.all(
+		RRO_GENERAL_STOREFRONTS.map(async (storefrontId) => {
+			const response = await c.env.ASSETS.fetch(new URL(`/sf${storefrontId}.json`, c.req.url))
+			return response.ok ? ((await response.json()) as Storefront) : null
+		})
+	)
+
+	for (const storefront of storefronts) {
+		if (!storefront || !Array.isArray(storefront.StoreItems)) continue
+		for (const source of storefront.StoreItems) {
+			const identity = giftDropIdentity(source.GiftDrop)
+			const name = source.GiftDrop.FriendlyName?.trim().toLowerCase()
+			if (identity === null || identities.has(identity) || (name && names.has(name))) continue
+			while (usedIds.has(nextId)) nextId += 1
+			const price = priceForRarity(source.GiftDrop.Rarity)
+			additions.push({
+				...source,
+				GiftDrop: { ...source.GiftDrop, GiftDropId: nextId },
+				PurchasableItemId: nextId,
+				Prices: [{ CurrencyType: CurrencyType.RecCenterTokens, Price: price }],
+				SubscriberPrices: [
+					{ CurrencyType: CurrencyType.RecCenterTokens, Price: subscriberPriceFor(price) },
+				],
+			})
+			identities.add(identity)
+			if (name) names.add(name)
+			usedIds.add(nextId)
+			nextId += 1
+		}
+	}
+
+	return additions.length === 0 ? items : [...items, ...additions]
+}
+
 interface StoreItem {
 	GiftDrop: StoreGiftDrop
 	Prices: StorePrice[]
@@ -1457,6 +1529,7 @@ async function loadCachedStorefrontResponse(
 		catalog.StoreItems = repriceDeadCurrencyItems(catalog.StoreItems)
 		if (path === '/sf3-2025.json') {
 			catalog.StoreItems = withCatalogWearables(catalog.StoreItems)
+			catalog.StoreItems = await withRroShopItems(c, catalog.StoreItems)
 		}
 		// Same enrichment the listing routes apply (thumbnails + real catalog descs),
 		// so what is bought is what was browsed and the grant keys the inventory row
