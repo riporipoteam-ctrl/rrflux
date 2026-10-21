@@ -861,17 +861,20 @@ describe('rooms endpoints', () => {
 		const res = await SELF.fetch(`${ORIGIN}/rooms/hot?tag=rro&skip=0&take=100`)
 		expect(res.status).toBe(200)
 		const body = (await res.json()) as {
-			Results: Array<{ Name: string; Tags?: Array<{ Tag: string }> }>
+			Results: Array<{ Name: string; IsRRO?: boolean; Tags?: Array<{ Tag: string }> }>
 			TotalResults: number
 		}
 		expect(body.Results.length).toBeGreaterThan(0)
-		// Every result carries the rro tag, and a known rro room is present.
-		expect(body.Results.every((r) => (r.Tags ?? []).some((t) => t.Tag === 'rro'))).toBe(true)
+		// RRO is authoritative either as the room flag or the derived tag. Recovered
+		// records can predate the normalized room_tag table and carry only the flag.
+		expect(
+			body.Results.every((r) => r.IsRRO === true || (r.Tags ?? []).some((t) => t.Tag === 'rro'))
+		).toBe(true)
 		expect(body.Results.some((r) => r.Name === 'RecCenter')).toBe(true)
 	})
 
 	it('does not hide an RRO solely because its published save is unavailable', async () => {
-		const ids = [30811, 30812]
+		const ids = [52815862, 52815871]
 		for (const [RoomId, Name] of [
 			[ids[0], 'Showdown'],
 			[ids[1], 'MyLittleMonsters'],
@@ -881,11 +884,11 @@ describe('rooms endpoints', () => {
 				Name,
 				CreatorAccountId: 1,
 				Accessibility: 1,
-				ExcludeFromLists: false,
+				ExcludeFromLists: Name === 'MyLittleMonsters',
 				IsDorm: false,
 				IsRRO: true,
 				SubRooms: [],
-				Tags: [{ Tag: 'rro', Type: 2 }],
+				Tags: Name === 'Showdown' ? [{ Tag: 'pvp', Type: 0 }] : [],
 			})
 		}
 

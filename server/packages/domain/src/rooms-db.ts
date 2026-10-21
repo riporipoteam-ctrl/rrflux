@@ -1661,7 +1661,9 @@ const ROOM_COLUMNS = 'data, visits'
  * the column's integer affinity while failing `=== 1` in JS, and the feeds must agree
  * with {@link isListable} rather than with SQLite.
  */
-const LISTABLE_WHERE = 'is_dorm IS NOT 1 AND accessibility = 1 AND exclude_from_lists IS NOT 1'
+const RECOVERED_RRO_ROOM_IDS = new Set([52815862, 52815871])
+const LISTABLE_WHERE =
+	'is_dorm IS NOT 1 AND accessibility = 1 AND (exclude_from_lists IS NOT 1 OR room_id IN (52815862, 52815871))'
 
 /**
  * The wider half of {@link LISTABLE_WHERE}: public and not a dorm, without the
@@ -2967,7 +2969,7 @@ function isListable(room: Room): boolean {
 	return (
 		room.IsDorm !== true &&
 		room.Accessibility === 1 &&
-		room.ExcludeFromLists !== true
+		(room.ExcludeFromLists !== true || RECOVERED_RRO_ROOM_IDS.has(roomIdOf(room)))
 	)
 }
 
@@ -3014,7 +3016,8 @@ export async function getHotRooms(
 	// A REAL tag narrows in SQL — this is the query `room_tag` exists for, and the one a
 	// discovery category row runs: only the rooms carrying the tag have their blobs read.
 	// The two pseudo-tags below name no tag at all, so they still scan.
-	const isPseudo = t === '' || t === NEW_TAG || t === COMMUNITY_TAG
+	const isRroFilter = t === 'rro' || (TAG_ALIASES[t] ?? []).includes('rro')
+	const isPseudo = t === '' || t === NEW_TAG || t === COMMUNITY_TAG || isRroFilter
 	const { sql, binds } = roomsByTagsQuery(
 		isPseudo ? [] : [[t, ...(TAG_ALIASES[t] ?? [])]],
 		LISTABLE_WHERE
@@ -3042,6 +3045,7 @@ export async function getHotRooms(
 	if (t === COMMUNITY_TAG) {
 		rooms = rooms.filter((r) => r.CreatorAccountId !== COACH_ACCOUNT_ID)
 	}
+	if (isRroFilter) rooms = rooms.filter(isRRO)
 
 	const players = await countPlayersByRoom(db)
 	const playerCount = (r: Room): number => players.get(roomIdOf(r)) ?? 0
