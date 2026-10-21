@@ -870,6 +870,38 @@ describe('rooms endpoints', () => {
 		expect(body.Results.some((r) => r.Name === 'RecCenter')).toBe(true)
 	})
 
+	it('does not hide an RRO solely because its published save is unavailable', async () => {
+		const ids = [30811, 30812]
+		for (const [RoomId, Name] of [
+			[ids[0], 'Showdown'],
+			[ids[1], 'MyLittleMonsters'],
+		] as const) {
+			await seedRoomWithSubRooms(env.DB, {
+				RoomId,
+				Name,
+				CreatorAccountId: 1,
+				Accessibility: 1,
+				ExcludeFromLists: false,
+				IsDorm: false,
+				IsRRO: true,
+				SubRooms: [],
+				Tags: [{ Tag: 'rro', Type: 2 }],
+			})
+		}
+
+		const body = (await (
+			await SELF.fetch(`${ORIGIN}/rooms/hot?tag=rro&skip=0&take=200`)
+		).json()) as { Results: Array<{ Name: string }> }
+		expect(body.Results.map((room) => room.Name)).toEqual(
+			expect.arrayContaining(['Showdown', 'MyLittleMonsters'])
+		)
+
+		await env.DB.prepare('DELETE FROM room_tag WHERE room_id IN (?1, ?2)')
+			.bind(...ids)
+			.run()
+		await env.DB.prepare('DELETE FROM room WHERE room_id IN (?1, ?2)').bind(...ids).run()
+	})
+
 	it('GET /rooms/hot respects take pagination (TotalResults is the full count)', async () => {
 		const res = await SELF.fetch(`${ORIGIN}/rooms/hot?tag=rro&skip=0&take=2`)
 		const body = (await res.json()) as { Results: unknown[]; TotalResults: number }
