@@ -25,6 +25,8 @@ use crate::progress::Progress;
 const RELEASES_URL: &str =
     "https://api.github.com/repos/riporipoteam-ctrl/rrflux/releases?per_page=20";
 const SETUP_ASSET_NAME: &str = "FluxRec-Setup.exe";
+const RELEASE_TAG_PREFIX: &str = "ripo-team-launcher-v";
+const LEGACY_RELEASE_TAG_PREFIX: &str = "recflare-installer-v";
 /// Hard ceiling for the whole update check (keeps launches snappy).
 const CHECK_TIMEOUT_SECS: u64 = 5;
 
@@ -47,10 +49,10 @@ fn stamp_cache(install_dir: &Path) {
     let _ = std::fs::write(cache_path(install_dir), now_secs().to_string());
 }
 
-/// Parse "v0.1.7" / "0.1.7" / "recflare-installer-v0.1.1" into (0,1,7).
+/// Parse "v0.1.7" / "0.1.7" / "ripo-team-launcher-v1.0.44" into a tuple.
 /// Returns None when no numeric version can be found.
 fn parse_version(tag: &str) -> Option<(u64, u64, u64)> {
-    // Take the trailing numeric dotted run: "recflare-installer-v0.1.1" -> "0.1.1".
+    // Take the trailing numeric dotted run: "ripo-team-launcher-v1.0.44" -> "1.0.44".
     let tail = tag
         .trim_start_matches(|c: char| !c.is_ascii_digit())
         .split(|c: char| !(c.is_ascii_digit() || c == '.'))
@@ -149,7 +151,7 @@ async fn check_via_api(client: &reqwest::Client) -> Option<UpdateDecision> {
 }
 
 /// v1.0.7: Fallback when api.github.com is unreachable. Fetches the releases
-/// HTML page from github.com and extracts the latest recflare-installer-v* tag.
+/// HTML page from github.com and extracts the latest Ripo Team Launcher tag.
 async fn check_via_html(client: &reqwest::Client) -> UpdateDecision {
     const HTML_URL: &str = "https://github.com/riporipoteam-ctrl/rrflux/releases";
     let resp = match client.get(HTML_URL).send().await {
@@ -163,22 +165,23 @@ async fn check_via_html(client: &reqwest::Client) -> UpdateDecision {
         Ok(t) => t,
         Err(_) => return UpdateDecision::CheckFailed,
     };
-    // Find all recflare-installer-vX.Y.Z tags in the HTML.
-    // The HTML contains href="/riporipoteam-ctrl/rrflux/releases/tag/recflare-installer-vX.Y.Z"
     let mut best: Option<((u64, u64, u64), String)> = None;
-    for part in html.split("recflare-installer-v") {
-        // part starts with "X.Y.Z..." — extract version
-        let ver_str: String = part
-            .chars()
-            .take_while(|c| c.is_ascii_digit() || *c == '.')
-            .collect();
-        if ver_str.is_empty() {
-            continue;
-        }
-        if let Some(ver) = parse_version(&format!("recflare-installer-v{}", ver_str)) {
-            let tag = format!("recflare-installer-v{}", ver_str);
-            if best.as_ref().map_or(true, |(bv, _)| ver > *bv) {
-                best = Some((ver, tag));
+    // Read the current product tag plus the legacy tag so installed v1.0.43 and older
+    // launchers can cross the branding migration without losing automatic updates.
+    for prefix in [RELEASE_TAG_PREFIX, LEGACY_RELEASE_TAG_PREFIX] {
+        for part in html.split(prefix).skip(1) {
+            let ver_str: String = part
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            if ver_str.is_empty() {
+                continue;
+            }
+            if let Some(ver) = parse_version(&format!("{}{}", prefix, ver_str)) {
+                let tag = format!("{}{}", prefix, ver_str);
+                if best.as_ref().map_or(true, |(bv, _)| ver > *bv) {
+                    best = Some((ver, tag));
+                }
             }
         }
     }
@@ -190,7 +193,11 @@ async fn check_via_html(client: &reqwest::Client) -> UpdateDecision {
                 tag, SETUP_ASSET_NAME
             );
             return UpdateDecision::Available {
-                version: tag.trim_start_matches("recflare-installer-v").to_string(),
+                version: tag
+                    .strip_prefix(RELEASE_TAG_PREFIX)
+                    .or_else(|| tag.strip_prefix(LEGACY_RELEASE_TAG_PREFIX))
+                    .unwrap_or(&tag)
+                    .to_string(),
                 download_url,
             };
         }
@@ -211,7 +218,7 @@ fn find_update(releases: &[serde_json::Value], current: (u64, u64, u64)) -> Upda
         // Only our own installer line. The v0.5.x bootstrap/NSIS line also
         // ships a FluxRec-Setup.exe asset but is a different product — its
         // higher version number must never pull us across product lines.
-        if !tag.starts_with("recflare-installer-") {
+        if !tag.starts_with(RELEASE_TAG_PREFIX) && !tag.starts_with(LEGACY_RELEASE_TAG_PREFIX) {
             continue;
         }
         let ver = match parse_version(tag) {
@@ -305,6 +312,8 @@ mod tests {
     fn version_parsing() {
         assert_eq!(parse_version("v0.1.7"), Some((0, 1, 7)));
         assert_eq!(parse_version("0.1.6"), Some((0, 1, 6)));
+        assert_eq!(parse_version("ripo-team-launcher-v1.0.44"), Some((1, 0, 44)));
+        // Existing installations must still understand releases from before the rename.
         assert_eq!(parse_version("recflare-installer-v0.1.1"), Some((0, 1, 1)));
         assert_eq!(
             parse_version("recflare-installer-v0.1.11"),
@@ -331,7 +340,7 @@ mod tests {
     fn find_update_picks_newest_newer_release_with_asset() {
         // Newest-first, as the API returns them.
         let releases = vec![
-            rel("recflare-installer-v0.1.11", Some("https://dl/0.1.11.exe")),
+            rel("ripo-team-launcher-v0.1.11", Some("https://dl/0.1.11.exe")),
             rel("recflare-installer-v0.1.10", Some("https://dl/0.1.10.exe")),
         ];
         match find_update(&releases, (0, 1, 10)) {
@@ -339,7 +348,7 @@ mod tests {
                 version,
                 download_url,
             } => {
-                assert_eq!(version, "recflare-installer-v0.1.11");
+                assert_eq!(version, "ripo-team-launcher-v0.1.11");
                 assert_eq!(download_url, "https://dl/0.1.11.exe");
             }
             UpdateDecision::UpToDate => panic!("expected an update"),
@@ -362,7 +371,7 @@ mod tests {
     #[test]
     fn find_update_ignores_other_product_lines() {
         // The v0.5.x bootstrap line also ships a FluxRec-Setup.exe asset
-        // but must never pull the recflare line across products — even
+        // but must never pull the Ripo Team Launcher line across products — even
         // though 0.5.8 > 0.1.10 numerically.
         let releases = vec![
             rel("v0.5.8", Some("https://dl/bootstrap.exe")),
@@ -379,12 +388,12 @@ mod tests {
         // Newer tag but no asset / no download URL: keep scanning, don't
         // offer a broken update.
         let releases = vec![
-            rel("recflare-installer-v0.1.12", None),
-            rel("recflare-installer-v0.1.11", Some("https://dl/0.1.11.exe")),
+            rel("ripo-team-launcher-v0.1.12", None),
+            rel("ripo-team-launcher-v0.1.11", Some("https://dl/0.1.11.exe")),
         ];
         match find_update(&releases, (0, 1, 10)) {
             UpdateDecision::Available { version, .. } => {
-                assert_eq!(version, "recflare-installer-v0.1.11");
+                assert_eq!(version, "ripo-team-launcher-v0.1.11");
             }
             UpdateDecision::UpToDate => panic!("expected an update"),
             UpdateDecision::CheckFailed => panic!("update check unexpectedly failed"),
@@ -394,12 +403,12 @@ mod tests {
     #[test]
     fn find_update_ignores_unparseable_tags() {
         let releases = vec![
-            rel("recflare-installer-latest", Some("https://dl/x.exe")),
-            rel("recflare-installer-v0.1.11", Some("https://dl/0.1.11.exe")),
+            rel("ripo-team-launcher-latest", Some("https://dl/x.exe")),
+            rel("ripo-team-launcher-v0.1.11", Some("https://dl/0.1.11.exe")),
         ];
         match find_update(&releases, (0, 1, 10)) {
             UpdateDecision::Available { version, .. } => {
-                assert_eq!(version, "recflare-installer-v0.1.11");
+                assert_eq!(version, "ripo-team-launcher-v0.1.11");
             }
             UpdateDecision::UpToDate => panic!("expected an update"),
             UpdateDecision::CheckFailed => panic!("update check unexpectedly failed"),
