@@ -66,7 +66,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Continue'
           $ver = (Select-String -Path game\installer\Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches.Groups[1].Value
-          $tag = "recflare-installer-v$ver"
+          $tag = "ripo-team-launcher-v$ver"
           # NOTE: do NOT pipe gh to Out-Null here — a pipeline leaves $LASTEXITCODE
           # stale (it reflects only the last *native* command), which silently
           # skipped release creation in v0.1.4.
@@ -88,5 +88,6 @@ jobs:
         with:
           name: Ripo-Team-Launcher-Setup
           path: game/installer/target/release/FluxRec-Setup.exe
+
 
 
