@@ -22,6 +22,7 @@ import {
 	PRESENCE_SCHEMA_DDL,
 	PRESENCE_TTL_SECONDS,
 	PROGRESSION_SCHEMA_DDL,
+	randomizedLevelReward,
 	RECEIVED_GIFT_SCHEMA_DDL,
 	RELATIONSHIP_SCHEMA_DDL,
 	ROOM_INSTANCE_SCHEMA_DDL,
@@ -1024,6 +1025,18 @@ describe('public endpoints', () => {
 		expect([31, 35, 40, 49].map((level) => LEVEL_REWARDS[level])).toEqual([30, 30, 30, 30])
 		expect(LEVEL_REWARDS[50]).toBe(50) // the only 5-Star in the progression
 		expect(LEVEL_REWARDS).toHaveLength(51)
+	})
+
+	test('every earned level deterministically distributes clothing or backpack boxes', () => {
+		const rewards = Array.from({ length: 50 }, (_, index) =>
+			randomizedLevelReward(4242, index + 1)
+		)
+		expect(rewards).not.toContain(null)
+		expect(rewards.map((reward) => reward?.kind)).toContain('clothing')
+		expect(rewards.map((reward) => reward?.kind)).toContain('consumable')
+		expect(randomizedLevelReward(4242, 37)).toEqual(randomizedLevelReward(4242, 37))
+		expect(randomizedLevelReward(4242, 0)).toBeNull()
+		expect(randomizedLevelReward(4242, 51)).toBeNull()
 	})
 
 	test('the ladder matches the published XP curve', async () => {

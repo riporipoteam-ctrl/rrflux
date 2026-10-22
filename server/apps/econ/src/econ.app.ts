@@ -14,7 +14,7 @@ import {
 	getPendingGifts,
 	getPlayerIdsInRoom,
 	grantInvention,
-	levelReward,
+	randomizedLevelReward,
 	levelsReached,
 	ownsInvention,
 	setOutfit,
@@ -3126,7 +3126,7 @@ async function grantLevelUpGifts(
 	try {
 		const rollCatalog = await loadRollCatalog(c)
 		for (const level of levels) {
-			const reward = levelReward(level)
+			const reward = randomizedLevelReward(accountId, level)
 			if (reward === null) continue
 			const message = `Level ${level}!`
 			// A consumable is rolled to a concrete drop up front; clothing rides the query path,
