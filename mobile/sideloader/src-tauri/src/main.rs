@@ -29,6 +29,7 @@ impl Drop for TemporaryIpa {
 struct Diagnostics {
     apple_mobile_device_service: bool,
     device_helper_path: Option<String>,
+    sideloadly_path: Option<String>,
     official_ipa_configured: bool,
 }
 
@@ -56,6 +57,32 @@ fn find_tool(name: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+fn find_sideloadly() -> Option<PathBuf> {
+    let mut paths = Vec::new();
+    for variable in ["LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"] {
+        if let Some(root) = std::env::var_os(variable) {
+            let root = PathBuf::from(root);
+            paths.push(root.join("Sideloadly").join("Sideloadly.exe"));
+            paths.push(root.join("iOSGods").join("Sideloadly").join("Sideloadly.exe"));
+        }
+    }
+    paths.into_iter().find(|path| path.is_file()).or_else(|| {
+        Command::new("where.exe")
+            .arg("Sideloadly.exe")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .map(PathBuf::from)
+            })
+            .filter(|path| path.is_file())
+    })
+}
+
 fn apple_service_running() -> bool {
     Command::new("sc.exe")
         .args(["query", "Apple Mobile Device Service"])
@@ -69,6 +96,7 @@ fn diagnostics() -> Diagnostics {
     Diagnostics {
         apple_mobile_device_service: apple_service_running(),
         device_helper_path: find_tool("ripo-ios-device-helper.exe").map(|p| p.display().to_string()),
+        sideloadly_path: find_sideloadly().map(|p| p.display().to_string()),
         official_ipa_configured: official_ipa_setting("RIPO_LAUNCHER_IPA_URL").is_some()
             && official_ipa_setting("RIPO_LAUNCHER_IPA_SHA256_URL").is_some(),
     }
@@ -124,7 +152,7 @@ fn choose_ipa() -> Option<String> {
         .map(|path| path.display().to_string())
 }
 
-fn validate_ipa(path: &Path) -> Result<(), String> {
+fn validate_ipa_structure(path: &Path) -> Result<bool, String> {
     if path.extension().and_then(|value| value.to_str()).map(|value| value.eq_ignore_ascii_case("ipa")) != Some(true) {
         return Err("Select an .ipa file.".to_string());
     }
@@ -141,8 +169,12 @@ fn validate_ipa(path: &Path) -> Result<(), String> {
     if !has_app {
         return Err("The IPA does not contain a Payload/*.app bundle.".to_string());
     }
-    if !has_profile {
-        return Err("The IPA has no embedded provisioning profile. Build and sign it for this device first.".to_string());
+    Ok(has_profile)
+}
+
+fn validate_installable_ipa(path: &Path) -> Result<(), String> {
+    if !validate_ipa_structure(path)? {
+        return Err("The IPA has no embedded provisioning profile. Sign it for this device with Sideloadly, Xcode, or the Ripo Team build pipeline first.".to_string());
     }
     Ok(())
 }
@@ -151,7 +183,7 @@ fn validate_ipa(path: &Path) -> Result<(), String> {
 async fn install_ipa(ipa_path: String, udid: String, wireless: bool) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let ipa = PathBuf::from(ipa_path);
-        validate_ipa(&ipa)?;
+        validate_installable_ipa(&ipa)?;
         if udid.trim().is_empty() {
             return Err("Select an iPhone first.".to_string());
         }
@@ -173,6 +205,24 @@ async fn install_ipa(ipa_path: String, udid: String, wireless: bool) -> Result<S
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn open_in_sideloadly(ipa_path: String) -> Result<String, String> {
+    let ipa = PathBuf::from(ipa_path);
+    let already_signed = validate_ipa_structure(&ipa)?;
+    let sideloadly = find_sideloadly().ok_or(
+        "Sideloadly was not found. Install it from sideloadly.io, then press Check again."
+    )?;
+    Command::new(&sideloadly)
+        .arg(&ipa)
+        .spawn()
+        .map_err(|e| format!("could not open {}: {e}", sideloadly.display()))?;
+    Ok(if already_signed {
+        "Opened the IPA in Sideloadly. Keep the same Apple ID and bundle ID when updating, and enable automatic refresh.".to_string()
+    } else {
+        "Opened the unsigned IPA in Sideloadly. Sign it with your Apple ID, keep automatic refresh enabled, then sideload it to the paired device.".to_string()
+    })
 }
 
 #[tauri::command]
@@ -244,7 +294,7 @@ async fn download_official_ipa() -> Result<String, String> {
     if expected != actual {
         return Err("The downloaded IPA failed SHA-256 verification.".to_string());
     }
-    validate_ipa(&temporary.path)?;
+    validate_installable_ipa(&temporary.path)?;
     let result = temporary.path.display().to_string();
     temporary.cleanup = false;
     Ok(result)
@@ -257,6 +307,7 @@ fn main() {
             list_devices,
             choose_ipa,
             install_ipa,
+            open_in_sideloadly,
             download_official_ipa,
         ])
         .run(tauri::generate_context!())
