@@ -502,10 +502,21 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
                 crate::stealth::launch_hidden(&injector, &[]);
                 std::thread::sleep(Duration::from_millis(500));
             } else {
-                println!(
-                    "[launcher] 2026 client detected (Referee anti-cheat) — skipping injector."
-                );
+                let batch = dir.join("RecRoomScreen.bat");
+                if !batch.is_file() {
+                    let msg = "2026 patch launcher is missing. Re-run Ripo Team Launcher setup.";
+                    eprintln!("[launcher] {msg}");
+                    progress.set_status(msg, 100);
+                    std::thread::sleep(Duration::from_secs(6));
+                    return;
+                }
                 progress.set_status("Launching game\u{2026}", 100);
+                let command = std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into());
+                let batch_arg = batch.to_string_lossy().to_string();
+                println!("[launcher] starting 2026 patch launcher: {}", batch.display());
+                crate::stealth::launch_hidden(Path::new(&command), &["/d", "/c", batch_arg.as_str()]);
+                std::thread::sleep(Duration::from_secs(3));
+                return;
             }
             println!("[launcher] starting game: {}", exe.display());
             crate::stealth::launch_hidden(&exe, &["+forcemode:screen"]);
