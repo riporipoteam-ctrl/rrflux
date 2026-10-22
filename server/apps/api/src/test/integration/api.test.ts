@@ -1048,14 +1048,22 @@ describe('public endpoints', () => {
 		expect(applyLevelUps(1, 9)).toEqual({ level: 1, xp: 9 })
 	})
 
-	test('POST /api/players/v2/progression/bulk returns an array', async () => {
-		const res = await exports.default.fetch(`${ORIGIN}/api/players/v2/progression/bulk`, {
+	test.each([
+		{ path: '/api/players/v1/progression/bulk', playerId: 4244 },
+		{ path: '/api/players/v2/progression/bulk', playerId: 4246 },
+		{ path: '/api/v1/progression/bulk', playerId: 4248 },
+	])('POST $path returns stored levels for profile cards', async ({ path, playerId }) => {
+		await addXp(env.DB, playerId, 25)
+		const res = await exports.default.fetch(`${ORIGIN}${path}`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-			body: new URLSearchParams({ Ids: '1,2,3' }),
+			body: new URLSearchParams({ Ids: `${playerId},${playerId + 1}` }),
 		})
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual([])
+		expect(await res.json()).toEqual([
+			{ PlayerId: playerId, Level: 3, XP: 5 },
+			{ PlayerId: playerId + 1, Level: 1, XP: 0 },
+		])
 	})
 
 	test('GET /api/customAvatarItems/v1/isCreationAllowedForAccount returns a success envelope', async () => {

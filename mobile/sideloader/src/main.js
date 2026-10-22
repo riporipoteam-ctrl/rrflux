@@ -4,16 +4,21 @@ const appleDot = document.querySelector("#apple-dot");
 const toolsDot = document.querySelector("#tools-dot");
 const appleState = document.querySelector("#apple-state");
 const toolsState = document.querySelector("#tools-state");
+const sideloadlyDot = document.querySelector("#sideloadly-dot");
+const sideloadlyState = document.querySelector("#sideloadly-state");
 const devices = document.querySelector("#devices");
 const wireless = document.querySelector("#wireless");
 const ipaPath = document.querySelector("#ipa-path");
 const installButton = document.querySelector("#install");
 const officialButton = document.querySelector("#official");
+const sideloadlyButton = document.querySelector("#sideloadly");
 const log = document.querySelector("#log");
 let selectedIpa = "";
+let sideloadlyReady = false;
 
 function updateInstallState() {
   installButton.disabled = !selectedIpa || !devices.value;
+  sideloadlyButton.disabled = !selectedIpa || !sideloadlyReady;
 }
 
 async function check() {
@@ -23,6 +28,9 @@ async function check() {
   const toolsReady = Boolean(data.deviceHelperPath);
   toolsDot.classList.toggle("ok", toolsReady);
   toolsState.textContent = toolsReady ? "Bundled iPhone install engine is ready" : "The bundled iPhone install engine is missing";
+  sideloadlyReady = Boolean(data.sideloadlyPath);
+  sideloadlyDot.classList.toggle("ok", sideloadlyReady);
+  sideloadlyState.textContent = sideloadlyReady ? "Sideloadly signing and auto-refresh are available" : "Sideloadly is optional and was not detected";
   officialButton.disabled = !data.officialIpaConfigured;
 }
 
@@ -84,6 +92,17 @@ installButton.onclick = async () => {
     log.textContent = await invoke("install_ipa", { ipaPath: selectedIpa, udid: devices.value, wireless: wireless.checked });
   } catch (error) {
     log.textContent = `Install failed: ${error}`;
+  }
+  updateInstallState();
+};
+
+sideloadlyButton.onclick = async () => {
+  sideloadlyButton.disabled = true;
+  log.textContent = "Opening the selected IPA in Sideloadly…";
+  try {
+    log.textContent = await invoke("open_in_sideloadly", { ipaPath: selectedIpa });
+  } catch (error) {
+    log.textContent = `Sideloadly handoff failed: ${error}`;
   }
   updateInstallState();
 };

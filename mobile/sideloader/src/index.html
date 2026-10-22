@@ -62,6 +62,7 @@
           <h2>PC readiness</h2>
           <div class="check"><span class="dot" id="apple-dot"></span><span id="apple-state">Checking Apple device service…</span></div>
           <div class="check"><span class="dot" id="tools-dot"></span><span id="tools-state">Checking install tools…</span></div>
+          <div class="check"><span class="dot" id="sideloadly-dot"></span><span id="sideloadly-state">Checking for Sideloadly…</span></div>
           <button class="secondary" id="recheck">Check again</button>
         </section>
         <section class="card">
@@ -75,8 +76,8 @@
         <section class="card full">
           <h2>Launcher IPA</h2>
           <div class="row"><div class="path" id="ipa-path">No IPA selected</div><button class="secondary" id="browse">Choose IPA</button><button class="secondary" id="official">Download official</button></div>
-          <div class="warning">This installer checks the IPA package and SHA-256 for official downloads. iPhone validates the signature and provisioning profile during installation; the profile must include this device.</div>
-          <div class="options"><span></span><button class="primary" id="install" disabled>Install on iPhone</button></div>
+          <div class="warning">Signed IPA: install directly. Unsigned IPA: open it in Sideloadly, sign with your Apple ID, keep the same bundle ID for updates, and enable automatic refresh.</div>
+          <div class="options"><button class="secondary" id="sideloadly" disabled>Open in Sideloadly</button><button class="primary" id="install" disabled>Install signed IPA</button></div>
           <div id="log">Waiting for a device and IPA…</div>
         </section>
       </div>
