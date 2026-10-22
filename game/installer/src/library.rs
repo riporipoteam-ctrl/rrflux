@@ -581,17 +581,10 @@ fn worker_checks(dir: &Path, _ns_host: &str, generation: u64, msg_tx: &Sender<Li
         return;
     }
 
-    // Update check: skip the network if we checked recently.
-    if network_check_fresh(dir) {
-        let _ = msg_tx.send(LibMsg::Ready {
-            generation,
-            update_available: false,
-            update_version: String::new(),
-        });
-        return;
-    }
-
-    // Do the update check on a current-thread runtime.
+    // Do the update check on a current-thread runtime.  Availability is never
+    // cached: otherwise a launcher opened shortly after a new release can
+    // incorrectly say it is up to date for an hour.  The request itself has a
+    // short timeout, so this does not hold up the library UI.
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build();

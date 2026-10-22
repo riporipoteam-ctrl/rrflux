@@ -211,8 +211,10 @@ async fn check_via_html(client: &reqwest::Client) -> UpdateDecision {
 /// API returns it). Split out from the network fetch so the product-line
 /// filter and version comparison are unit-testable.
 fn find_update(releases: &[serde_json::Value], current: (u64, u64, u64)) -> UpdateDecision {
-    // The API returns newest first: the first release carrying our asset
-    // that is newer than us wins.
+    // GitHub's release list is ordered by release creation time, which can
+    // differ from semantic version order when a release is rebuilt.  Select
+    // the highest valid newer version rather than trusting list order.
+    let mut candidate: Option<((u64, u64, u64), String, String)> = None;
     for rel in releases {
         let tag = rel.get("tag_name").and_then(|v| v.as_str()).unwrap_or("");
         // Only our own installer line. The v0.5.x bootstrap/NSIS line also
@@ -233,16 +235,22 @@ fn find_update(releases: &[serde_json::Value], current: (u64, u64, u64)) -> Upda
             .into_iter()
             .flatten()
             .find(|a| a.get("name").and_then(|n| n.as_str()) == Some(SETUP_ASSET_NAME));
-        if let Some(a) = asset {
-            if let Some(url) = a.get("browser_download_url").and_then(|u| u.as_str()) {
-                return UpdateDecision::Available {
-                    version: tag.to_string(),
-                    download_url: url.to_string(),
-                };
-            }
+        let Some(a) = asset else { continue };
+        let Some(url) = a.get("browser_download_url").and_then(|u| u.as_str()) else {
+            continue;
+        };
+        let is_better = match candidate.as_ref() {
+            Some((best, _, _)) => ver > *best,
+            None => true,
+        };
+        if is_better {
+            candidate = Some((ver, tag.to_string(), url.to_string()));
         }
     }
-    UpdateDecision::UpToDate
+    match candidate {
+        Some((_, version, download_url)) => UpdateDecision::Available { version, download_url },
+        None => UpdateDecision::UpToDate,
+    }
 }
 
 /// Download the update asset to `dest` with progress ("Downloading
@@ -350,6 +358,27 @@ mod tests {
             } => {
                 assert_eq!(version, "ripo-team-launcher-v0.1.11");
                 assert_eq!(download_url, "https://dl/0.1.11.exe");
+            }
+            UpdateDecision::UpToDate => panic!("expected an update"),
+            UpdateDecision::CheckFailed => panic!("update check unexpectedly failed"),
+        }
+    }
+
+    #[test]
+    fn find_update_uses_highest_version_when_release_order_is_not_semver_order() {
+        // GitHub can return a rebuilt older release before a newer tag.
+        let releases = vec![
+            rel("ripo-team-launcher-v1.0.47", Some("https://dl/1.0.47.exe")),
+            rel("ripo-team-launcher-v1.0.49", Some("https://dl/1.0.49.exe")),
+            rel("ripo-team-launcher-v1.0.48", Some("https://dl/1.0.48.exe")),
+        ];
+        match find_update(&releases, (1, 0, 46)) {
+            UpdateDecision::Available {
+                version,
+                download_url,
+            } => {
+                assert_eq!(version, "ripo-team-launcher-v1.0.49");
+                assert_eq!(download_url, "https://dl/1.0.49.exe");
             }
             UpdateDecision::UpToDate => panic!("expected an update"),
             UpdateDecision::CheckFailed => panic!("update check unexpectedly failed"),
