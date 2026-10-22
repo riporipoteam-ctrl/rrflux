@@ -105,6 +105,30 @@ export function levelReward(level: number): LevelReward | null {
 		: { kind: 'clothing', rarity: reward }
 }
 
+/**
+ * Pick the kind of box for one player and level, while keeping retries idempotent.
+ *
+ * Gift creation can be retried after a worker or network failure. Using Math.random here
+ * could turn the same level into a different box on a retry, so this uses a small integer
+ * mixer over account id + level. The result is still distributed between backpack and
+ * clothing boxes across players and levels, but is stable for the same earned reward.
+ * Clothing keeps the published star tier for that level; early consumable-only levels use
+ * the first (2-star) tier when their roll lands on clothing.
+ */
+export function randomizedLevelReward(accountId: number, level: number): LevelReward | null {
+	const configured = LEVEL_REWARDS[level]
+	if (configured === undefined || configured === 0) return null
+	let mixed = (accountId ^ Math.imul(level, 0x9e3779b1)) >>> 0
+	mixed ^= mixed >>> 16
+	mixed = Math.imul(mixed, 0x7feb352d) >>> 0
+	mixed ^= mixed >>> 15
+	if ((mixed & 1) === 0) return { kind: 'consumable' }
+	return {
+		kind: 'clothing',
+		rarity: configured === CONSUMABLE_REWARD ? 10 : configured,
+	}
+}
+
 /** The last level the ladder defines. At the top XP still accrues, but nothing levels. */
 export const MAX_LEVEL = LEVEL_REQUIRED_XP.length - 1
 

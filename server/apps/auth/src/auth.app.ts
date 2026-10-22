@@ -253,18 +253,19 @@ async function roleFilterAnswer(c: Context<App>, role: 'developer' | 'moderator'
 
 /**
  * The role names beyond `gameClient` for an account's token `role` claim. Base roles
- * (gameClient) are added by generateToken. `screenshare` is on EVERY token — it is a
- * feature gate the client reads, not a privilege anyone is granted. The rest are the
- * operator-granted extras, plus `junior` off the account's own `isJunior` flag.
+ * (gameClient) are added by generateToken. `screenshare` is an operator-granted feature;
+ * staff receive it as part of their role. The rest are operator-granted extras, plus
+ * `junior` off the account's own `isJunior` flag.
  * Order is stable so tokens are deterministic.
  */
 function accountRoles(
 	account: Pick<Account, 'isDeveloper' | 'isModerator' | 'isJunior' | 'canScreenshare'> | null
 ): string[] {
-	const roles: string[] = ['screenshare']
+	const roles: string[] = []
 	if (!account) return roles
 	if (account.isDeveloper) roles.push('developer')
 	if (account.isModerator) roles.push('moderator')
+	if (account.canScreenshare || account.isDeveloper || account.isModerator) roles.push('screenshare')
 	if (account.isJunior) roles.push('junior')
 	return roles
 }

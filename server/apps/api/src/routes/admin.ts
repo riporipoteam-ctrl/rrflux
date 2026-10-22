@@ -4,14 +4,22 @@ import { z } from 'zod'
 
 import {
 	createGift,
+	deletePresence,
 	getAccountByUsername,
 	getAccountsByIds,
 	getGift,
+	getPresence,
 	getRoomById,
 	searchAccounts,
 	updateAccount,
 } from '@repo/domain'
 import { intVar, logger } from '@repo/hono-helpers'
+
+import {
+	KickReportCategory,
+	type ModerationKickPayload,
+} from '../../../notify/src/notification-payloads'
+import { NotificationType } from '../../../notify/src/notification-types'
 
 // Token balances live in econ's balance table (shared `recflare` D1). Imported
 // cross-worker the same way moderation.ts imports chat/notify modules.
@@ -99,6 +107,50 @@ const OPERATOR_ACCOUNT_ID = 1
 
 /** Upper bound on a single token grant, against fat-finger accidents. */
 const MAX_TOKEN_GRANT = 1_000_000
+
+const HUB_INSTANCE = 'global'
+
+/** Immediately remove an online admin-banned player and show the native ban message. */
+async function pushAdminBan(
+	c: Context<App>,
+	accountId: number,
+	reason: string,
+	durationMinutes: number
+): Promise<boolean> {
+	const presence = await getPresence<{ roomInstanceId?: number }>(c.env.DB, accountId)
+	if (!presence) return false
+	const now = new Date().toISOString()
+	const durationSeconds = durationMinutes > 0 ? durationMinutes * 60 : 0
+	const durationText = durationMinutes > 0 ? ` for ${durationMinutes} minutes` : ' permanently'
+	const frame: ModerationKickPayload = {
+		ReportCategory: KickReportCategory.Moderator,
+		Duration: durationSeconds,
+		GameSessionId: presence.roomInstance?.roomInstanceId ?? 0,
+		IsHostKick: false,
+		Message: `You have been banned${durationText}. Reason: ${reason}`,
+		PlayerIdReporter: OPERATOR_ACCOUNT_ID,
+		IsBan: true,
+		IsVoiceModAutoban: false,
+		IsWarning: false,
+		VoteKickReason: reason,
+		TimeoutStartedAt: now,
+	}
+	await deletePresence(c.env.DB, accountId)
+	try {
+		await c.env.RECFLARE_NOTIFICATIONS_HUB.getByName(HUB_INSTANCE).notifyPlayerEphemeral(
+			accountId,
+			NotificationType.ModerationKick,
+			{ ...frame }
+		)
+		return true
+	} catch (err) {
+		logger.error('failed to push immediate admin ban', {
+			accountId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return false
+	}
+}
 
 /**
  * The roomInstance a presence row carries is the match worker's full instance
@@ -195,6 +247,66 @@ export const adminRoutes = new Hono<App>({ strict: false })
 				isModerator: updated.isModerator === true,
 				isDeveloper: updated.isDeveloper === true,
 				note: 'Takes effect on the player’s next login (roles are stamped into the token at sign-in).',
+			})
+		}
+	)
+
+	// ---- Screen sharing --------------------------------------------------
+	.post(
+		'/api/admin/v1/screenshare/set',
+		describeRoute({
+			tags: ['Admin'],
+			summary: 'Allow or deny a player screen sharing',
+			description:
+				'Sets the account flag that auth converts into the native `screenshare` token role. Takes effect on the next login. Admin-key only.',
+			requestBody: jsonBody(
+				UsernameBody.extend({ allowed: z.boolean() }),
+				'Player and desired screen-sharing access'
+			),
+			responses: {
+				200: json(
+					z.object({
+						success: z.literal(true),
+						username: z.string(),
+						accountId: z.number(),
+						allowed: z.boolean(),
+						note: z.string(),
+					}),
+					'The screen-sharing permission now stored'
+				),
+				400: json(AdminError, 'Bad username or allowed value'),
+				401: json(AdminError, 'Missing or wrong admin key'),
+				404: json(AdminError, 'No account with that username'),
+			},
+		}),
+		async (c) => {
+			const denied = requireAdminKey(c)
+			if (denied) return denied
+			const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+			const username = typeof body.username === 'string' ? body.username.trim() : ''
+			if (username === '') {
+				return c.json({ success: false as const, error: 'username is required' }, 400)
+			}
+			if (typeof body.allowed !== 'boolean') {
+				return c.json({ success: false as const, error: 'allowed must be a boolean' }, 400)
+			}
+			const account = await getAccountByUsername(c.env.DB, username)
+			if (!account) {
+				return c.json({ success: false as const, error: 'no such player' }, 404)
+			}
+			const updated = await updateAccount(c.env.DB, account.accountId, {
+				canScreenshare: body.allowed,
+			})
+			logger.info('admin screenshare permission set', {
+				targetAccountId: account.accountId,
+				allowed: body.allowed,
+			})
+			return c.json({
+				success: true as const,
+				username: updated.username,
+				accountId: updated.accountId,
+				allowed: updated.canScreenshare === true,
+				note: 'Takes effect on the player’s next login.',
 			})
 		}
 	)
@@ -349,6 +461,7 @@ export const adminRoutes = new Hono<App>({ strict: false })
 						banExpires: z.string().nullable(),
 						voiceBanned: z.boolean(),
 						voiceBanUntil: z.string().nullable(),
+						ejectedImmediately: z.boolean(),
 					}),
 					'The ban that is now in force'
 				),
@@ -420,6 +533,12 @@ export const adminRoutes = new Hono<App>({ strict: false })
 					durationMinutes === 0 ? NEVER_EXPIRES_ISO : (banExpires as string)
 				await updateAccount(c.env.DB, account.accountId, { voiceBanUntil })
 			}
+			const ejectedImmediately = await pushAdminBan(
+				c,
+				account.accountId,
+				reason,
+				durationMinutes
+			)
 			logger.info('admin ban created', {
 				targetAccountId: account.accountId,
 				reportId: report.id,
@@ -434,6 +553,7 @@ export const adminRoutes = new Hono<App>({ strict: false })
 				banExpires,
 				voiceBanned: voiceBan,
 				voiceBanUntil,
+				ejectedImmediately,
 			})
 		}
 	)

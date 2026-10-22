@@ -637,8 +637,7 @@ describe('auth worker routes', () => {
 		expect(payload.iss).toBe('https://auth.recflare.net')
 		expect(payload.aud).toBe('https://auth.recflare.net')
 		expect(payload.role).toContain('gameClient')
-		// screenshare is a feature gate, not a grant — every token carries it.
-		expect(payload.role).toContain('screenshare')
+		expect(payload.role).not.toContain('screenshare')
 		// A plain adult account carries nothing beyond those — no elevated roles.
 		expect(payload.role).not.toContain('developer')
 		expect(payload.role).not.toContain('moderator')
@@ -683,7 +682,26 @@ describe('auth worker routes', () => {
 			)
 			.run()
 		const payload = await tokenFor(`account_id=91&password=${LOGIN_PASSWORD}`)
-		expect(payload.role).toEqual(expect.arrayContaining(['gameClient', 'developer', 'moderator']))
+		expect(payload.role).toEqual(
+			expect.arrayContaining(['gameClient', 'developer', 'moderator', 'screenshare'])
+		)
+	})
+
+	test('POST /connect/token stamps screenshare only after it is granted', async () => {
+		await env.DB.prepare('INSERT OR IGNORE INTO account (data) VALUES (?1)')
+			.bind(
+				JSON.stringify({
+					accountId: 95,
+					username: 'ScreenPlayer',
+					passwordHash: await hashPassword(LOGIN_PASSWORD),
+					canScreenshare: true,
+				})
+			)
+			.run()
+		const payload = await tokenFor(`account_id=95&password=${LOGIN_PASSWORD}`)
+		expect(payload.role).toContain('screenshare')
+		expect(payload.role).not.toContain('developer')
+		expect(payload.role).not.toContain('moderator')
 	})
 
 	// Rec Room Plus rides on the token as `rn.plus`, stamped from `account.hasPlus` — which
@@ -756,7 +774,8 @@ describe('auth worker routes', () => {
 			)
 			.run()
 		const payload = await tokenFor(`account_id=92&password=${LOGIN_PASSWORD}`)
-		expect(payload.role).toEqual(expect.arrayContaining(['gameClient', 'screenshare', 'junior']))
+		expect(payload.role).toEqual(expect.arrayContaining(['gameClient', 'junior']))
+		expect(payload.role).not.toContain('screenshare')
 		expect(payload.role).not.toContain('developer')
 		// `rn.privilege` is a claim, not a scope — it sits beside `role`, never in `scope`.
 		expect(payload['rn.privilege']).toEqual(['BanVChat', 'BanRmChat'])
