@@ -1204,24 +1204,15 @@ pub(crate) async fn run_install(
         )
         .await
     } else if is_2026_install(dir) {
-        // v0.6.0: March 2026 client cannot launch (Referee service dead).
-        // Quarantine the 2026 tree and fresh-install the 2025 client.
-        println!("[install] 2026-era install detected — migrating to a clean 2025 tree.");
-        progress.set_stage("Migrating…");
-        progress.set_detail("Moving the old 2026 install aside (kept as backup)…".to_string());
-        quarantine_2023_tree(dir)?;
+        // The supported 2026 patch owns this exact client version and has a
+        // fingerprint guard. Keep the player's authorised client in place and
+        // install only the matching five patch files beside RecRoom.exe.
+        progress.set_stage("Configuring 2026 client…");
+        bepinex::install_patch2026_embedded(dir, ns_host)?;
+        finish_live_dir(dir, ns_host, progress);
+        progress.set_stage("Final checks…");
         progress.set_detail(String::new());
-        println!("[install] fresh install — building in staging.");
-        fresh_install(
-            dir,
-            &client,
-            ns_host,
-            photon_rt,
-            photon_voice,
-            photon_chat,
-            progress,
-        )
-        .await
+        Ok(())
     } else {
         println!("[install] upgrade — refreshing components in place with rollback.");
         upgrade_install(
