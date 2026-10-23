@@ -224,6 +224,12 @@ pub(crate) fn install_patch2026_embedded(game_dir: &Path, ns_host: &str) -> Resu
         ("RecRoomVR.bat", VR_BATCH),
     ] {
         let path = game_dir.join(name);
+        if std::fs::read(&path)
+            .map(|existing| existing.as_slice() == bytes)
+            .unwrap_or(false)
+        {
+            continue;
+        }
         if let Ok(metadata) = std::fs::metadata(&path) {
             let mut permissions = metadata.permissions();
             if permissions.readonly() {
