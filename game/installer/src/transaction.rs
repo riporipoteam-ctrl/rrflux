@@ -19,6 +19,8 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 
 /// A per-file backup created before an in-place component replacement.
 /// Restores the original on [`FileBackup::rollback`], deletes the backup on
@@ -140,6 +142,14 @@ impl Staging {
     /// directory is untouched and the staging tree is left for inspection.
     pub fn commit(self) -> io::Result<()> {
         let Staging { target, staging } = &self;
+        // A setup process launched from the game shortcut may itself have
+        // the live directory as its CWD. Windows refuses to rename a
+        // directory while any process holds that directory open (error 32).
+        // Move this process out before touching the live installation.
+        let parent = target.parent().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "install target has no parent")
+        })?;
+        std::env::set_current_dir(parent)?;
         // Keep at most one backup: clear a stale one from a crashed run.
         let backup = backup_dir(target);
         if backup.exists() {
@@ -147,14 +157,14 @@ impl Staging {
         }
         let had_target = target.exists();
         if had_target {
-            fs::rename(target, &backup)?;
+            rename_with_lock_retry(target, &backup)?;
         }
         // The swap itself: if this rename fails, the old tree is either
         // still in place (rename is atomic) or sitting in `backup`.
-        if let Err(e) = fs::rename(staging, target) {
+        if let Err(e) = rename_with_lock_retry(staging, target) {
             // Try to put the old tree back before reporting.
             if had_target {
-                let _ = fs::rename(&backup, target);
+                let _ = rename_with_lock_retry(&backup, target);
             }
             return Err(e);
         }
@@ -174,6 +184,21 @@ impl Staging {
         std::mem::forget(self);
         let _ = fs::remove_dir_all(&path);
     }
+}
+
+/// Antivirus and Explorer can briefly open a newly verified file while the
+/// installer swaps directories. Retry only Windows sharing violations;
+/// permission errors and other failures should surface immediately.
+fn rename_with_lock_retry(from: &Path, to: &Path) -> io::Result<()> {
+    for attempt in 0..20 {
+        match fs::rename(from, to) {
+            Err(e) if e.raw_os_error() == Some(32) && attempt < 19 => {
+                thread::sleep(Duration::from_millis(250));
+            }
+            result => return result,
+        }
+    }
+    unreachable!()
 }
 
 impl Drop for Staging {

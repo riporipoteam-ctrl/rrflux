@@ -332,6 +332,10 @@ pub(crate) fn spawn_update(dest: &Path, dir_s: &str, progress: &Progress) -> boo
     let child =
         match crate::stealth::hidden_command(dest.to_str().unwrap_or("FluxRec-Setup-update.exe"))
             .args(["--updated", "--dir", dir_s])
+            // The launcher normally starts in the live game directory. A
+            // child that inherits that working directory keeps Windows from
+            // renaming the directory during the final installation swap.
+            .current_dir(std::env::temp_dir())
             .spawn()
         {
             Ok(c) => c,
