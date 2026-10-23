@@ -455,7 +455,12 @@ pub(crate) async fn download_mirrored(
     Err(format!("{label}: all {} mirrors failed (last: {last_err})", urls.len()))
 }
 
-pub(crate) fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Result<(), String> {
+pub(crate) fn extract_zip(
+    zip_path: &Path,
+    dest_dir: &Path,
+    label: &str,
+    progress: &progress::Progress,
+) -> Result<(), String> {
     println!("[{label}] extracting...");
     let f = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
@@ -469,6 +474,9 @@ pub(crate) fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Resu
 
     let completed = Arc::new(AtomicUsize::new(0));
     let errors = Arc::new(Mutex::new(Vec::new()));
+    let last_reported = Arc::new(Mutex::new(0usize));
+    let report_every = (n / 100).max(1);
+    progress.set_detail(format!("Extracting {n} game files…"));
 
     // Get all file entries first (ZipArchive is not Sync, so we extract
     // the metadata then process in parallel)
@@ -496,6 +504,8 @@ pub(crate) fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Resu
             let dest_dir = dest_dir.to_path_buf();
             let completed = completed.clone();
             let errors = errors.clone();
+            let last_reported = last_reported.clone();
+            let progress = progress.clone();
             let label = label.to_string();
 
             s.spawn(move || {
@@ -541,6 +551,19 @@ pub(crate) fn extract_zip(zip_path: &Path, dest_dir: &Path, label: &str) -> Resu
                         }
                     }
                     let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                    if done % report_every == 0 || done == n {
+                        // Multiple extraction workers complete in parallel.
+                        // Serialize their UI updates and report the newest count
+                        // so an earlier worker cannot make progress go backwards.
+                        if let Ok(mut reported) = last_reported.lock() {
+                            let latest = completed.load(Ordering::Relaxed);
+                            if latest > *reported {
+                                *reported = latest;
+                                progress.set_fraction(latest as f64 / n.max(1) as f64);
+                                progress.set_detail(format!("Extracted {latest} / {n} game files"));
+                            }
+                        }
+                    }
                     if done % 500 == 0 || done == n {
                         println!("[{label}] extracted {done}/{n}");
                     }
@@ -1406,7 +1429,7 @@ async fn build_full_install(
     defender::unblock_file(&client_zip);
     progress.set_stage("Extracting game files…");
     progress.set_detail("Extracting game files…".to_string());
-    extract_zip(&client_zip, target, "client")?;
+    extract_zip(&client_zip, target, "client", progress)?;
     apply_common_components(
         target,
         client,
@@ -1799,7 +1822,10 @@ fn verify_2026_fingerprints(dir: &Path) -> Result<(), String> {
         let mut file = std::fs::File::open(&path)
             .map_err(|error| format!("open {} for 2026 build verification: {error}", path.display()))?;
         let mut digest = Sha256::new();
-        let mut buffer = [0_u8; 1024 * 1024];
+        // Keep the read buffer on the heap. A 1 MiB stack allocation here
+        // overflowed the default Windows main-thread stack after extraction,
+        // killing both first installs and auto-updates before commit.
+        let mut buffer = vec![0_u8; 64 * 1024];
         loop {
             let count = file
                 .read(&mut buffer)
