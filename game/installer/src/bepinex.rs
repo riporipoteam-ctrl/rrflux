@@ -117,6 +117,14 @@ pub fn verify_for_launcher(game_dir: &Path) -> Result<(), String> {
             return Err(format!("missing {f}"));
         }
     }
+    if crate::is_2026_install(game_dir) {
+        const INJECTOR: &[u8] = include_bytes!("../assets/2026-Injector.exe");
+        let installed = std::fs::read(game_dir.join("Injector.exe"))
+            .map_err(|error| format!("read 2026 Injector.exe: {error}"))?;
+        if installed != INJECTOR {
+            return Err("2026 Injector.exe does not match this client".to_string());
+        }
+    }
     Ok(())
 }
 
@@ -215,7 +223,16 @@ pub(crate) fn install_patch2026_embedded(game_dir: &Path, ns_host: &str) -> Resu
         ("RecRoomScreen.bat", SCREEN_BATCH),
         ("RecRoomVR.bat", VR_BATCH),
     ] {
-        std::fs::write(game_dir.join(name), bytes)
+        let path = game_dir.join(name);
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            let mut permissions = metadata.permissions();
+            if permissions.readonly() {
+                permissions.set_readonly(false);
+                std::fs::set_permissions(&path, permissions)
+                    .map_err(|error| format!("unlock {name}: {error}"))?;
+            }
+        }
+        std::fs::write(&path, bytes)
             .map_err(|error| format!("write {name}: {error}"))?;
     }
     let existing = std::fs::read_to_string(game_dir.join("2026patch.ini")).ok();
@@ -233,6 +250,18 @@ mod tests {
 
     const PUBLIC_KEY: &str =
         "<RSAKeyValue><Modulus>abc123</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
+
+    #[test]
+    fn detects_2025_injector_in_2026_install() {
+        let dir = std::env::temp_dir().join(format!("fluxrec-injector-check-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("RecRoom_Data")).unwrap();
+        for file in super::PATCH2026_FILES {
+            std::fs::write(dir.join(file), b"present").unwrap();
+        }
+        std::fs::write(dir.join("Injector.exe"), include_bytes!("../assets/Injector.exe")).unwrap();
+        assert!(super::verify_for_launcher(&dir).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn update_preserves_existing_public_voice_key() {
