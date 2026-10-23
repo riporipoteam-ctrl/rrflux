@@ -22,11 +22,13 @@ on:
     paths:
       - "game/installer/**"
       - "game/patch-2025/**"
+      - "game/patch-2026/**"
       - ".github/workflows/build-recflare-installer.yml"
   pull_request:
     paths:
       - "game/installer/**"
       - "game/patch-2025/**"
+      - "game/patch-2026/**"
       - ".github/workflows/build-recflare-installer.yml"
 
 jobs:
@@ -36,6 +38,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -48,6 +52,15 @@ jobs:
           if (-not (Test-Path -LiteralPath $patch)) { throw "Native patch output missing: $patch" }
           Copy-Item -LiteralPath $patch -Destination '..\installer\assets\2025Patch.dll' -Force
           Write-Host "Embedded 2025Patch.dll: $((Get-Item $patch).Length) bytes"
+
+      # Keep the embedded 2026 patch in sync with its native source.
+      - name: Build 2026 client patch
+        working-directory: game/patch-2026
+        shell: pwsh
+        run: |
+          .\build.ps1
+          Copy-Item -LiteralPath 'x64\Release\2026patch.dll' -Destination '..\installer\assets\2026patch.dll' -Force
+          Copy-Item -LiteralPath 'x64\Release\Injector.exe' -Destination '..\installer\assets\2026-Injector.exe' -Force
 
       - name: Build installer
         working-directory: game/installer
@@ -87,7 +100,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Ripo-Team-Launcher-Setup
-          path: game/installer/target/release/FluxRec-Setup.exe
+          path: |
+            game/installer/target/release/FluxRec-Setup.exe
+            game/patch-2026/x64/Release/2026patch.dll
+            game/patch-2026/x64/Release/Injector.exe
 
 
 
