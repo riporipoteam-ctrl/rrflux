@@ -455,6 +455,14 @@ pub(crate) fn clear_unity_http_cache(progress: &Progress) {
     }
 }
 
+fn game_exe_for_launch(dir: &Path, is_2026: bool) -> Option<std::path::PathBuf> {
+    if is_2026 {
+        let game = dir.join("RecRoom.exe");
+        return game.is_file().then_some(game);
+    }
+    crate::find_game_exe(dir)
+}
+
 /// safe. Infallible: a missing exe shows a readable status instead of panicking.
 ///
 /// v0.3.2: pre-flight check — the game is USELESS without the patch (it
@@ -543,7 +551,14 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
                     progress.set_status("2026 patch injector did not become ready.", 100);
                     return;
                 }
-                crate::stealth::launch_hidden(&exe, &["+forcemode:screen"]);
+                // The 2026 archive also contains Recroom_Release.exe, a
+                // Referee launcher. The patch injector watches RecRoom.exe;
+                // starting the wrapper here can leave it waiting forever.
+                let Some(game_exe) = game_exe_for_launch(dir, true) else {
+                    progress.set_status("2026 game executable is missing. Verify files.", 100);
+                    return;
+                };
+                crate::stealth::launch_hidden(&game_exe, &["+forcemode:screen"]);
                 return;
             }
             println!("[launcher] starting game: {}", exe.display());
@@ -554,5 +569,20 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
             progress.set_status("Game files not found \u{2014} please reinstall.", 100);
             std::thread::sleep(Duration::from_secs(5));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::game_exe_for_launch;
+
+    #[test]
+    fn launches_2026_unity_exe_when_both_executables_exist() {
+        let dir = std::env::temp_dir().join(format!("fluxrec-2026-launch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Recroom_Release.exe"), []).unwrap();
+        std::fs::write(dir.join("RecRoom.exe"), []).unwrap();
+        assert_eq!(game_exe_for_launch(&dir, true), Some(dir.join("RecRoom.exe")));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
