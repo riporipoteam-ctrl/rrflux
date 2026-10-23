@@ -1,6 +1,6 @@
 [package]
 name = "fluxrec-installer"
-version = "1.0.52"
+version = "1.0.53"
 edition = "2021"
 description = "Installer for Flux Rec with automatic updates, file verification, and game launch."
 
