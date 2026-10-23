@@ -1791,6 +1791,7 @@ fn verify_install(dir: &Path) -> Result<(), String> {
     }
     if is_2026_install(dir) {
         verify_2026_fingerprints(dir)?;
+        bepinex::verify_for_launcher(dir)?;
     }
     let steam_settings = data_dir
         .join("Plugins")

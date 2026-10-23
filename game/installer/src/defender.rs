@@ -371,7 +371,11 @@ pub fn verify_quarantine_targets(dir: &Path, _ns_host: &str) -> Vec<QuarantinePr
 
     // 1. 2025Patch DLL — the #1 quarantine target (unsigned native DLL).
     // v0.3.0: 2025 client (no BepInEx) — patch lives next to the exe.
-    let plugin = dir.join("2025Patch.dll");
+    let plugin = dir.join(if crate::is_2026_install(dir) {
+        "2026patch.dll"
+    } else {
+        "2025Patch.dll"
+    });
     if !std::fs::metadata(&plugin).map(|m| m.len() > 0).unwrap_or(false) {
         problems.push(QuarantineProblem::PluginDllMissing);
     }
@@ -407,6 +411,13 @@ async fn repair_plugin_dll(
     ns_host: &str,
     progress: &crate::progress::Progress,
 ) -> bool {
+    if crate::is_2026_install(dir) {
+        progress.set_stage("Repairing 2026Patch…");
+        return crate::bepinex::install_patch2026_embedded(dir, ns_host).is_ok()
+            && std::fs::metadata(dir.join("2026patch.dll"))
+                .map(|m| m.len() > 0)
+                .unwrap_or(false);
+    }
     // v0.3.0: 2025 client — the "plugin" is 2025Patch.dll next to the exe
     // (no BepInEx). Re-download the patch zip and reinstall.
     progress.set_stage("Repairing 2025Patch…");
@@ -491,7 +502,11 @@ pub async fn repair_quarantine_targets(
     ensure_defender_exclusions(dir);
     // v0.3.1: 2025 client — unblock the patch + injector + bypass DLL
     // (was BepInEx/RecNetPlugin + RecRoom_Data paths for the 2023 client).
-    unblock_file(&dir.join("2025Patch.dll"));
+    unblock_file(&dir.join(if crate::is_2026_install(dir) {
+        "2026patch.dll"
+    } else {
+        "2025Patch.dll"
+    }));
     unblock_file(&dir.join("Injector.exe"));
     unblock_file(
         &dir
