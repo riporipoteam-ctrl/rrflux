@@ -506,20 +506,44 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
                 crate::stealth::launch_hidden(&injector, &[]);
                 std::thread::sleep(Duration::from_millis(500));
             } else {
-                let batch = dir.join("RecRoomScreen.bat");
-                if !batch.is_file() {
-                    let msg = "2026 patch launcher is missing. Re-run Ripo Team Launcher setup.";
+                let injector = dir.join("Injector.exe");
+                if !injector.is_file() {
+                    let msg = "2026 patch injector is missing. Re-run Ripo Team Launcher setup.";
                     eprintln!("[launcher] {msg}");
                     progress.set_status(msg, 100);
                     std::thread::sleep(Duration::from_secs(6));
                     return;
                 }
                 progress.set_status("Launching game\u{2026}", 100);
-                let command = std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into());
-                let batch_arg = batch.to_string_lossy().to_string();
-                println!("[launcher] starting 2026 patch launcher: {}", batch.display());
-                crate::stealth::launch_hidden(Path::new(&command), &["/d", "/c", batch_arg.as_str()]);
-                std::thread::sleep(Duration::from_secs(3));
+                let injector_path = injector.to_string_lossy();
+                // Run the patch's preflight and readiness handshake directly.
+                // The bundled batch uses `start "Injector"`, which creates a
+                // visible console even when cmd.exe itself is windowless.
+                let checked = crate::stealth::hidden_command(&injector_path)
+                    .arg("--check-install")
+                    .current_dir(dir)
+                    .status();
+                if !matches!(checked, Ok(status) if status.success()) {
+                    progress.set_status("2026 patch validation failed. Re-run setup.", 100);
+                    return;
+                }
+                if crate::stealth::hidden_command(&injector_path)
+                    .current_dir(dir)
+                    .spawn()
+                    .is_err()
+                {
+                    progress.set_status("Could not start the 2026 patch injector.", 100);
+                    return;
+                }
+                let ready = crate::stealth::hidden_command(&injector_path)
+                    .arg("--wait-ready")
+                    .current_dir(dir)
+                    .status();
+                if !matches!(ready, Ok(status) if status.success()) {
+                    progress.set_status("2026 patch injector did not become ready.", 100);
+                    return;
+                }
+                crate::stealth::launch_hidden(&exe, &["+forcemode:screen"]);
                 return;
             }
             println!("[launcher] starting game: {}", exe.display());
