@@ -41,13 +41,17 @@ pub(crate) mod stealth;
 pub(crate) mod updater;
 mod vcredist;
 
-/// Client mirrors, fastest first. All serve the byte-identical client.zip
-/// (same MD5) — the downloader falls through to the next on any failure.
+/// Exact Steam depot archive required by patch-2026. The extracted stock
+/// modules are fingerprinted before the staged install can be committed.
 const CLIENT_ZIP_MIRRORS: &[&str] = &[
-    "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/client-2026-03/march-2026-client.zip",
-    "https://archive.recagain.site/download/manifest/5037299340901764828",
+    "https://archive.recagain.site/download/manifest/8867414017562658247",
 ];
-const CLIENT_ZIP_MD5: &str = "dcf411174908aa2b7109a7d0bf5c592e";
+const CLIENT_ZIP_SIZE: u64 = 4_543_084_133;
+const CLIENT_2026_FINGERPRINTS: &[(&str, &str)] = &[
+    ("GameAssembly.dll", "a6d90770cdfda4043eadb278a16198ed0907c3ba2ac09bc37d06cd4dd22a1d84"),
+    ("Referee.dll", "5868c90a7c67757f3b678aa356cbd933d646c9749e0acaa31b7dcc9eaee12ead"),
+    ("UnityPlayer.dll", "30f4a99c49566b2c5045469b5a39572dd2298adc31f7fe2bc39d8bb8fc9d75bb"),
+];
 // 2025 client uses 2025Patch (native DLL injection) instead of BepInEx.
 // v0.3.0: 2025 client migration — BepInEx removed.
 const PATCH2025_URL: &str = "https://github.com/recflare/patch-2025/releases/download/v0.0.8/2025Patch-v0.0.8-x64.zip";
@@ -1273,11 +1277,18 @@ async fn fresh_install(
             return Err(format!("preserve voice key in staged config: {e}"));
         }
     }
+    // Validate the complete staged tree, including the three stock 2026
+    // module fingerprints, before the old live installation is touched.
+    if let Err(error) = verify_install(&target) {
+        staging.abort();
+        return Err(format!("staged 2026 client verification failed: {error}"));
+    }
     progress.set_stage("Committing installation…");
     progress.set_detail("Swapping new installation into place…".to_string());
     staging.commit().map_err(|e| e.to_string())?;
     // Post-commit steps against the live dir — fail-soft, the game itself
     // is already installed and verified.
+    install_referee_service(dir, progress);
     finish_live_dir(dir, ns_host, progress);
     progress.set_stage("Final checks…");
     verify_install(dir)?;
@@ -1353,8 +1364,8 @@ async fn build_full_install(
         client,
         CLIENT_ZIP_MIRRORS,
         &client_zip,
-        Some(CLIENT_ZIP_MD5),
         None,
+        Some(CLIENT_ZIP_SIZE),
         "client",
         Some((progress, "Downloading game files…")),
     )
@@ -1366,16 +1377,6 @@ async fn build_full_install(
     progress.set_detail("Extracting game files…".to_string());
     extract_zip(&client_zip, target, "client")?;
     let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
-    // 2026 client only: install the Referee anti-cheat Windows service the way
-    // Steam did (installscript.vdf runs `RefereeClientInstaller.exe -install`
-    // on first install). The March 2026 RecRoom.exe cannot start without it.
-    // The 2025 client has no service files (no RefereeClientInstaller.exe) —
-    // its 2025Patch handles the anti-cheat in-memory, so skip the service.
-    if target.join("RefereeClientInstaller.exe").exists() {
-        install_referee_service(target, progress);
-        progress.set_detail(String::new());
-    }
-
     apply_common_components(
         target,
         client,
@@ -1735,6 +1736,9 @@ fn verify_install(dir: &Path) -> Result<(), String> {
             missing.push(rel);
         }
     }
+    if is_2026_install(dir) {
+        verify_2026_fingerprints(dir)?;
+    }
     let steam_settings = data_dir
         .join("Plugins")
         .join("x86_64")
@@ -1754,6 +1758,36 @@ fn verify_install(dir: &Path) -> Result<(), String> {
             missing.join(", ")
         ))
     }
+}
+
+fn verify_2026_fingerprints(dir: &Path) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    for (relative, expected) in CLIENT_2026_FINGERPRINTS {
+        let path = dir.join(relative);
+        let mut file = std::fs::File::open(&path)
+            .map_err(|error| format!("open {} for 2026 build verification: {error}", path.display()))?;
+        let mut digest = Sha256::new();
+        let mut buffer = [0_u8; 1024 * 1024];
+        loop {
+            let count = file
+                .read(&mut buffer)
+                .map_err(|error| format!("read {} for 2026 build verification: {error}", path.display()))?;
+            if count == 0 {
+                break;
+            }
+            digest.update(&buffer[..count]);
+        }
+        let actual = hex::encode(digest.finalize());
+        if !actual.eq_ignore_ascii_case(expected) {
+            return Err(format!(
+                "unsupported 2026 client: {} fingerprint is {}, expected {}",
+                relative, actual, expected
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Steam bypass via the Goldberg emulator (gbe_fork) — the exact approach

@@ -701,8 +701,15 @@ fn smart_repair(
     send(70, "Scanning game files…");
     let mut repaired = 0;
 
-    // 1. Patch files: restore from embedded (no download).
-    {
+    // 1. Patch files: restore the payload matching the installed client.
+    if crate::is_2026_install(dir) {
+        let was_healthy = crate::bepinex::verify_for_launcher(dir).is_ok();
+        crate::bepinex::install_patch2026_embedded(dir, ns_host)?;
+        if !was_healthy {
+            println!("[smart-repair] restored the embedded 2026 patch");
+            repaired += 1;
+        }
+    } else {
         const PATCH_DLL: &[u8] = include_bytes!("../assets/2025Patch.dll");
         const INJECTOR: &[u8] = include_bytes!("../assets/Injector.exe");
         let patch_dll = dir.join("2025Patch.dll");
@@ -830,19 +837,7 @@ fn verify_and_repair_core_files(
         return ("Flux Rec is not installed at this location.".to_string(), false);
     }
 
-    const PATCH_DLL: &[u8] = include_bytes!("../assets/2025Patch.dll");
-    const INJECTOR: &[u8] = include_bytes!("../assets/Injector.exe");
-    let patch_dll_was_healthy = crate::file_ok(
-        &dir.join("2025Patch.dll"),
-        Some(&format!("{:x}", md5::compute(PATCH_DLL))),
-        Some(PATCH_DLL.len() as u64),
-    );
-    let injector_was_healthy = crate::file_ok(
-        &dir.join("Injector.exe"),
-        Some(&format!("{:x}", md5::compute(INJECTOR))),
-        Some(INJECTOR.len() as u64),
-    );
-    let patch_ini_was_present = dir.join("2025patch.ini").is_file();
+    let patch_was_healthy = crate::bepinex::verify_for_launcher(dir).is_ok();
     let bypass_was_healthy = matches!(
         crate::bypass::verify(dir),
         crate::bypass::BypassState::Ok(_)
@@ -898,8 +893,7 @@ fn verify_and_repair_core_files(
         Err(error) => return (format!("Could not prepare file repair: {error}"), false),
     };
 
-    let patch_was_healthy = crate::bepinex::verify_for_launcher(dir).is_ok();
-    let mut repaired = !patch_dll_was_healthy || !injector_was_healthy || !patch_ini_was_present;
+    let mut repaired = !patch_was_healthy;
     if !patch_was_healthy {
         match runtime.block_on(crate::bepinex::repair_for_launcher(
             &client,
