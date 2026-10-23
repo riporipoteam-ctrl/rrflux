@@ -44,6 +44,8 @@ export const GAME_VERSION = '20230414'
  * - `20250718.01` (manifest `1151455856673601091`, reached through the `patch-2025`
  *   patch) is BETA — supported, and the build the "newer than `20230414`" gates in
  *   `econ`/`api`/`rooms` are written and tested against.
+ * - `20260323.14` (manifest `8867414017562658247`, reached through the
+ *   `patch-2026` patch) is ALPHA while service response compatibility is tested.
  * - The rest are ALPHA: waved past the version check, but nothing else in the stack
  *   targets them, so they can still hit protocol differences this check would otherwise
  *   have caught. Expect breakage rather than treating a bug there as a regression.
@@ -51,6 +53,7 @@ export const GAME_VERSION = '20230414'
 export const SUPPORTED_GAME_VERSIONS: string[] = [
 	GAME_VERSION, // default
 	'20250718.01', // beta
+	'20260323.14', // alpha
 	'20230616', // alpha
 	'20231207', // alpha
 	'20250424.01', // alpha
