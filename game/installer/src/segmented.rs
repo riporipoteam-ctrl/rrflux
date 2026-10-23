@@ -22,14 +22,14 @@ use tokio::io::AsyncWriteExt;
 
 /// Number of parallel segments for large files.
 ///
-/// 32: doubles the connections vs 16 to defeat per-connection throttling
-/// on slow mirrors (archive.recagain.site throttles ~2-3 MB/s per conn).
-/// The file is ~3.8GB so 32 x ~120MB segments stay efficient.
-pub const SEGMENTS: usize = 64;
+/// Eight connections keep the archive host below its request-rate ceiling
+/// while still using its per-connection bandwidth in parallel. The old value
+/// of 64 reliably triggered HTTP 429 during the 2026 client download.
+pub const SEGMENTS: usize = 8;
 /// Files smaller than this just use a single stream (segments add nothing).
 pub const SEGMENT_MIN_SIZE: u64 = 8 * 1024 * 1024;
 /// Per-segment attempts before the whole download fails.
-const SEGMENT_ATTEMPTS: u32 = 10;
+const SEGMENT_ATTEMPTS: u32 = 30;
 /// No data for this long -> the segment is stalled, abort and retry.
 /// 30s: fail fast on dead connections so a retry can resume quickly.
 const STALL_SECS: u64 = 30;
@@ -124,15 +124,46 @@ async fn fetch_segment(
         } else {
             format!("bytes={start}-{end}")
         };
-        let resp = client
+        let response = client
             .get(url)
             .header("Range", range_hdr)
             .send()
-            .await
-            .map_err(|e| e.to_string())?;
+            .await;
+        let resp = match response {
+            Ok(response) => response,
+            Err(error) => {
+                if attempt >= SEGMENT_ATTEMPTS {
+                    return Err(format!("[{label}] segment {start}-{end}: {error}"));
+                }
+                let wait = retry_delay_seconds(attempt, None, start);
+                println!("[{label}] segment {start}-{end}: {error}; retrying in {wait}s.");
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+                continue;
+            }
+        };
         if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            let status = resp.status();
             let msg = format!("segment {start}-{end}: HTTP {}", resp.status());
-            if resuming {
+            // HTTP 429/503 are temporary server backpressure. Keep every byte
+            // already downloaded and honor Retry-After instead of deleting the
+            // partial segment and immediately hammering the mirror again.
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+            {
+                if attempt >= SEGMENT_ATTEMPTS {
+                    return Err(format!("[{label}] {msg}"));
+                }
+                let retry_after = resp
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.parse::<u64>().ok());
+                let wait = retry_delay_seconds(attempt, retry_after, start);
+                println!("[{label}] {msg}; preserving {have} bytes and retrying in {wait}s.");
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+                continue;
+            }
+            if resuming && status.is_success() {
                 // Server ignored our resume offset: restart this chunk clean.
                 let _ = std::fs::remove_file(dest);
                 done.fetch_sub(have, Ordering::Relaxed);
@@ -140,6 +171,8 @@ async fn fetch_segment(
             if attempt >= SEGMENT_ATTEMPTS {
                 return Err(format!("[{label}] {msg}"));
             }
+            let wait = retry_delay_seconds(attempt, None, start);
+            tokio::time::sleep(Duration::from_secs(wait)).await;
             continue;
         }
         let mut file = tokio::fs::OpenOptions::new()
@@ -195,6 +228,13 @@ async fn fetch_segment(
         }
         println!("[{label}] segment {start}-{end} attempt {attempt}: {msg} — resuming.");
     }
+}
+
+fn retry_delay_seconds(attempt: u32, retry_after: Option<u64>, segment_start: u64) -> u64 {
+    let exponential = 5_u64.saturating_mul(1_u64 << attempt.saturating_sub(1).min(4));
+    let base = retry_after.unwrap_or(exponential).clamp(1, 120);
+    // Small deterministic stagger prevents all segments retrying on the same tick.
+    base + (segment_start / (1024 * 1024)) % 5
 }
 
 /// Single-stream fallback with progress + verification.
@@ -409,12 +449,14 @@ pub async fn download_segmented(
         match t.await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
-                failed = Some(e);
-                break;
+                if failed.is_none() {
+                    failed = Some(e);
+                }
             }
             Err(e) => {
-                failed = Some(format!("segment task panicked: {e}"));
-                break;
+                if failed.is_none() {
+                    failed = Some(format!("segment task panicked: {e}"));
+                }
             }
         }
     }
@@ -458,6 +500,8 @@ pub async fn download_segmented(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
     #[test]
     fn ranges_split_evenly() {
@@ -519,5 +563,75 @@ mod tests {
     fn fmt_eta_reads_sane() {
         assert_eq!(fmt_eta(45), "~45s left");
         assert_eq!(fmt_eta(150), "~2m 30s left");
+    }
+
+    #[test]
+    fn rate_limit_backoff_honors_header_and_staggers_segments() {
+        assert_eq!(retry_delay_seconds(1, Some(17), 0), 17);
+        assert_eq!(retry_delay_seconds(2, None, 0), 10);
+        assert_eq!(retry_delay_seconds(2, Some(17), 3 * 1024 * 1024), 20);
+        assert_eq!(retry_delay_seconds(20, Some(999), 0), 120);
+    }
+
+    #[test]
+    fn rate_limit_keeps_partial_segment_and_resumes_same_range() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for response in [
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: 5\r\nConnection: close\r\n\r\n56789".to_string(),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut chunk = [0_u8; 1024];
+                loop {
+                    let read = stream.read(&mut chunk).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&request);
+                assert!(request.to_ascii_lowercase().contains("range: bytes=5-9"));
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+
+        let scratch = std::env::temp_dir().join(format!(
+            "fluxrec-segment-rate-limit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let segment = scratch.join("client.seg0");
+        std::fs::write(&segment, b"01234").unwrap();
+        let done = AtomicU64::new(5);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(fetch_segment(
+                &reqwest::Client::new(),
+                &format!("http://{address}/client.zip"),
+                0,
+                9,
+                &segment,
+                &done,
+                "test",
+            ))
+            .unwrap();
+
+        server.join().unwrap();
+        assert_eq!(std::fs::read(&segment).unwrap(), b"0123456789");
+        assert_eq!(done.load(Ordering::Relaxed), 10);
+        let _ = std::fs::remove_dir_all(scratch);
     }
 }

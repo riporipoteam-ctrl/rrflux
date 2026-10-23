@@ -121,6 +121,16 @@ fn persisted_install_dir_file() -> PathBuf {
     install_dir_file_in(&local_appdata)
 }
 
+fn client_download_cache_path() -> PathBuf {
+    let local_appdata = std::env::var("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    local_appdata
+        .join("FluxRec")
+        .join("downloads")
+        .join("client-20260323.14.zip")
+}
+
 /// Pure part of the above, kept separate so tests can point it at a scratch
 /// dir instead of the real %LOCALAPPDATA%.
 fn install_dir_file_in(local_appdata: &str) -> PathBuf {
@@ -250,11 +260,11 @@ pub(crate) async fn download(
         println!("[{label}] existing file failed verification, re-downloading.");
         std::fs::remove_file(dest).map_err(|e| e.to_string())?;
     }
-    // Fast path: parallel segmented download (64 Range segments) for anything
-    // not known-small. v1.0.12: retry segmented up to 3 times (it resumes from
-    // kept segments) before falling back to single-stream. Any failure falls
-    // through to the classic single stream below — speed can never break a download.
+    // Fast path: parallel segmented download for anything not known-small.
+    // Retry the resumable segment set instead of throwing away several GB and
+    // starting a competing single-stream transfer after server backpressure.
     if expected_size.map(|s| s >= segmented::SEGMENT_MIN_SIZE).unwrap_or(true) {
+        let mut segmented_error = None;
         for attempt in 1..=3 {
             match segmented::download_segmented(
                 client,
@@ -269,18 +279,24 @@ pub(crate) async fn download(
             {
                 Ok(()) => return Ok(()),
                 Err(e) => {
+                    segmented_error = Some(e.clone());
                     eprintln!(
                         "[{label}] segmented download attempt {attempt}/3 failed ({e}); {}",
-                        if attempt < 3 { "retrying (resumes from kept segments)." } else { "single-stream fallback." }
+                        if attempt < 3 { "retrying (resumes from kept segments)." } else { "download remains resumable." }
                     );
                     if attempt < 3 {
                         // Brief pause before retry
-                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        tokio::time::sleep(Duration::from_secs(10 * attempt as u64)).await;
                         continue;
                     }
                 }
             }
             break;
+        }
+        // Segment files are the resumable source of truth. Do not abandon
+        // hundreds of downloaded megabytes for a fresh single-stream request.
+        if let Some(error) = segmented_error {
+            return Err(format!("{error}; partial download kept for the next retry"));
         }
     }
     let part: PathBuf = {
@@ -293,7 +309,7 @@ pub(crate) async fn download(
         println!("[{label}] host honors Range — resume enabled.");
     }
 
-    let mut attempt = 0;
+    let mut attempt: u32 = 0;
     loop {
         attempt += 1;
         if let Some((p, stage)) = progress {
@@ -318,7 +334,16 @@ pub(crate) async fn download(
             if attempt >= MAX_ATTEMPTS {
                 return Err(msg);
             }
-            println!("[{label}] attempt {attempt}: {msg}, retrying.");
+            let retry_after = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
+            let wait = retry_after
+                .unwrap_or(5_u64.saturating_mul(1_u64 << attempt.saturating_sub(1).min(4)))
+                .clamp(1, 120);
+            println!("[{label}] attempt {attempt}: {msg}, retrying in {wait}s.");
+            tokio::time::sleep(Duration::from_secs(wait)).await;
             continue;
         }
         let total = expected_size.unwrap_or_else(|| {
@@ -1293,6 +1318,9 @@ async fn fresh_install(
     progress.set_stage("Final checks…");
     verify_install(dir)?;
     persist_install_dir(dir);
+    // The cache must survive every failure so setup can resume, but the full
+    // verified archive is no longer needed after a successful installation.
+    let _ = std::fs::remove_file(client_download_cache_path());
     println!("[install] fresh install committed and verified.");
     Ok(())
 }
@@ -1359,7 +1387,10 @@ async fn build_full_install(
     // 1. Game client (~4.2GB). Create target dir first — the download fails
     // with "system cannot find the path specified" if it doesn't exist.
     std::fs::create_dir_all(target).map_err(|e| format!("create game dir: {e}"))?;
-    let client_zip = target.join("client.zip");
+    // Store the large archive outside the transactional staging directory.
+    // If setup is rate-limited, closed, or restarted, completed range files
+    // survive and the next attempt resumes instead of returning to zero.
+    let client_zip = client_download_cache_path();
     download_mirrored(
         client,
         CLIENT_ZIP_MIRRORS,
@@ -1376,7 +1407,6 @@ async fn build_full_install(
     progress.set_stage("Extracting game files…");
     progress.set_detail("Extracting game files…".to_string());
     extract_zip(&client_zip, target, "client")?;
-    let _ = std::fs::remove_file(&client_zip); // free ~3.8GB after extract
     apply_common_components(
         target,
         client,
