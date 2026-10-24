@@ -1098,6 +1098,49 @@ pub(crate) async fn apply_logo_bundle(
     }
 
     let mut changed = false;
+    // The 2026 client moved its full-size sign-in/loading logo to this bundle.
+    // Keep the verified patch in the installer so a fresh install works even
+    // when the older branding CDN is unavailable.
+    let logo_2026 = aa_dir.join("f124b399caea956fb2ae85b8413c07d2.bundle");
+    if logo_2026.exists()
+        && !file_ok(
+            &logo_2026,
+            Some("84bbba6478298d79af7f490988a8e4ab"),
+            Some(13_409_188),
+        )
+    {
+        let backup = logo_2026.with_extension("bundle.stock");
+        if !backup.exists() {
+            std::fs::copy(&logo_2026, &backup).map_err(|e| e.to_string())?;
+        }
+        let compressed = include_bytes!("../assets/2026-fluxrec-logo.bundle.gz");
+        let mut decoder = flate2::read::GzDecoder::new(&compressed[..]);
+        let staged = dir.join("2026-fluxrec-logo.bundle.tmp");
+        let result = (|| -> Result<(), String> {
+            let mut output = std::fs::File::create(&staged).map_err(|e| e.to_string())?;
+            std::io::copy(&mut decoder, &mut output).map_err(|e| e.to_string())?;
+            drop(output);
+            if !file_ok(
+                &staged,
+                Some("84bbba6478298d79af7f490988a8e4ab"),
+                Some(13_409_188),
+            ) {
+                return Err("2026 logo asset failed verification".to_string());
+            }
+            std::fs::remove_file(&logo_2026).map_err(|e| e.to_string())?;
+            if let Err(error) = std::fs::rename(&staged, &logo_2026) {
+                let _ = std::fs::copy(&backup, &logo_2026);
+                return Err(error.to_string());
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&staged);
+        }
+        result?;
+        println!("[logo] Applied 2026 Flux Rec sign-in/loading artwork.");
+        changed = true;
+    }
     // Apply each published branding bundle. The list deliberately contains
     // only assets currently present in `logo-patch-v5`; a missing URL must not
     // prevent the real loading-screen logo bundle from being applied.

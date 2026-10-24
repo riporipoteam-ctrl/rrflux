@@ -2712,6 +2712,30 @@ describe('econ endpoints', () => {
 		expect(catalog.StoreItems?.length).toBeGreaterThan(3000)
 	})
 
+	test('2026 storefront restores priced Room Boost bundles without changing the 2025 capture', async () => {
+		const read = async (version: string) => {
+			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v3/giftdropstore/3`, {
+				headers: await bearer('42', undefined, version),
+			})
+			expect(res.status).toBe(200)
+			return (await res.json()) as {
+				StoreItems: Array<{
+					PurchasableItemId: number
+					Prices: Array<{ CurrencyType: number; Price: number }>
+				}>
+			}
+		}
+		const current = await read('20260323.14')
+		expect(current.StoreItems.find((item) => item.PurchasableItemId === 32322)?.Prices).toEqual([
+			{ CurrencyType: CurrencyType.RecCenterTokens, Price: 1500 },
+		])
+		expect(current.StoreItems.find((item) => item.PurchasableItemId === 32323)?.Prices).toEqual([
+			{ CurrencyType: CurrencyType.RecCenterTokens, Price: 4500 },
+		])
+		const legacy = await read('20250718.01')
+		expect(legacy.StoreItems.find((item) => item.PurchasableItemId === 32322)?.Prices).toEqual([])
+	})
+
 	// Room storefronts (v4/room/{id}): the 2023 client calls this when opening the
 	// store in a room. Room ids map to their storefront catalogs; room 2 (Rec Center)
 	// gets the dynamic rotation.
@@ -4220,10 +4244,14 @@ describe('econ endpoints', () => {
 		...extra,
 	})
 
-	const bulkPurchase = async (sub: string, body: Record<string, unknown>) =>
+	const bulkPurchase = async (
+		sub: string,
+		body: Record<string, unknown>,
+		version?: string
+	) =>
 		exports.default.fetch(`${ORIGIN}/api/items/bulkpurchase`, {
 			method: 'POST',
-			headers: { ...(await bearer(sub)), 'Content-Type': 'application/json' },
+			headers: { ...(await bearer(sub, undefined, version)), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				StorefrontType: 3,
 				CurrencyType: 2,
@@ -4384,6 +4412,32 @@ describe('econ endpoints', () => {
 			headers: await bearer('90'),
 		})
 		expect(await giftsAfter.json()).toEqual([])
+	})
+
+	test('POST /api/items/bulkpurchase grants the Room Boost bundle quantity when its gift opens', async () => {
+		await creditCurrency(env.DB, 92, CurrencyType.RecCenterTokens, 5000, DEFAULT_STARTING_TOKENS)
+		await drainFrames()
+		const res = await bulkPurchase(
+			'92',
+			{ PurchaseItemRequests: [line(32322, 1500)] },
+			'20260323.14'
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as BulkBody
+		expect(body.Success).toBe(true)
+		expect(body.Value?.Balance).toBe(3500)
+		const gift = body.Value?.BalanceUpdates[0]?.Data.GiftPackage
+		expect(gift?.ConsumableItemDesc).toBe('wH7shWdU0E6xpw0d60ZdtA')
+		expect(gift?.Id).toBeGreaterThan(0)
+		expect((await openGiftBox('92', gift!.Id as number)).status).toBe(200)
+		const unlocked = (await (
+			await exports.default.fetch(`${ORIGIN}/api/consumables/v2/getUnlocked`, {
+				headers: await bearer('92'),
+			})
+		).json()) as Array<{ ConsumableItemDesc: string; Count: number }>
+		expect(
+			unlocked.find((item) => item.ConsumableItemDesc === 'wH7shWdU0E6xpw0d60ZdtA')?.Count
+		).toBe(3)
 	})
 
 	test('POST /api/items/bulkpurchase buys the good lines when partial success is allowed', async () => {
