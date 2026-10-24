@@ -41,6 +41,7 @@ import { BalanceAddType } from '../../notify/src/notification-payloads'
 import { NotificationType } from '../../notify/src/notification-types'
 import consumableDefinitions from '../static/consumables.json'
 import store2025ThumbnailMap from '../static/db/2025-store-thumbnail-map.json'
+import unrenderable2026AvatarIds from '../static/db/2026-unrenderable-cai-ids.json'
 import avatarItemCatalog from '../static/db/avatar-items.json'
 import defaultAvatarItems from '../static/default-avatar-items.json'
 import defaultAvatar from '../static/default-avatar.json'
@@ -855,6 +856,7 @@ interface StoreGiftDrop {
 	AvatarItemDesc: string
 	/** A UGC item's guid. Not on any captured entry — the captures predate them. */
 	CustomAvatarItemId?: string | null
+	AvatarItemInfo?: { DownloadableAvatarItemId?: string | null } | null
 	AvatarItemType: number | null
 	EquipmentPrefabName: string
 	EquipmentModificationGuid: string
@@ -1036,6 +1038,10 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 		if (!item.GiftDrop) return item
 		const drop = item.GiftDrop as any
 		const name = typeof drop.FriendlyName === 'string' ? drop.FriendlyName.trim().toLowerCase() : ''
+		// This captured quest-shop label differs from the avatar catalog's canonical
+		// name. Without the alias its prose AvatarItemDesc reaches the client, which
+		// repeatedly tries to parse it as a GUID while rendering shop previews.
+		const catalogName = name === 'sus(picious) goblin shirt' ? 'suspicious goblin shirt' : name
 		let changed = false
 		const next: any = { ...drop }
 		if (Object.prototype.hasOwnProperty.call(next, 'ThumbnailImage')) {
@@ -1097,7 +1103,7 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 			) {
 				// Look up the catalog thumbnail by FriendlyName. (The old code keyed
 				// PurchasableItemId against AvatarItemId, which never matches.)
-				const thumb = THUMBNAIL_BY_NAME.get(name)
+					const thumb = THUMBNAIL_BY_NAME.get(catalogName)
 				if (thumb) {
 					next.ThumbnailImageName = thumb
 					changed = true
@@ -1107,7 +1113,7 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 			// description here which the client cannot resolve to an item; the
 			// catalog holds the real opaque desc the detail view needs.
 			const currentDesc = typeof next.AvatarItemDesc === 'string' ? next.AvatarItemDesc : ''
-			const realDesc = DESC_BY_NAME.get(name)
+			const realDesc = DESC_BY_NAME.get(catalogName)
 			// Preserve a valid opaque item descriptor, including variants that share a name.
 			// Repair only the human-readable descriptions in the old storefront captures.
 			const looksLikeCatalogDesc =
@@ -1439,6 +1445,19 @@ const STOREFRONT_BY_BUILD: Record<string, string> = {
 	'3': 'sf3-2025',
 }
 
+// The March 2026 client logs AvatarParseException for these 52 CAI IDs while
+// filtering the store. They came from a real Player.log after opening the store,
+// not from guessed item ages. Keep the 2025 catalog intact for older clients.
+const UNRENDERABLE_2026_AVATAR_IDS = new Set(unrenderable2026AvatarIds)
+const CLIENT_2026_BUILD = 20_260_323
+
+function removeUnrenderable2026Items(items: StoreItem[]): StoreItem[] {
+	return items.filter(({ GiftDrop: drop }) => {
+		const ids = [drop.CustomAvatarItemId, drop.AvatarItemInfo?.DownloadableAvatarItemId]
+		return !ids.some((id) => typeof id === 'string' && UNRENDERABLE_2026_AVATAR_IDS.has(id.toLowerCase()))
+	})
+}
+
 /**
  * The ASSETS path a storefront id reads from, following any {@link STOREFRONT_ALIASES} entry
  * and any {@link STOREFRONT_BY_BUILD} variant. The id arrives as a path param, so it is a
@@ -1487,7 +1506,7 @@ async function loadStorefront(
 		c.req.header('Authorization') === undefined &&
 		c.req.header('rn.ver') === undefined
 	const path = storefrontAssetPath(String(storefrontType), build, defaultToCurrentForPublicBrowse)
-	const response = await loadCachedStorefrontResponse(c, path)
+	const response = await loadCachedStorefrontResponse(c, path, build)
 	return response ? ((await response.json()) as Storefront) : null
 }
 
@@ -1501,11 +1520,13 @@ async function loadStorefront(
  */
 async function loadCachedStorefrontResponse(
 	c: Context<App>,
-	path: string
+	path: string,
+	build: number | null = null
 ): Promise<Response | null> {
+	const is2026Store = path === '/sf3-2025.json' && build !== null && build >= CLIENT_2026_BUILD
 	const cacheKey = new Request(
 		new URL(
-			`/__storefront-cache/${encodeURIComponent(c.env.SENTRY_RELEASE)}/${encodeURIComponent(path)}`,
+			`/__storefront-cache/${encodeURIComponent(c.env.SENTRY_RELEASE)}/${is2026Store ? '2026' : 'other'}/${encodeURIComponent(path)}`,
 			c.req.url
 		),
 		{ method: 'GET' }
@@ -1537,6 +1558,7 @@ async function loadCachedStorefrontResponse(
 		catalog.StoreItems = enrichWithThumbnails(catalog.StoreItems, path === '/sf3-2025.json')
 		if (path === '/sf3-2025.json') {
 			catalog.StoreItems = withFiveStarUniqueBox(catalog.StoreItems)
+			if (is2026Store) catalog.StoreItems = removeUnrenderable2026Items(catalog.StoreItems)
 		}
 	}
 	const response = new Response(JSON.stringify(catalog), {
@@ -5676,7 +5698,7 @@ const app = new Hono<App>({ strict: false })
 			const defaultToCurrentForPublicBrowse =
 				c.req.header('Authorization') === undefined && c.req.header('rn.ver') === undefined
 			const path = storefrontAssetPath(id, build, defaultToCurrentForPublicBrowse)
-			const response = await loadCachedStorefrontResponse(c, path)
+			const response = await loadCachedStorefrontResponse(c, path, build)
 			if (!response) return c.notFound()
 			if (
 				c.req.query('skip') === undefined &&
@@ -5833,7 +5855,7 @@ app
 			const defaultToCurrentForPublicBrowse =
 				c.req.header('Authorization') === undefined && c.req.header('rn.ver') === undefined
 			const path = storefrontAssetPath(storefrontId, build, defaultToCurrentForPublicBrowse)
-			const response = await loadCachedStorefrontResponse(c, path)
+			const response = await loadCachedStorefrontResponse(c, path, build)
 			if (!response) return c.notFound()
 			if (
 				c.req.query('skip') === undefined &&
