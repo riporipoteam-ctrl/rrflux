@@ -2840,6 +2840,16 @@ describe('econ endpoints', () => {
 		expect(newItems.length).toBe(oldItems.length - 52)
 	})
 
+	test('quest shop resolves the Suspicious Goblin Shirt to a real avatar descriptor', async () => {
+		const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v3/giftdropstore/102`)
+		expect(res.status).toBe(200)
+		const shop = (await res.json()) as {
+			StoreItems: Array<{ PurchasableItemId: number; GiftDrop: { AvatarItemDesc: string } }>
+		}
+		expect(shop.StoreItems.find(({ PurchasableItemId }) => PurchasableItemId === 1821)?.GiftDrop.AvatarItemDesc)
+			.toBe('97253092-90ba-4ff2-b137-6324ab244d11,4oywwjb3-kifr-um9x87Pw,11ZEZTFhy0ONpoXb3kiewQ,')
+	})
+
 	test('storefront 3 defaults anonymous browsing to sf3-2025 and retains build-aware legacy behavior', async () => {
 		const store = async (headers: Record<string, string>) => {
 			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v3/giftdropstore/3`, {

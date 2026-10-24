@@ -1038,6 +1038,10 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 		if (!item.GiftDrop) return item
 		const drop = item.GiftDrop as any
 		const name = typeof drop.FriendlyName === 'string' ? drop.FriendlyName.trim().toLowerCase() : ''
+		// This captured quest-shop label differs from the avatar catalog's canonical
+		// name. Without the alias its prose AvatarItemDesc reaches the client, which
+		// repeatedly tries to parse it as a GUID while rendering shop previews.
+		const catalogName = name === 'sus(picious) goblin shirt' ? 'suspicious goblin shirt' : name
 		let changed = false
 		const next: any = { ...drop }
 		if (Object.prototype.hasOwnProperty.call(next, 'ThumbnailImage')) {
@@ -1099,7 +1103,7 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 			) {
 				// Look up the catalog thumbnail by FriendlyName. (The old code keyed
 				// PurchasableItemId against AvatarItemId, which never matches.)
-				const thumb = THUMBNAIL_BY_NAME.get(name)
+					const thumb = THUMBNAIL_BY_NAME.get(catalogName)
 				if (thumb) {
 					next.ThumbnailImageName = thumb
 					changed = true
@@ -1109,7 +1113,7 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 			// description here which the client cannot resolve to an item; the
 			// catalog holds the real opaque desc the detail view needs.
 			const currentDesc = typeof next.AvatarItemDesc === 'string' ? next.AvatarItemDesc : ''
-			const realDesc = DESC_BY_NAME.get(name)
+			const realDesc = DESC_BY_NAME.get(catalogName)
 			// Preserve a valid opaque item descriptor, including variants that share a name.
 			// Repair only the human-readable descriptions in the old storefront captures.
 			const looksLikeCatalogDesc =
