@@ -18,6 +18,12 @@ describe('commerce endpoints', () => {
 		expect(await res.json()).toBe(false)
 	})
 
+	it('2026 purchase restriction response is a bare boolean', async () => {
+		const res = await SELF.fetch(`${ORIGIN}/purchaseRestriction/isplayerrestricted`)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toBe(false)
+	})
+
 	it('POST /purchase/v1/initiatepurchase returns a transaction id', async () => {
 		const res = await SELF.fetch(`${ORIGIN}/purchase/v1/initiatepurchase`, {
 			method: 'POST',
@@ -88,6 +94,7 @@ describe('commerce endpoints', () => {
 			'GET /api/catalog/v1/all',
 			'GET /purchase/v1/cleanuppending',
 			'GET /purchase/v1/hasspentmoney',
+			'GET /purchaseRestriction/isplayerrestricted',
 			'GET /purchasecampaign/allcurrent/v2',
 			'GET /reminder/currentTokenBundles/v2',
 			'POST /purchase/v1/cleanuppending',

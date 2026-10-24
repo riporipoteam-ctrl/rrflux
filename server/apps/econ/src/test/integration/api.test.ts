@@ -31,8 +31,8 @@ import { NotificationType } from '../../../../notify/src/notification-types'
 // SQL, not modules: they are never executed here, only read.
 import catalogStructureSql from '../../../migrations/0015_catalog.sql?raw'
 import catalogIdSql from '../../../migrations/0016_catalog_id.sql?raw'
-import avatarItemsJson from '../../../static/db/avatar-items.json'
 import unrenderable2026AvatarIds from '../../../static/db/2026-unrenderable-cai-ids.json'
+import avatarItemsJson from '../../../static/db/avatar-items.json'
 // The merged 2025 general store, read as a FILE: which file the route serves depends on the
 // caller's build, and these assertions are about the file's CONTENTS.
 import carriedItems from '../../../static/db/consumables.json'
@@ -1970,6 +1970,14 @@ describe('econ endpoints', () => {
 		}
 	})
 
+	test('2026 room-offer purchase counts use the result envelope', async () => {
+		const res = await exports.default.fetch(`${ORIGIN}/econ/roomOffer/room/92/purchaseCounts`, {
+			headers: await bearer('42', undefined, '20260323.14'),
+		})
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ Value: [], Success: true, Error: null, error_id: null })
+	})
+
 	test('POST /api/ugcPurchasables/v1/items/bulk resolves custom avatar items, echoing RoomId', async () => {
 		const item = await createCustomAvatarItem(env.DB, {
 			customAvatarItemId: crypto.randomUUID(),
@@ -2478,6 +2486,22 @@ describe('econ endpoints', () => {
 		}
 	})
 
+	test('2026 unlocked built-in consumables include their RRO identity', async () => {
+		const accountId = 987654322
+		await env.DB.prepare('DELETE FROM consumable WHERE account_id = ?1').bind(accountId).run()
+		await grantConsumable(env.DB, accountId, 'Supreme Pizza', 1)
+		try {
+			const res = await exports.default.fetch(`${ORIGIN}/api/consumables/v2/getUnlocked`, {
+				headers: await bearer(String(accountId), undefined, '20260323.14'),
+			})
+			expect(res.status).toBe(200)
+			const [item] = (await res.json()) as Array<Record<string, unknown>>
+			expect(item.IsRRO).toBe(true)
+		} finally {
+			await env.DB.prepare('DELETE FROM consumable WHERE account_id = ?1').bind(accountId).run()
+		}
+	})
+
 	test('serves 2025 consumable definitions and resolves real model configurations in bulk', async () => {
 		const allResponse = await exports.default.fetch(
 			`${ORIGIN}/api/consumables/v1/all?supportedVersion=2`
@@ -2848,7 +2872,16 @@ describe('econ endpoints', () => {
 				headers: await bearer('42', undefined, version),
 			})
 			expect(res.status).toBe(200)
-			return ((await res.json()) as { StoreItems: Array<{ GiftDrop: { CustomAvatarItemId?: string | null; AvatarItemInfo?: { DownloadableAvatarItemId?: string | null } } }> }).StoreItems
+			return (
+				(await res.json()) as {
+					StoreItems: Array<{
+						GiftDrop: {
+							CustomAvatarItemId?: string | null
+							AvatarItemInfo?: { DownloadableAvatarItemId?: string | null }
+						}
+					}>
+				}
+			).StoreItems
 		}
 		const incompatible = new Set(unrenderable2026AvatarIds)
 		const countBad = (items: Awaited<ReturnType<typeof fetchItems>>) =>
@@ -2870,8 +2903,10 @@ describe('econ endpoints', () => {
 		const shop = (await res.json()) as {
 			StoreItems: Array<{ PurchasableItemId: number; GiftDrop: { AvatarItemDesc: string } }>
 		}
-		expect(shop.StoreItems.find(({ PurchasableItemId }) => PurchasableItemId === 1821)?.GiftDrop.AvatarItemDesc)
-			.toBe('97253092-90ba-4ff2-b137-6324ab244d11,4oywwjb3-kifr-um9x87Pw,11ZEZTFhy0ONpoXb3kiewQ,')
+		expect(
+			shop.StoreItems.find(({ PurchasableItemId }) => PurchasableItemId === 1821)?.GiftDrop
+				.AvatarItemDesc
+		).toBe('97253092-90ba-4ff2-b137-6324ab244d11,4oywwjb3-kifr-um9x87Pw,11ZEZTFhy0ONpoXb3kiewQ,')
 	})
 
 	test('storefront 3 defaults anonymous browsing to sf3-2025 and retains build-aware legacy behavior', async () => {
@@ -4244,11 +4279,7 @@ describe('econ endpoints', () => {
 		...extra,
 	})
 
-	const bulkPurchase = async (
-		sub: string,
-		body: Record<string, unknown>,
-		version?: string
-	) =>
+	const bulkPurchase = async (sub: string, body: Record<string, unknown>, version?: string) =>
 		exports.default.fetch(`${ORIGIN}/api/items/bulkpurchase`, {
 			method: 'POST',
 			headers: { ...(await bearer(sub, undefined, version)), 'Content-Type': 'application/json' },
@@ -6285,6 +6316,24 @@ describe('econ endpoints', () => {
 		expect(typeof body.TokenPrice).toBe('number')
 	})
 
+	test('2026 current subscription season uses the 2026 DTO', async () => {
+		const res = await exports.default.fetch(
+			`${ORIGIN}/api/subscriptionseasons/v1/seasons/current`,
+			{
+				headers: await bearer('42', undefined, '20260323.14'),
+			}
+		)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({
+			SubscriptionSeasonId: '00000000-0000-0000-0000-000000000000',
+			Name: '',
+			ImageName: '',
+			StartAt: '0001-01-01T00:00:00Z',
+			NextSeasonStart: null,
+			Milestones: [],
+		})
+	})
+
 	const getSubscription = async (headers: Record<string, string> = {}) =>
 		exports.default.fetch(`${ORIGIN}/api/CampusCard/v1/UpdateAndGetSubscription`, {
 			method: 'POST',
@@ -6374,6 +6423,41 @@ describe('econ endpoints', () => {
 		expect(res.headers.get('content-type')).toContain('application/json')
 		// The whole body is the boolean — not `{ value: false }`, not an envelope.
 		expect(await res.text()).toBe('false')
+	})
+
+	test('2026 Maker AI eligibility answers a disabled DTO', async () => {
+		const res = await exports.default.fetch(`${ORIGIN}/api/makerai/checkfreetrialeligibility`, {
+			headers: await bearer('206', undefined, '20260323.14'),
+		})
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({})
+	})
+
+	test('2026 live-ops endpoints answer stable neutral contracts', async () => {
+		const battlePass = await exports.default.fetch(`${ORIGIN}/paintball-battle-pass/config`)
+		expect(battlePass.status).toBe(200)
+		expect(await battlePass.json()).toMatchObject({ BattlePassId: 0, Levels: [] })
+
+		const timed = await exports.default.fetch(`${ORIGIN}/api/timedCurrencyGrants/update`, {
+			method: 'POST',
+		})
+		expect(timed.status).toBe(200)
+		expect(await timed.json()).toMatchObject({ TimedCurrencyGrantId: 0 })
+
+		const distance = await exports.default.fetch(
+			`${ORIGIN}/api/distanceMovedRewardTracks/distance`,
+			{ method: 'POST' }
+		)
+		expect(distance.status).toBe(200)
+		expect(await distance.text()).toBe('')
+
+		const active = await exports.default.fetch(`${ORIGIN}/api/consumables/v1/updateActive`, {
+			method: 'POST',
+			headers: { ...(await bearer('206')), 'content-type': 'application/json' },
+			body: JSON.stringify({ Id: 1, IsActive: false, ActivatedByRoomie: false }),
+		})
+		expect(active.status).toBe(200)
+		expect(await active.text()).toBe('')
 	})
 
 	test('GET /api/makerai/checkfreetrialeligibility 401s without a bearer token', async () => {
@@ -6523,6 +6607,7 @@ describe('econ endpoints', () => {
 			'GET /api/challenge/v2/getCurrent',
 			'GET /api/checklist/v1/current',
 			'GET /api/checklist/v2/current',
+			'GET /api/consumables/v1/all',
 			'GET /api/consumables/v2/getUnlocked',
 			'GET /api/equipment/v2/getUnlocked',
 			'GET /api/gamerewards/v1/pending',
@@ -6543,10 +6628,14 @@ describe('econ endpoints', () => {
 			'GET /api/roomkeys/v1/mine',
 			'GET /api/roomkeys/v1/room',
 			'GET /api/storefronts/v1/adcarouselitems',
+			'GET /api/storefronts/v1/objectives',
+			'GET /api/storefronts/v1/toptoday',
 			'GET /api/storefronts/v2/buyInvention',
 			'GET /api/storefronts/v3/giftdropstore/{id}',
+			'GET /api/storefronts/v3/{id}',
 			'GET /api/storefronts/v4/balance/{currencyType}',
 			'GET /api/storefronts/v4/room/{id}',
+			'GET /api/subscriptions/v1/prices',
 			'GET /api/subscriptionseasons/v1/seasons/current',
 			'GET /api/ugcPurchasables/v1/items/room/{roomId}',
 			'GET /econ/customAvatarItems/v1/owned',
@@ -6557,6 +6646,7 @@ describe('econ endpoints', () => {
 			'GET /econ/roomInventoryItemTags/room/{roomId}',
 			'GET /econ/roomOffer/room/{roomId}',
 			'GET /econ/roomOffer/room/{roomId}/purchaseCounts',
+			'GET /paintball-battle-pass/config',
 			'POST /api/CampusCard/v1/PurchaseWithTokens',
 			'POST /api/CampusCard/v1/UpdateAndGetSubscription',
 			'POST /api/avatar/v1/lockeditems/bulk',
@@ -6568,7 +6658,10 @@ describe('econ endpoints', () => {
 			'POST /api/checklist/v1/complete',
 			'POST /api/checklist/v2/complete',
 			'POST /api/consumables/v1/consume',
+			'POST /api/consumables/v1/query/bulk',
+			'POST /api/consumables/v1/updateActive',
 			'POST /api/devitems/grant',
+			'POST /api/distanceMovedRewardTracks/distance',
 			'POST /api/equipment/v1/update',
 			'POST /api/gamerewards/v1/request',
 			'POST /api/items/bulkpurchase',
@@ -6583,6 +6676,7 @@ describe('econ endpoints', () => {
 			'POST /api/roomcurrencies/v1/updateCurrency',
 			'POST /api/storefronts/v2/buyItem',
 			'POST /api/storefronts/v3/buyInvention',
+			'POST /api/timedCurrencyGrants/update',
 			'POST /api/ugcPurchasables/v1/items/bulk',
 			'PUT /api/equipment/v1/update',
 			'PUT /api/roomconsumables/v1/roomConsumable',

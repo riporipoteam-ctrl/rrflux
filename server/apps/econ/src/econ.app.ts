@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { describeRoute, openAPIRouteHandler } from 'hono-openapi'
 import { useWorkersLogger } from 'workers-tagged-logger'
+import { z } from 'zod'
 
 import {
 	addXp,
@@ -14,9 +15,9 @@ import {
 	getPendingGifts,
 	getPlayerIdsInRoom,
 	grantInvention,
-	randomizedLevelReward,
 	levelsReached,
 	ownsInvention,
+	randomizedLevelReward,
 	setOutfit,
 } from '@repo/domain'
 import { intVar, logger, withCleanSpec, withNotFound, withOnError } from '@repo/hono-helpers'
@@ -1105,7 +1106,7 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 			) {
 				// Look up the catalog thumbnail by FriendlyName. (The old code keyed
 				// PurchasableItemId against AvatarItemId, which never matches.)
-					const thumb = THUMBNAIL_BY_NAME.get(catalogName)
+				const thumb = THUMBNAIL_BY_NAME.get(catalogName)
 				if (thumb) {
 					next.ThumbnailImageName = thumb
 					changed = true
@@ -1456,7 +1457,9 @@ const CLIENT_2026_BUILD = 20_260_323
 function removeUnrenderable2026Items(items: StoreItem[]): StoreItem[] {
 	return items.filter(({ GiftDrop: drop }) => {
 		const ids = [drop.CustomAvatarItemId, drop.AvatarItemInfo?.DownloadableAvatarItemId]
-		return !ids.some((id) => typeof id === 'string' && UNRENDERABLE_2026_AVATAR_IDS.has(id.toLowerCase()))
+		return !ids.some(
+			(id) => typeof id === 'string' && UNRENDERABLE_2026_AVATAR_IDS.has(id.toLowerCase())
+		)
 	})
 }
 
@@ -1470,10 +1473,7 @@ function with2026RoomBoostPrices(items: StoreItem[]): StoreItem[] {
 	])
 	return items.map((item) => {
 		const price = prices.get(item.PurchasableItemId)
-		if (
-			price === undefined ||
-			item.GiftDrop.ConsumableItemDesc !== 'wH7shWdU0E6xpw0d60ZdtA'
-		)
+		if (price === undefined || item.GiftDrop.ConsumableItemDesc !== 'wH7shWdU0E6xpw0d60ZdtA')
 			return item
 		return {
 			...item,
@@ -4449,6 +4449,84 @@ const app = new Hono<App>({ strict: false })
 		}
 	)
 
+	// 2026 asks for these live-ops contracts while constructing Play and Maker Pen.
+	// Returning complete neutral DTOs prevents the client from retrying 404s every frame.
+	.get(
+		'/paintball-battle-pass/config',
+		describeRoute({
+			tags: ['Econ'],
+			summary: 'Paintball battle-pass configuration',
+			responses: { 200: json(JsonObject, 'A disabled, structurally valid season') },
+		}),
+		(c) =>
+			c.json({
+				BattlePassId: 0,
+				Name: '',
+				ValidRoomIds: [],
+				StartTime: '0001-01-01T00:00:00Z',
+				EndTime: '0001-01-01T00:00:00Z',
+				Levels: [],
+				EventXP: {},
+				BoostConfig: {
+					TemporaryBoostDurationInMinutes: 0,
+					TemporaryBoostXpMultiplierPercentage: 0,
+					PermanentBoostXpMultiplierPercentage: 0,
+					SocialBoostXpMultiplierPercentage: 0,
+					MaxBoostXpMultiplierPercentage: 0,
+				},
+				DailyParticipationBonusLimit: 0,
+				MinimumParticipationTimeInSeconds: 0,
+				PurchasableSkus: [],
+				PermanentBoostTokenPrice: 0,
+				LimitedTimeReward: null,
+			})
+	)
+	.post(
+		'/api/timedCurrencyGrants/update',
+		describeRoute({
+			tags: ['Econ'],
+			summary: 'Update timed currency grants',
+			responses: { 200: json(JsonObject, 'A disabled timed grant') },
+		}),
+		(c) =>
+			c.json({
+				TimedCurrencyGrantId: 0,
+				Name: '',
+				StartTime: '0001-01-01T00:00:00Z',
+				EndTime: '0001-01-01T00:00:00Z',
+				CurrencyType: 0,
+				OfflineRatePerHour: 0,
+				OnlineRatePerHour: 0,
+				ActiveExperiment: null,
+			})
+	)
+	.post(
+		'/api/distanceMovedRewardTracks/distance',
+		describeRoute({
+			tags: ['Econ'],
+			summary: 'Report distance moved',
+			responses: { 200: { description: 'Accepted' } },
+		}),
+		(c) => c.body(null, 200)
+	)
+	.post(
+		'/api/consumables/v1/updateActive',
+		describeRoute({
+			tags: ['Consumables'],
+			summary: 'Update active consumable state',
+			security: AUTHED,
+			responses: {
+				200: { description: 'Accepted' },
+				401: UNAUTHORIZED_RESPONSE,
+			},
+		}),
+		async (c) => {
+			if ((await authedId(c)) === null) return unauthorized(c)
+			await c.req.json().catch(() => null)
+			return c.body(null, 200)
+		}
+	)
+
 	// Favourite/un-favourite owned equipment. [Authorize]. The client sends the entries it
 	// wants changed (one request can carry several) and reads nothing back. Only
 	// `Favorited` is written — the rest of each entry is the client echoing what it was
@@ -5384,8 +5462,30 @@ const app = new Hono<App>({ strict: false })
 	)
 	.get(
 		'/econ/roomOffer/room/:roomId/purchaseCounts',
-		listRoute('Per-offer purchase counts for a room', 'Empty stub'),
-		(c) => c.json([])
+		describeRoute({
+			tags: ['Econ'],
+			summary: 'Per-offer purchase counts for a room',
+			responses: {
+				200: json(
+					z.union([
+						JsonArray,
+						z.object({
+							Value: JsonArray,
+							Success: z.boolean(),
+							Error: z.string().nullable(),
+							error_id: z.string().nullable(),
+						}),
+					]),
+					'2026 result envelope; older clients receive a list'
+				),
+			},
+		}),
+		async (c) =>
+			c.json(
+				((await storefrontBuild(c)) ?? 0) >= 20260323
+					? { Value: [], Success: true, Error: null, error_id: null }
+					: []
+			)
 	)
 	.get(
 		'/econ/roomGiftDropShops/room/:roomId',
@@ -5591,6 +5691,7 @@ const app = new Hono<App>({ strict: false })
 				unlocked.map((item) => ({
 					...item,
 					...consumablePreviewFor(item.ConsumableItemDesc),
+					...(build >= 20260323 ? { IsRRO: true } : {}),
 				}))
 			)
 		}
@@ -7052,14 +7153,27 @@ app
 		}
 	)
 
-	// The subscription seasons running right now (the RR+ seasonal reward tracks).
-	// Returns the active Flux Rec+ season so the client's membership UI can display
-	// pricing. Returns a SINGLE OBJECT (not an array) — the client's
-	// AvatarItem.GetStorefront deserializer expects '{' at offset 0.
+	// The subscription-season DTO changed in 2026. Keep the existing Flux Rec+
+	// object for older clients and serve a correctly-shaped disabled season to
+	// 2026 so its UI formatter does not throw or retry.
 	.get(
 		'/api/subscriptionseasons/v1/seasons/current',
-		listRoute('Current subscription seasons', 'The active Flux Rec+ season'),
-		(c) => {
+		describeRoute({
+			tags: ['Econ'],
+			summary: 'Current subscription season',
+			responses: { 200: json(JsonObject, 'Build-specific current season DTO') },
+		}),
+		async (c) => {
+			if (((await storefrontBuild(c)) ?? 0) >= 20260323) {
+				return c.json({
+					SubscriptionSeasonId: '00000000-0000-0000-0000-000000000000',
+					Name: '',
+					ImageName: '',
+					StartAt: '0001-01-01T00:00:00Z',
+					NextSeasonStart: null,
+					Milestones: [],
+				})
+			}
 			const now = new Date()
 			const start = new Date(now)
 			start.setUTCDate(start.getUTCDate() - 30)
@@ -7120,10 +7234,9 @@ app
 	// the account's `plusSince`/`plusUntil` JSON. The single token-funded purchase
 	// path is CampusCard `PurchaseWithTokens` above.
 
-	// Whether the caller can start a Maker AI free trial. Always false, mirroring the
-	// reference server: nothing here runs trials, and false is the answer that leaves the
-	// client's creation UI in its normal state rather than offering a trial that can't
-	// start. The body is a BARE JSON `false` — not an envelope, not `{ value: false }`.
+	// Whether the caller can start a Maker AI free trial. The 2026 client changed the
+	// response type from a bare boolean to a DTO. An empty DTO preserves the disabled
+	// state through default field values and, critically, lets MakerAIModel finish loading.
 	//
 	// Auth-gated (401 on a missing or invalid token) even though the answer is the same for
 	// everyone, because the reference validates the token before answering and eligibility
@@ -7139,14 +7252,14 @@ app
 			].join(' '),
 			security: AUTHED,
 			responses: {
-				200: json(MakerAiFreeTrialEligibilityResponse, 'Always `false`'),
+				200: json(MakerAiFreeTrialEligibilityResponse, 'Build-specific disabled response'),
 				401: UNAUTHORIZED_RESPONSE,
 			},
 		}),
 		async (c) => {
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
-			return c.json(false)
+			return c.json(((await storefrontBuild(c)) ?? 0) >= 20260323 ? {} : false)
 		}
 	)
 
