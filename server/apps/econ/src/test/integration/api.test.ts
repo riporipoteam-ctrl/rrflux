@@ -32,6 +32,7 @@ import { NotificationType } from '../../../../notify/src/notification-types'
 import catalogStructureSql from '../../../migrations/0015_catalog.sql?raw'
 import catalogIdSql from '../../../migrations/0016_catalog_id.sql?raw'
 import avatarItemsJson from '../../../static/db/avatar-items.json'
+import unrenderable2026AvatarIds from '../../../static/db/2026-unrenderable-cai-ids.json'
 // The merged 2025 general store, read as a FILE: which file the route serves depends on the
 // caller's build, and these assertions are about the file's CONTENTS.
 import carriedItems from '../../../static/db/consumables.json'
@@ -2815,6 +2816,28 @@ describe('econ endpoints', () => {
 			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v4/room/${roomId}`)
 			expect(res.status, `room ${roomId}`).toBe(404)
 		}
+	})
+
+	test('2026 store excludes measured unrenderable avatar items without changing the 2025 store', async () => {
+		const fetchItems = async (version: string) => {
+			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v3/giftdropstore/3`, {
+				headers: await bearer('42', undefined, version),
+			})
+			expect(res.status).toBe(200)
+			return ((await res.json()) as { StoreItems: Array<{ GiftDrop: { CustomAvatarItemId?: string | null; AvatarItemInfo?: { DownloadableAvatarItemId?: string | null } } }> }).StoreItems
+		}
+		const incompatible = new Set(unrenderable2026AvatarIds)
+		const countBad = (items: Awaited<ReturnType<typeof fetchItems>>) =>
+			items.filter(({ GiftDrop }) =>
+				[GiftDrop.CustomAvatarItemId, GiftDrop.AvatarItemInfo?.DownloadableAvatarItemId].some(
+					(id) => typeof id === 'string' && incompatible.has(id.toLowerCase())
+				)
+			).length
+		const oldItems = await fetchItems('20250718.01')
+		const newItems = await fetchItems('20260323.14')
+		expect(countBad(oldItems)).toBe(52)
+		expect(countBad(newItems)).toBe(0)
+		expect(newItems.length).toBe(oldItems.length - 52)
 	})
 
 	test('storefront 3 defaults anonymous browsing to sf3-2025 and retains build-aware legacy behavior', async () => {
