@@ -846,6 +846,8 @@ interface StoreGiftDrop {
 	/** Not on any captured entry; nothing here reads or sets one. */
 	TagList?: string
 	ConsumableItemDesc: string
+	/** Quantity represented by a bundled consumable drop. */
+	ItemCount?: number
 	/** Available model configuration for 2025 consumable previews, resolved by desc. */
 	ConsumableItemId?: number
 	ConfigurationData?: string | null
@@ -1458,6 +1460,28 @@ function removeUnrenderable2026Items(items: StoreItem[]): StoreItem[] {
 	})
 }
 
+/** The captured Room Boost rows have the right ids and consumable descriptor,
+ * but their token-price arrays are empty. Restore the published bundle prices
+ * for the current client so they render in the store and can be purchased. */
+function with2026RoomBoostPrices(items: StoreItem[]): StoreItem[] {
+	const prices = new Map([
+		[32322, 1500], // 3 boosts
+		[32323, 4500], // 10 boosts
+	])
+	return items.map((item) => {
+		const price = prices.get(item.PurchasableItemId)
+		if (
+			price === undefined ||
+			item.GiftDrop.ConsumableItemDesc !== 'wH7shWdU0E6xpw0d60ZdtA'
+		)
+			return item
+		return {
+			...item,
+			Prices: [{ CurrencyType: CurrencyType.RecCenterTokens, Price: price }],
+		}
+	})
+}
+
 /**
  * The ASSETS path a storefront id reads from, following any {@link STOREFRONT_ALIASES} entry
  * and any {@link STOREFRONT_BY_BUILD} variant. The id arrives as a path param, so it is a
@@ -1548,6 +1572,7 @@ async function loadCachedStorefrontResponse(
 	// purchase path sees the same token prices the listing routes serve.
 	if (Array.isArray(catalog.StoreItems)) {
 		catalog.StoreItems = repriceDeadCurrencyItems(catalog.StoreItems)
+		if (is2026Store) catalog.StoreItems = with2026RoomBoostPrices(catalog.StoreItems)
 		if (path === '/sf3-2025.json') {
 			catalog.StoreItems = withCatalogWearables(catalog.StoreItems)
 			catalog.StoreItems = await withRroShopItems(c, catalog.StoreItems)
@@ -2286,7 +2311,11 @@ async function grantGiftDrop(
 		giftDrop.EquipmentModificationGuid !== ''
 	const isConsumable =
 		typeof giftDrop.ConsumableItemDesc === 'string' && giftDrop.ConsumableItemDesc !== ''
-	const consumableCount = isConsumable ? CONSUMABLE_GRANT_COUNT * (options.copies ?? 1) : 0
+	const dropCount =
+		Number.isInteger(giftDrop.ItemCount) && (giftDrop.ItemCount ?? 0) > 0
+			? giftDrop.ItemCount!
+			: CONSUMABLE_GRANT_COUNT
+	const consumableCount = isConsumable ? dropCount * (options.copies ?? 1) : 0
 	// No box to open: grant everything now, exactly as the purchase used to.
 	if (options.skipGiftBox === true) {
 		if (hasAvatarItem) await grantItem(db, accountId, toAvatarItem(giftDrop))
