@@ -1,5 +1,5 @@
 # Builds the Ripo Team branded Flux Rec installer (game/installer)
-# on Windows and publishes it as a prerelease asset. The ns host and Photon
+# on Windows and publishes it as the stable/latest release asset. The ns host and Photon
 # App IDs are baked in at compile time from repository secrets, so they never
 # appear in the repo.
 
@@ -71,7 +71,7 @@ jobs:
           FLUXREC_PHOTON_CHAT: ${{ secrets.FLUXREC_PHOTON_CHAT }}
         run: cargo build --release
 
-      - name: Publish prerelease
+      - name: Publish stable release
         if: github.event_name == 'push'
         shell: powershell
         env:
@@ -85,8 +85,13 @@ jobs:
           # skipped release creation in v0.1.4.
           gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --prerelease --title "Ripo Team Launcher - Flux Rec v$ver" --notes "Ripo Team Launcher setup for Flux Rec, with redesigned setup, library, and automatic update screens."
+            gh release create $tag --latest --title "Ripo Team Launcher - Flux Rec v$ver" --notes "Ripo Team Launcher setup for Flux Rec, with redesigned setup, library, and automatic update screens."
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+          } else {
+            # Legacy launchers use GitHub's /releases/latest endpoint and cannot discover prereleases.
+            # Always promote the current product release so automatic updates can find it.
+            gh release edit $tag --prerelease=false --latest
+            if ($LASTEXITCODE -ne 0) { throw "gh release promotion failed" }
           }
           gh release upload $tag "game\installer\target\release\FluxRec-Setup.exe" --clobber
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
