@@ -1105,8 +1105,8 @@ pub(crate) async fn apply_logo_bundle(
     if logo_2026.exists()
         && !file_ok(
             &logo_2026,
-            Some("84bbba6478298d79af7f490988a8e4ab"),
-            Some(13_409_188),
+            Some("75784e90aa16878424a2f5926a77dc69"),
+            Some(13_629_682),
         )
     {
         let backup = logo_2026.with_extension("bundle.stock");
@@ -1122,8 +1122,8 @@ pub(crate) async fn apply_logo_bundle(
             drop(output);
             if !file_ok(
                 &staged,
-                Some("84bbba6478298d79af7f490988a8e4ab"),
-                Some(13_409_188),
+                Some("75784e90aa16878424a2f5926a77dc69"),
+                Some(13_629_682),
             ) {
                 return Err("2026 logo asset failed verification".to_string());
             }
@@ -1303,6 +1303,12 @@ pub(crate) async fn run_install(
         // fingerprint guard. Keep the player's authorised client in place and
         // install only the matching five patch files beside RecRoom.exe.
         progress.set_stage("Configuring 2026 client…");
+        // Existing 2026 installs previously refreshed only the injected patch.
+        // That skipped bundled Flux Rec artwork and same-build client patches,
+        // leaving the stock Rec Room logo after an update.
+        progress.set_stage("Applying Flux Rec branding…");
+        apply_logo_bundle(&client, dir, progress).await?;
+        patches::apply_client_patches(dir);
         bepinex::install_patch2026_embedded(dir, ns_host)?;
         finish_live_dir(dir, ns_host, progress);
         progress.set_stage("Final checks…");

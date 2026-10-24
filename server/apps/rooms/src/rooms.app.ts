@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { describeRoute, openAPIRouteHandler } from 'hono-openapi'
 import { useWorkersLogger } from 'workers-tagged-logger'
 
+import { BlobStoreNotConfiguredError, deleteBlobs } from '@repo/blob-store'
 import {
 	Accessibility,
 	answerRoomRoleInvite,
@@ -78,7 +79,6 @@ import {
 	withNotFound,
 	withOnError,
 } from '@repo/hono-helpers'
-import { BlobStoreNotConfiguredError, deleteBlobs } from '@repo/blob-store'
 import { validateAndGetAccountId, validateAndGetRoles, validateAndGetVersion } from '@repo/jwt'
 
 // The notification-type ids the hub carries (owned by the `notify` worker). Imported
@@ -129,6 +129,7 @@ import {
 	RoomBanEnvelope,
 	RoomBanHistoryEnvelope,
 	RoomBansRemovedEnvelope,
+	RoomBoostCount,
 	RoomDto,
 	RoomEnvelope,
 	RoomExperience,
@@ -1580,6 +1581,19 @@ const app = new Hono<App>()
 		}
 	)
 
+	// The 2026 room page always loads the caller's boost count. Boost spending is not
+	// implemented, so zero is the truthful scalar and avoids a retrying 404.
+	.get(
+		'/rooms/:roomId{[0-9]+}/boosts/:playerId{[0-9]+}/count',
+		describeRoute({
+			tags: ['Interaction'],
+			summary: 'A player’s boost count on a room',
+			parameters: [roomIdParam, playerIdParam],
+			responses: { 200: json(RoomBoostCount, 'The boost count') },
+		}),
+		(c) => c.json(0)
+	)
+
 	// The current player's interaction state with a room (cheered/favorited/last
 	// visited), read from the `interaction` table. Auth-gated.
 	.get(
@@ -2054,7 +2068,9 @@ const app = new Hono<App>()
 			}
 
 			const body = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>
-			const imageField = Object.entries(body).find(([name]) => name.toLowerCase() === 'imagename')?.[1]
+			const imageField = Object.entries(body).find(
+				([name]) => name.toLowerCase() === 'imagename'
+			)?.[1]
 			const imageName = typeof imageField === 'string' ? imageField.trim() : ''
 			if (imageName === '') {
 				return roomResult(c, {
@@ -2128,10 +2144,7 @@ const app = new Hono<App>()
 					// not a client one. The room row is already gone; surface the failure
 					// rather than claiming full success.
 					if (e instanceof BlobStoreNotConfiguredError) {
-						return c.json(
-							{ error: 'blob storage is not configured' },
-							503
-						)
+						return c.json({ error: 'blob storage is not configured' }, 503)
 					}
 					throw e
 				}
@@ -3203,7 +3216,9 @@ const app = new Hono<App>()
 			if (!canManageRoom(room, accountId)) return c.body(null, 403)
 
 			const body = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>
-			const imageField = Object.entries(body).find(([name]) => name.toLowerCase() === 'imagename')?.[1]
+			const imageField = Object.entries(body).find(
+				([name]) => name.toLowerCase() === 'imagename'
+			)?.[1]
 			const imageName = typeof imageField === 'string' ? imageField.trim() : ''
 			if (imageName === '') return roomEnvelope(c, null, 'You must provide an image!')
 			const title = typeof body.title === 'string' ? body.title : ''

@@ -1,8 +1,7 @@
 import { adminSecretsStore, env, SELF } from 'cloudflare:test'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import app from '../../rooms.app'
-
+import { headBlob, putBlob } from '@repo/blob-store'
 import {
 	createRoomInstance,
 	getRoomInstance,
@@ -15,10 +14,9 @@ import {
 	SUBROOM_SCHEMA_DDL,
 } from '@repo/domain'
 
-import { headBlob, putBlob } from '@repo/blob-store'
-
 import { NotificationType } from '../../../../notify/src/notification-types'
 import importRooms from '../../../static/ImportRooms.json'
+import app from '../../rooms.app'
 
 import type { Room } from '@repo/domain'
 import type { Env } from '../../context'
@@ -902,7 +900,9 @@ describe('rooms endpoints', () => {
 		await env.DB.prepare('DELETE FROM room_tag WHERE room_id IN (?1, ?2)')
 			.bind(...ids)
 			.run()
-		await env.DB.prepare('DELETE FROM room WHERE room_id IN (?1, ?2)').bind(...ids).run()
+		await env.DB.prepare('DELETE FROM room WHERE room_id IN (?1, ?2)')
+			.bind(...ids)
+			.run()
 	})
 
 	it('GET /rooms/hot respects take pagination (TotalResults is the full count)', async () => {
@@ -1652,7 +1652,12 @@ describe('rooms endpoints', () => {
 				})
 			)
 			.run()
-		await putBlob(env, 'CDN_ASSETS', `room/${ImageName}`, new Uint8Array([1, 2, 3]).buffer as ArrayBuffer)
+		await putBlob(
+			env,
+			'CDN_ASSETS',
+			`room/${ImageName}`,
+			new Uint8Array([1, 2, 3]).buffer as ArrayBuffer
+		)
 		await env.DB.prepare(
 			'INSERT INTO interaction (player_id, room_id, cheered, favorited) VALUES (7, 9500, 1, 1)'
 		).run()
@@ -4339,6 +4344,12 @@ describe('rooms endpoints', () => {
 		expect(otherGet).toMatchObject({ Cheered: false, Favorited: false })
 	})
 
+	it('GET /rooms/:roomId/boosts/:playerId/count returns a bare zero', async () => {
+		const res = await SELF.fetch(`${ORIGIN}/rooms/2/boosts/555/count`)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toBe(0)
+	})
+
 	it('room Stats aggregate cheers/favorites from the interaction table', async () => {
 		type Stats = {
 			CheerCount: number
@@ -5248,6 +5259,7 @@ describe('rooms endpoints', () => {
 			'GET /rooms/{roomId}/bans',
 			'GET /rooms/{roomId}/bans/history',
 			'GET /rooms/{roomId}/bans/{playerId}/isBanned',
+			'GET /rooms/{roomId}/boosts/{playerId}/count',
 			'GET /rooms/{roomId}/experience',
 			'GET /rooms/{roomId}/experience/player',
 			'GET /rooms/{roomId}/interactionby/me',

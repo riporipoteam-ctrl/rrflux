@@ -35,7 +35,9 @@ const SERVICE_SUBDOMAINS = {
 	PlatformNotifications: 'platformnotifications',
 	PlayerSettings: 'playersettings',
 	RoomComments: 'roomcomments',
-	RoomieIntegrations: 'roomieintegrations',
+	// Roomie's integration routes live on the AI worker. Advertising a separate
+	// non-existent worker made the client retry 404s and kept the companion hidden.
+	RoomieIntegrations: 'ai',
 	Rooms: 'rooms',
 	Storage: 'storage',
 	Strings: 'strings',
