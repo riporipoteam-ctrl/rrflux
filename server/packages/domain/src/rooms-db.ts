@@ -1982,11 +1982,12 @@ export async function setRoomTags(db: D1Database, roomId: number, tags: RoomTag[
  * then looks up only the rooms that matched, which is what makes a category row cheap.
  */
 function roomsByTagsQuery(tagSets: string[][], where = ''): { sql: string; binds: string[] } {
-	// `where` is the caller's row filter ({@link LISTABLE_WHERE} or {@link PUBLIC_WHERE}) —
-	// unqualified, which is unambiguous under either shape below. It matters most when
-	// `tagSets` is EMPTY: that branch is the full scan every pseudo-tag feed still runs.
-	const filter = where === '' ? '' : ` WHERE ${where}`
-	if (tagSets.length === 0) return { sql: `SELECT ${ROOM_COLUMNS} FROM room${filter}`, binds: [] }
+	// `room_id` is present on both the room row and the tag-filter subquery. Qualify it in
+	// the filter so genre/category feeds do not fail with SQLite's ambiguous-column error.
+	// Alias the no-tag full scan too, keeping one filter shape for both query plans.
+	const qualifiedWhere = where.replace(/\broom_id\b/g, 'r.room_id')
+	const filter = qualifiedWhere === '' ? '' : ` WHERE ${qualifiedWhere}`
+	if (tagSets.length === 0) return { sql: `SELECT ${ROOM_COLUMNS} FROM room r${filter}`, binds: [] }
 
 	const binds: string[] = []
 	const joins = tagSets.map((tags, i) => {

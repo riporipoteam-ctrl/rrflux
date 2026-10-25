@@ -1017,6 +1017,48 @@ describe('rooms endpoints', () => {
 		await env.DB.prepare('DELETE FROM presence WHERE account_id BETWEEN 90101 AND 90105').run()
 	})
 
+	it('GET /rooms/carousel/:slug serves feeds named by the Play discovery page', async () => {
+		const read = async (slug: string) =>
+			(await SELF.fetch(`${ORIGIN}/rooms/carousel/${slug}?skip=0&take=20`)) as Response
+
+		// The Play page's first carousel was requesting `foryou`, but only `rising` had a
+		// route. The available fallback must have the same paged shape as the other carousels.
+		const forYou = await read('foryou')
+		expect(forYou.status).toBe(200)
+		expect(forYou.headers.get('content-type')).toContain('application/json')
+		expect(await forYou.json()).toMatchObject({
+			Results: expect.any(Array),
+			TotalResults: expect.any(Number),
+		})
+
+		const rro = await read('rro')
+		expect(await rro.json()).toEqual(
+			await (await SELF.fetch(`${ORIGIN}/rooms/hot?tag=rro&skip=0&take=20`)).json()
+		)
+
+		// These sections are present in the published page layout. Until curation data exists,
+		// they borrow the public hot feed so the layout does not render a blank row.
+		for (const slug of ['staffpicks', 'inkshowcase']) {
+			const res = await read(slug)
+			expect(res.status, slug).toBe(200)
+			expect(await res.json(), slug).toEqual(await (await SELF.fetch(`${ORIGIN}/rooms/hot?skip=0&take=20`)).json())
+		}
+		for (const slug of [
+			'battle_algoendpoint',
+			'casual_algoendpoint',
+			'explore_algoendpoint',
+			'hangout_algoendpoint',
+			'horror_algoendpoint',
+			'quests_algoendpoint',
+			'roleplay_algoendpoint',
+			'earnroomcurrency_algo',
+			'recentlyupdated',
+		]) {
+			expect((await read(slug)).status, slug).toBe(200)
+		}
+		expect((await read('not-a-carousel')).status).toBe(404)
+	})
+
 	it('GET /rooms/hot aliases #recroomoriginal to the rro tag', async () => {
 		const aliased = (await (
 			await SELF.fetch(`${ORIGIN}/rooms/hot?tag=recroomoriginal`)
@@ -5244,6 +5286,7 @@ describe('rooms endpoints', () => {
 			'GET /rooms/base',
 			'GET /rooms/bulk',
 			'GET /rooms/carousel/rising',
+			'GET /rooms/carousel/{slug}',
 			'GET /rooms/contributedby/me',
 			'GET /rooms/createdby/me',
 			'GET /rooms/curated_playlists',
