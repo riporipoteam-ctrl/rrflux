@@ -1150,13 +1150,6 @@ fn do_play(
     //     }
     // }
 
-    // Clear Unity's HTTP cache (fast path) so the client fetches fresh data.
-    send(92, "Launching Flux Rec…");
-    {
-        let (p, _rx) = crate::progress::channel();
-        crate::launcher::clear_unity_http_cache(&p);
-    }
-
     // Launch!
     send(95, "Launching Flux Rec…");
     let _ = msg_tx.send(LibMsg::CloseGui);

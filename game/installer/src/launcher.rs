@@ -415,7 +415,20 @@ pub(crate) fn open_url_in_browser(_url: &str) {}
 /// JSON) in LocalLow; stale cache was causing the client to use old
 /// AvatarItemType data even after backend fixes deployed.
 /// v1.0.0: made pub(crate) for the library flow.
-pub(crate) fn clear_unity_http_cache(progress: &Progress) {
+pub(crate) fn clear_unity_http_cache_once(dir: &Path, progress: &Progress) {
+    // A full cache purge on every Play erased downloaded UI/addressable data and
+    // forced the client to fetch the storefront, room feeds and thumbnails again.
+    // In the library flow this was even called twice. Invalidate once for this
+    // cache schema instead; future schema changes can deliberately bump the marker.
+    const CACHE_SCHEMA: &str = "2";
+    let marker = dir.join(".fluxrec_unity_cache_schema");
+    if std::fs::read_to_string(&marker)
+        .ok()
+        .is_some_and(|value| value.trim() == CACHE_SCHEMA)
+    {
+        println!("[launcher] Unity cache schema is current; keeping warm cache.");
+        return;
+    }
     progress.set_status("Launching Flux Rec…", 100);
     // Unity player cache locations for Rec Room on Windows.
     // v0.6.16: Fast path — directly target known Unity cache dirs instead of
@@ -453,6 +466,9 @@ pub(crate) fn clear_unity_http_cache(progress: &Progress) {
     } else {
         println!("[launcher] no Unity cache dirs found to clear");
     }
+    if let Err(error) = std::fs::write(&marker, CACHE_SCHEMA) {
+        eprintln!("[launcher] could not stamp Unity cache schema: {error}");
+    }
 }
 
 fn game_exe_for_launch(dir: &Path, is_2026: bool) -> Option<std::path::PathBuf> {
@@ -474,7 +490,7 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
     // v0.3.9: Clear Unity HTTP cache before launch so the client always
     // fetches fresh backend data (storefront types, box art, etc.) instead
     // of using stale cached responses from before backend fixes deployed.
-    clear_unity_http_cache(progress);
+    clear_unity_http_cache_once(dir, progress);
     match crate::find_game_exe(dir) {
         Some(exe) => {
             // 2026 client has Referee anti-cheat service (RefereeClientInstaller.exe)

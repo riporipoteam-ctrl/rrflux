@@ -47,6 +47,9 @@ export function jsonBody(schema: z.ZodType, description: string): OpenAPIV3_1.Re
 /** Bearer-JWT security requirement, for the auth-gated routes. */
 export const AUTHED = [{ bearerAuth: [] }]
 
+/** A room's boost count is returned as a bare integer, not an envelope. */
+export const RoomBoostCount = z.number().int().nonnegative()
+
 /**
  * The 401 the auth-gated routes return. Most answer `{ error: 'Unauthorized' }`; the
  * subroom writes answer an empty body (see UNAUTHORIZED_EMPTY / UNAUTHORIZED_ENVELOPE).

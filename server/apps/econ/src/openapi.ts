@@ -168,9 +168,7 @@ export const AvatarItemV4Dto = z.object({
  */
 export const DevItemsGrantResponse = z.object({
 	grantedCount: z.int().describe('How many developer items are now in the caller’s inventory'),
-	granted: z
-		.array(z.string())
-		.describe('The granted rows’ `item_key`s (their `AvatarItemDesc`)'),
+	granted: z.array(z.string()).describe('The granted rows’ `item_key`s (their `AvatarItemDesc`)'),
 })
 
 /**
@@ -274,13 +272,11 @@ export const ReferralProgressResponse = z.object({
 	}),
 })
 
-/**
- * `GET /api/makerai/checkfreetrialeligibility` — a BARE JSON boolean (`false`), not an
- * envelope and not a `{ value }` wrapper. The whole body is the answer.
- */
-export const MakerAiFreeTrialEligibilityResponse = z
-	.boolean()
-	.describe('Whether the caller can start a Maker AI free trial; always false')
+/** Build-specific Maker AI eligibility wire shape. */
+export const MakerAiFreeTrialEligibilityResponse = z.union([
+	z.boolean(),
+	z.record(z.string(), z.unknown()),
+])
 
 /** `POST /api/challenge/v2/updateProgress` — the identifying fields echoed back. */
 export const ChallengeProgressResponse = z.object({

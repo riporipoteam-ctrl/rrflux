@@ -88,7 +88,9 @@ const SCREENSHOT_NAMES: &[&str] = &[
 
 // v1.0.5: the real Flux Rec logo (not the drawn approximation).
 #[cfg(windows)]
-const FLUXREC_LOGO_PNG: &[u8] = include_bytes!("../assets/fluxrec-logo.png");
+// A 32-bit PNG with real alpha. Keep the launcher mark usable over either light
+// or dark cards instead of drawing the previous opaque black square.
+const FLUXREC_LOGO_PNG: &[u8] = include_bytes!("../assets/fluxrec-logo-transparent-v2.png");
 #[cfg(windows)]
 const RIPO_TEAM_LOGO_PNG: &[u8] = include_bytes!("../assets/ripo-team-logo.png");
 

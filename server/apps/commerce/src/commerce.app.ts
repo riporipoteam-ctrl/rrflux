@@ -72,6 +72,21 @@ const app = new Hono<App>()
 		(c) => c.json(false)
 	)
 
+	// The 2026 store asks this before showing platform purchases. A missing route
+	// becomes a retrying 404 in PlatformSkuService and leaves several store/Maker
+	// panels waiting forever. The client contract is a bare boolean.
+	.get(
+		'/purchaseRestriction/isplayerrestricted',
+		describeRoute({
+			tags: ['Purchase'],
+			summary: 'Player purchase restriction status',
+			description:
+				'No external payment restrictions are configured. The 2026 client expects a bare boolean.',
+			responses: { 200: json(BareBoolean, 'No purchase restriction') },
+		}),
+		(c) => c.json(false)
+	)
+
 	// Begin a purchase. The client asks for a transaction handle before it takes the
 	// player to the platform store; nothing is charged or recorded here, so the id is a
 	// fixed placeholder and the posted body is ignored.

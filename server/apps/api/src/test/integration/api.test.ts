@@ -397,7 +397,9 @@ describe('public endpoints', () => {
 			})
 			expect(res.status, label).toBe(200)
 			const config = (await res.json()) as Array<{ Key: string; Value: string }>
-			const selector = config.find((entry) => entry.Key === 'Econ.StorefrontCarouselsToUseListsService')
+			const selector = config.find(
+				(entry) => entry.Key === 'Econ.StorefrontCarouselsToUseListsService'
+			)
 			expect(selector?.Value.split(','), label).toEqual(expected)
 		}
 	})
@@ -1028,9 +1030,7 @@ describe('public endpoints', () => {
 	})
 
 	test('every earned level deterministically distributes clothing or backpack boxes', () => {
-		const rewards = Array.from({ length: 50 }, (_, index) =>
-			randomizedLevelReward(4242, index + 1)
-		)
+		const rewards = Array.from({ length: 50 }, (_, index) => randomizedLevelReward(4242, index + 1))
 		expect(rewards).not.toContain(null)
 		expect(rewards.map((reward) => reward?.kind)).toContain('clothing')
 		expect(rewards.map((reward) => reward?.kind)).toContain('consumable')
@@ -2235,12 +2235,18 @@ describe('public endpoints', () => {
 		expect(res.status).toBe(400)
 	})
 
-	test('GET /api/progressionEvents/active is an empty list (no auth)', async () => {
-		// The client reads an empty list as "no event running" and skips the event UI; a 404
-		// would stall its load instead.
+	test('GET /api/progressionEvents/active is the bare zero sentinel (no auth)', async () => {
 		const res = await exports.default.fetch(`${ORIGIN}/api/progressionEvents/active`)
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual([])
+		expect(await res.json()).toBe(0)
+	})
+
+	test('GET /api/players/v1/progression/xpEarnedToday is a bare integer', async () => {
+		const res = await exports.default.fetch(`${ORIGIN}/api/players/v1/progression/xpEarnedToday`, {
+			headers: await bearer('1', ['gameClient'], '20260323.14'),
+		})
+		expect(res.status).toBe(200)
+		expect(await res.json()).toBe(0)
 	})
 
 	test('GET /api/rooms/v1/filters returns an object with filter arrays', async () => {
@@ -7022,9 +7028,14 @@ describe('images', () => {
 
 	test('accepts the 2025 multipart photo and JSON file parts', async () => {
 		const fd = new FormData()
-		fd.append('ImgMeta', new File([
-			JSON.stringify({ savedImageType: 1, roomId: 777, accessibility: 2 }),
-		], 'metadata.json', { type: 'application/json' }))
+		fd.append(
+			'ImgMeta',
+			new File(
+				[JSON.stringify({ savedImageType: 1, roomId: 777, accessibility: 2 })],
+				'metadata.json',
+				{ type: 'application/json' }
+			)
+		)
 		fd.append('Photo', new File([new Uint8Array([1, 2, 3])], 'camera.png', { type: 'image/png' }))
 		const res = await exports.default.fetch(`${ORIGIN}/api/images/v4/uploadsaved`, {
 			method: 'POST',

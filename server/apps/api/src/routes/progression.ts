@@ -17,10 +17,10 @@ import { NotificationType } from '../../../notify/src/notification-types'
 import { authedId, parseFormIds, queryIds, unauthorized } from '../http'
 import {
 	AUTHED,
+	BareInteger,
 	BulkIdsRequest,
 	CheerPlayerRequest,
 	CheerPlayerResponse,
-	SetSelectedCheerRequest,
 	form,
 	idParam,
 	intQuery,
@@ -29,6 +29,7 @@ import {
 	JsonObject,
 	ProgressionDto,
 	ReputationDto,
+	SetSelectedCheerRequest,
 	UNAUTHORIZED_RESPONSE,
 } from '../openapi'
 import {
@@ -264,11 +265,11 @@ export const progressionRoutes = new Hono<App>({ strict: false })
 			tags: ['Progression'],
 			summary: 'XP earned today',
 			description:
-				'Total XP granted to the authenticated player today (UTC), computed from the ' +
-				'real xp_history grant log. Returns 0 when nothing was earned.',
+				'Total XP granted to the authenticated player today (UTC), as the bare integer ' +
+				'required by the 2026 client. Returns 0 when nothing was earned.',
 			security: AUTHED,
 			responses: {
-				200: json(JsonObject, 'XP earned today'),
+				200: json(BareInteger, 'XP earned today'),
 				401: UNAUTHORIZED_RESPONSE,
 			},
 		}),
@@ -276,7 +277,7 @@ export const progressionRoutes = new Hono<App>({ strict: false })
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
 			const total = await getXpEarnedToday(c.env.DB, id)
-			return c.json({ XpEarnedToday: total })
+			return c.json(total)
 		}
 	)
 	.get(
@@ -542,23 +543,17 @@ export const progressionRoutes = new Hono<App>({ strict: false })
 		async (c) => c.json(await getProgressions(c.env.DB, await parseFormIds(c)))
 	)
 
-	// The progression events running right now — the limited-time XP events the client shows
-	// a banner and a progress track for.
-	//
-	// STUB: an empty list, which the client reads as "no event on" and skips the event UI
-	// entirely. That is the honest answer (nothing here runs events) and the safe one: a
-	// fabricated event would draw a track that never fills. No auth — whether an event is
-	// running is the same fact for everybody, and the client asks while loading.
+	// The active progression-event id is a SCALAR on 2026. Returning [] throws in
+	// the client's integer formatter every time the Play page refreshes. Zero is
+	// the native "no active event" value and avoids advertising a fake reward track.
 	.get(
 		'/api/progressionEvents/active',
 		describeRoute({
 			tags: ['Progression'],
-			summary: 'Progression events currently running (stub)',
+			summary: 'Active progression event id',
 			description:
-				'The limited-time XP events in progress. Always an empty list — nothing on this ' +
-				'server runs one — which the client reads as “no event” and skips the event UI, ' +
-				'where a 404 would stall the load. No auth: it is the same answer for every player.',
-			responses: { 200: json(JsonArray, 'Empty — no event is running') },
+				'The limited-time progression event currently running. Zero means no active event.',
+			responses: { 200: json(BareInteger, 'Zero — no event is running') },
 		}),
-		(c) => c.json([])
+		(c) => c.json(0)
 	)

@@ -4614,7 +4614,7 @@
 	},
 	{
 		"Key": "RoomieAI.System.Enabled",
-		"Value": "False",
+		"Value": "True",
 		"ActiveExperiments": null,
 		"StartTime": null,
 		"EndTime": null
@@ -6055,11 +6055,11 @@
 		"EndTime": null
 	},
 	{
-		 "Key": "BootSequence.AutoCreateAccount",
-		 "Value": "false",
-		 "ActiveExperiments": null,
-		 "StartTime": null,
-		 "EndTime": null
+		"Key": "BootSequence.AutoCreateAccount",
+		"Value": "false",
+		"ActiveExperiments": null,
+		"StartTime": null,
+		"EndTime": null
 	},
 	{
 		"Key": "DataCollection.Enabled",
