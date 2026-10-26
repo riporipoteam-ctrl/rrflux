@@ -32,6 +32,12 @@ async function fetchCanonicalImage(c: Context<App>, key: string): Promise<Respon
 	if (!isAvatarImage && !isStoreItemThumbnail) return null
 
 	const url = new URL(c.req.url)
+	// On production the worker itself owns img.recflare.net. A cache miss used to
+	// request that exact same URL as its "canonical" fallback, recursively re-entering
+	// this handler until the timeout. Store grids issue many requests in parallel, so
+	// those loops amplified into visible slow loading. Only use the canonical host as
+	// an upstream when the original request arrived through a different host.
+	if (url.origin === CANONICAL_IMAGE_ORIGIN) return null
 	url.protocol = 'https:'
 	url.host = new URL(CANONICAL_IMAGE_ORIGIN).host
 

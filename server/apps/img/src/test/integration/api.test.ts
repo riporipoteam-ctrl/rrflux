@@ -175,6 +175,21 @@ describe('img endpoints', () => {
 		}
 	})
 
+	it('does not recurse into itself when the request already uses the canonical image host', async () => {
+		const mockFetch = vi.fn()
+		vi.stubGlobal('fetch', mockFetch)
+		try {
+			const res = await unsignedFetch(
+				'https://img.recflare.net/avatar/missing-store-thumbnail.png?width=256&sig=p1'
+			)
+			expect(res.status).toBe(200)
+			expect(new Uint8Array(await res.arrayBuffer())).toHaveLength(67)
+			expect(mockFetch).not.toHaveBeenCalled()
+		} finally {
+			vi.unstubAllGlobals()
+		}
+	})
+
 	it('rejects the canonical JPEG placeholder for missing 2025 store PNGs', async () => {
 		const mockFetch = vi.fn(async () =>
 			new Response(new Uint8Array(3_988), {

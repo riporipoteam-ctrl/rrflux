@@ -181,7 +181,7 @@ import {
 	getRoomCurrency,
 	updateRoomCurrency,
 } from './room-currency-db'
-import { repriceDeadCurrencyItems } from './storefront-rotation'
+import { buildRecCenterStorefront, repriceDeadCurrencyItems } from './storefront-rotation'
 
 import type { Context } from 'hono'
 import type {
@@ -233,13 +233,19 @@ function consumablePreviewFor(desc: unknown): Record<string, unknown> | undefine
 	}
 }
 
-/** Keep the same usable local thumbnail on every route that returns a consumable. */
+/**
+ * Keep the native item thumbnail on every route that returns a consumable.
+ *
+ * Captured definitions include per-item image names.  The category artwork is
+ * deliberately a fallback only: replacing a valid image name here made every
+ * food, potion, and tool look like the same Store tile.
+ */
 function consumableThumbnailFor(definition: (typeof consumableDefinitions)[number]) {
-	return (
-		backpackThumbnailFor(
-			{ ConsumableItemDesc: definition.ConsumableItemDesc },
-			definition.FriendlyName.toLowerCase()
-		) ?? definition.ThumbnailImageName
+	const nativeThumbnail = definition.ThumbnailImageName?.trim()
+	if (nativeThumbnail) return nativeThumbnail
+	return backpackThumbnailFor(
+		{ ConsumableItemDesc: definition.ConsumableItemDesc },
+		definition.FriendlyName.toLowerCase()
 	)
 }
 
@@ -1096,7 +1102,14 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 			if (recovered2025Thumb && existingThumb !== recovered2025Thumb) {
 				next.ThumbnailImageName = recovered2025Thumb
 				changed = true
-			} else if (backpackThumb && preferredThumb !== backpackThumb) {
+			// Definitions for consumables already include their specific native thumbnail
+			// names (for example Root Beer and Assorted Donuts).  Do not replace those
+			// with category art: that turns distinct items into the same generic icon.
+			// Category art is only the last-resort fallback for sparse legacy drops.
+			} else if (
+				backpackThumb &&
+				(!preferredThumb || typeof preferredThumb !== 'string' || preferredThumb.trim() === '')
+			) {
 				next.ThumbnailImageName = backpackThumb
 				changed = true
 			} else if (
@@ -1170,6 +1183,7 @@ function withFiveStarUniqueBox(items: StoreItem[]): StoreItem[] {
 			Unique: true,
 			Rarity: 50,
 			QueryRedirectRarity: 50,
+			ThumbnailImageName: 'store-backpack-unique-box-5-v2.png',
 			Context: 0,
 			Currency: 0,
 			CurrencyType: 0,
@@ -1423,10 +1437,6 @@ interface GiftRequest {
 const STOREFRONT_ALIASES: Record<string, string> = {
 	// Watch UI Store page requests "Storefront_Watch" — map it to the general store (sf3).
 	Storefront_Watch: '3',
-	// Rec Center (storefront 2, room 2) has no authentic catalog capture of its own —
-	// serve the full authentic main-store catalog (sf3/sf3-2025) instead of the 10-item
-	// sf2.json stub. Remove this line if a real Rec Center capture ever lands in static/storefronts.
-	'2': '3',
 }
 
 /**
@@ -1522,9 +1532,16 @@ async function loadStorefront(
 	storefrontType: number,
 	options: { defaultToCurrentForPublicBrowse?: boolean } = {}
 ): Promise<Storefront | null> {
-	// Storefront 2 has its own historical capture (sf2.json), so browsing and buying from
-	// the Rec Center use that file rather than silently substituting the main Watch-menu store.
 	const build = await storefrontBuild(c)
+	// The 2026 client expects the Rec Center's live rotation: always-available food,
+	// potions, films, KO icons, and the daily picks. Older clients retain their captured
+	// sf2 catalog and its historical item IDs.
+	if (storefrontType === 2 && build !== null && build >= CLIENT_2026_BUILD) {
+		const catalog = buildRecCenterStorefront() as unknown as Storefront
+		return Array.isArray(catalog.StoreItems)
+			? { ...catalog, StoreItems: enrichWithThumbnails(catalog.StoreItems) }
+			: null
+	}
 	const defaultToCurrentForPublicBrowse =
 		options.defaultToCurrentForPublicBrowse === true &&
 		c.req.header('Authorization') === undefined &&
@@ -1602,19 +1619,9 @@ async function loadCachedStorefrontResponse(
 	return response
 }
 
-async function loadRecCenterFallbackItems(c: Context<App>): Promise<StoreItem[]> {
-	const res = await c.env.ASSETS.fetch(new URL('/sf2.json', c.req.url))
-	if (!res.ok) return []
-	const catalog = (await res.json()) as Storefront
-	if (!Array.isArray(catalog.StoreItems)) return []
-	const withoutSales = (price: StorePrice) => ({ ...price, StorefrontSaleData: null })
-	const items = catalog.StoreItems.map((item) => ({
-		...item,
-		Prices: item.Prices.map(withoutSales),
-		SubscriberPrices:
-			item.SubscriberPrices === null ? null : item.SubscriberPrices?.map(withoutSales),
-	}))
-	return enrichWithThumbnails(repriceDeadCurrencyItems(items))
+function recCenterFallbackItems(): StoreItem[] {
+	const catalog = buildRecCenterStorefront() as unknown as Storefront
+	return Array.isArray(catalog.StoreItems) ? enrichWithThumbnails(catalog.StoreItems) : []
 }
 
 /**
@@ -1632,7 +1639,7 @@ async function findStoreItem(
 		storefront?.StoreItems.find((it) => it.PurchasableItemId === purchasableItemId) ?? null
 	if (item !== null || storefrontType !== 2) return item
 	return (
-		(await loadRecCenterFallbackItems(c)).find(
+		recCenterFallbackItems().find(
 			(it) => it.PurchasableItemId === purchasableItemId
 		) ?? null
 	)
@@ -5638,7 +5645,7 @@ const app = new Hono<App>({ strict: false })
 				})
 			)
 			if (missingRecCenterIds.size > 0) {
-				for (const item of await loadRecCenterFallbackItems(c)) {
+				for (const item of recCenterFallbackItems()) {
 					if (missingRecCenterIds.has(item.PurchasableItemId)) {
 						storeById.set(item.PurchasableItemId, item)
 					}
@@ -5821,10 +5828,30 @@ const app = new Hono<App>({ strict: false })
 		}),
 		async (c) => {
 			const id = c.req.param('id')
-			// The same resolution `loadStorefront` uses, so what is browsed is what a purchase is
-			// checked against — see `storefrontAssetPath`. (Id 2, the Rec Center, is aliased
-			// to the full authentic main-store catalog in STOREFRONT_ALIASES.)
+			// The 2026 Rec Center gets the generated rotation through the same loader used by
+			// purchases. Older builds retain their captured storefront response below.
 			const build = await storefrontBuild(c)
+			if (id === '2' && build !== null && build >= CLIENT_2026_BUILD) {
+				const catalog = await loadStorefront(c, 2)
+				if (!catalog) return c.notFound()
+				if (
+					c.req.query('skip') === undefined &&
+					c.req.query('offset') === undefined &&
+					c.req.query('take') === undefined &&
+					c.req.query('limit') === undefined
+				) {
+					return c.json(catalog)
+				}
+				const allItems = catalog.StoreItems
+				const skip = Math.max(
+					0,
+					Number.parseInt(c.req.query('skip') ?? c.req.query('offset') ?? '0', 10) || 0
+				)
+				const takeRaw = c.req.query('take') ?? c.req.query('limit') ?? ''
+				const take =
+					takeRaw === '' ? allItems.length : Math.max(0, Number.parseInt(takeRaw, 10) || 0)
+				return c.json({ ...catalog, StoreItems: allItems.slice(skip, skip + take) })
+			}
 			const defaultToCurrentForPublicBrowse =
 				c.req.header('Authorization') === undefined && c.req.header('rn.ver') === undefined
 			const path = storefrontAssetPath(id, build, defaultToCurrentForPublicBrowse)

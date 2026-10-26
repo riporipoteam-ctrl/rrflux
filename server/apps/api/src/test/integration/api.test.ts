@@ -404,6 +404,19 @@ describe('public endpoints', () => {
 		}
 	})
 
+	test('2026 catalog does not opt clients into LiveOps modules this service does not host', async () => {
+		const res = await exports.default.fetch(`${ORIGIN}/api/gameconfigs/v1/all`, {
+			headers: await bearer('42', undefined, '20260323.14'),
+		})
+		expect(res.status).toBe(200)
+		const entries = (await res.json()) as Array<{ Key: string; Value: string }>
+		const values = new Map(entries.map((entry) => [entry.Key, entry.Value]))
+
+		expect(values.get('LiveOps.TLA.Displacement.Enabled')).toBe('false')
+		expect(values.get('LiveOps.TLA.Recipes.Id')).toBe('')
+		expect(values.get('LiveOps.TLA.Displacement')).toContain('"AllowedInDorm": false')
+	})
+
 	test('GET /api/gameconfigs/v1/all serves the 2023 catalog to the target build', async () => {
 		expect(await gameConfigKeys(GAME_VERSION)).not.toContain(KEY_2025_ONLY)
 	})

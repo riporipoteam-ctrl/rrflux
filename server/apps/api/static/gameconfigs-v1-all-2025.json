@@ -5713,14 +5713,14 @@
 	},
 	{
 		"Key": "LiveOps.TLA.Displacement",
-		"Value": "{\r\n    \"progressReportingDelay\": 90000,\r\n    \"DisabledRoomIds\": [],\r\n    \"AllowedInDorm\": true   \r\n}",
+		"Value": "{\r\n    \"progressReportingDelay\": 90000,\r\n    \"DisabledRoomIds\": [],\r\n    \"AllowedInDorm\": false\r\n}",
 		"ActiveExperiments": null,
 		"StartTime": null,
 		"EndTime": null
 	},
 	{
 		"Key": "LiveOps.TLA.Displacement.Enabled",
-		"Value": "true",
+		"Value": "false",
 		"ActiveExperiments": "liveops_2026q1_winter_dash",
 		"StartTime": null,
 		"EndTime": null
@@ -5986,7 +5986,7 @@
 	},
 	{
 		"Key": "LiveOps.TLA.Recipes.Id",
-		"Value": "cbe9582c-6314-4ba3-ad0e-57d220b79aff",
+		"Value": "",
 		"ActiveExperiments": null,
 		"StartTime": null,
 		"EndTime": null

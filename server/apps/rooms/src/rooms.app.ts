@@ -31,6 +31,7 @@ import {
 	getPlayerIdsInRoom,
 	getPresence,
 	getPublicRoomsByCreator,
+	getRecentlyUpdatedRooms,
 	getRecommendedRooms,
 	getRoomBanHistory,
 	getRoomBans,
@@ -1094,9 +1095,8 @@ const app = new Hono<App>()
 	// serves an empty carousel rather than a stale one.
 	//
 	// Paged like the hot feed (`skip`/`take`, take defaults to 100) and answers the same
-	// `{ Results, TotalResults }` envelope its sibling feeds do. Only `rising` is served —
-	// the other slugs in the discovery catalogue (`foryou`, `staffpicks`, the
-	// `*_algoendpoint` rows) keep 404ing until each is given a feed of its own.
+	// `{ Results, TotalResults }` envelope its sibling feeds do. Other published slugs are
+	// handled by the parameterized route immediately below.
 	.get(
 		'/rooms/carousel/rising',
 		describeRoute({
@@ -1116,6 +1116,66 @@ const app = new Hono<App>()
 			const skip = Number.parseInt(c.req.query('skip') ?? '0', 10) || 0
 			const take = Number.parseInt(c.req.query('take') ?? '100', 10) || 100
 			return c.json(await getTrendingRooms(c.env.DB, skip, take))
+		}
+	)
+	// The 2025/2026 page layouts request named carousel feeds. Missing routes here return
+	// 404s and leave the Play page's room rows blank. Map supported feeds to real room data.
+	// Some historic page layouts name editorial/category algorithms that this server does not
+	// have enough data to compute yet. Those use the public hot-room feed as a visible,
+	// deterministic fallback instead of rendering a completely empty Play page.
+	.get(
+		'/rooms/carousel/:slug',
+		describeRoute({
+			tags: ['Discovery'],
+			summary: 'A named room carousel feed',
+			description: [
+				'Feeds named by the published Discovery layouts. `foryou` and `hot` use the public hot-room',
+				'ranking as a fallback because this service has no personalized recommender; `new`, `rro`,',
+				'category slugs and `recentlyupdated` use their corresponding room data. A named feed with',
+				'no source data falls back to public hot rooms so the client can render its row. Unknown',
+				'slugs return 404.',
+			].join(' '),
+			parameters: [
+				{ name: 'slug', in: 'path', required: true, schema: { type: 'string' } },
+				...pageParams(100),
+			],
+			responses: {
+				200: json(PagedRooms, 'The named carousel page'),
+				404: { description: 'Unknown carousel slug' },
+			},
+		}),
+		async (c) => {
+			const slug = c.req.param('slug').toLowerCase()
+			const skip = Math.max(0, Number.parseInt(c.req.query('skip') ?? '0', 10) || 0)
+			const take = Math.max(0, Number.parseInt(c.req.query('take') ?? '100', 10) || 100)
+			const categoryTags: Record<string, string> = {
+				battle_algoendpoint: 'battle',
+				casual_algoendpoint: 'casual',
+				explore_algoendpoint: 'explore',
+				hangout_algoendpoint: 'hangout',
+				horror_algoendpoint: 'horror',
+				quests_algoendpoint: 'quest',
+				roleplay_algoendpoint: 'roleplay',
+			}
+
+			if (slug === 'rising') return c.json(await getTrendingRooms(c.env.DB, skip, take))
+			if (slug === 'recentlyupdated') {
+				return c.json(await getRecentlyUpdatedRooms(c.env.DB, skip, take))
+			}
+			if (slug === 'staffpicks' || slug === 'inkshowcase' || slug === 'earnroomcurrency_algo') {
+				return c.json(await getHotRooms(c.env.DB, '', skip, take))
+			}
+
+			const tag =
+				slug === 'foryou' || slug === 'hot' ? '' :
+				slug === 'rro' ? 'rro' :
+				slug === 'new' ? 'new' :
+				categoryTags[slug]
+			if (tag === undefined) return c.notFound()
+			const page = await getHotRooms(c.env.DB, tag, skip, take)
+			// Category data is optional in old saves. A zero-result category must still draw a
+			// usable row; the client has no separate empty-state UI for these carousels.
+			return c.json(page.TotalResults === 0 ? await getHotRooms(c.env.DB, '', skip, take) : page)
 		}
 	)
 

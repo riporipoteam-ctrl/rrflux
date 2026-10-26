@@ -2469,7 +2469,7 @@ describe('econ endpoints', () => {
 			}>
 			expect(list).toHaveLength(1)
 			expect(list[0]).toMatchObject({ ConsumableItemDesc: desc, ConsumableItemId: 1616 })
-			expect(list[0].ThumbnailImageName).toBe('store-backpack-food-v2.png')
+			expect(list[0].ThumbnailImageName).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
 			expect(JSON.parse(list[0].ConfigurationData).UnityAssetData.UnityAssetId).toBe(
 				'52106138-cc33-4bd1-86fa-91adf31aca95'
 			)
@@ -2523,17 +2523,17 @@ describe('econ endpoints', () => {
 			'52106138-cc33-4bd1-86fa-91adf31aca95'
 		)
 		expect(appleConfiguration.UnityAssetData.ReferencedUnityAssetIds).toHaveLength(3)
-		expect(apple.ThumbnailImageName).toBe('store-backpack-food-v2.png')
+		expect(apple.ThumbnailImageName).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
 		expect(
 			definitions.find((definition) => definition.FriendlyName === 'Root Beer')?.ThumbnailImageName
-		).toBe('store-backpack-food-v2.png')
+		).toBe('dftf7822mxh6qptcetqjpetcs.png')
 		expect(
 			definitions.find((definition) => definition.FriendlyName === 'Assorted Donuts')
 				?.ThumbnailImageName
-		).toBe('store-backpack-food-v2.png')
+		).toBe('dvtzzncutq8z5gcpx378mli8k.png')
 		expect(
 			definitions.find((definition) => definition.FriendlyName === 'Red Apples')?.ThumbnailImageName
-		).toBe('store-backpack-food-v2.png')
+		).toBe('7rpdksfkh3fp7dc3nnkho1ft9.png')
 
 		const potion = definitions.find(
 			(definition) => definition.FriendlyName === 'Blue Pulse Potion'
@@ -2564,17 +2564,17 @@ describe('econ endpoints', () => {
 		])
 		expect(
 			resolved.find((definition) => definition.ConsumableItemDesc === apple.ConsumableItemDesc)
-		).toMatchObject({ ThumbnailImageName: 'store-backpack-food-v2.png' })
+		).toMatchObject({ ThumbnailImageName: '5h9ul7otj4auhcbdvtdl2velt.png' })
 		expect(
 			resolved.find((definition) => definition.ConsumableItemDesc === potion.ConsumableItemDesc)
-		).toMatchObject({ ThumbnailImageName: 'store-backpack-potion-v2.png' })
+		).toMatchObject({ ThumbnailImageName: '2k971pdsgqer05tfq3cv3cmtl.png' })
 		expect(
 			resolved.find(
 				(definition) =>
 					definition.ConsumableItemDesc ===
 					definitions.find((entry) => entry.FriendlyName === 'Red Apples')!.ConsumableItemDesc
 			)
-		).toMatchObject({ ThumbnailImageName: 'store-backpack-food-v2.png' })
+		).toMatchObject({ ThumbnailImageName: '7rpdksfkh3fp7dc3nnkho1ft9.png' })
 	})
 
 	test('POST /api/consumables/v1/consume reduces the count and deletes the row at zero', async () => {
@@ -2859,6 +2859,31 @@ describe('econ endpoints', () => {
 			expectCapturedRecCenter(await read(headers))
 		}
 	})
+
+	test('2026 Rec Center storefront serves the live food and potion catalog', async () => {
+		const headers = await bearer('42', undefined, '20260323.14')
+		const roomRes = await exports.default.fetch(`${ORIGIN}/api/storefronts/v4/room/2`, { headers })
+		expect(roomRes.status).toBe(200)
+		const roomCatalog = (await roomRes.json()) as {
+			StorefrontType: number
+			StoreItems: Array<{ PurchasableItemId: number; GiftDrop: { FriendlyName: string } }>
+		}
+		expect(roomCatalog.StorefrontType).toBe(2)
+		expect(roomCatalog.StoreItems.length).toBeGreaterThan(30)
+		expect(roomCatalog.StoreItems.some((item) => item.PurchasableItemId === 2176)).toBe(true)
+		expect(roomCatalog.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Root Beer')).toBe(
+			true
+		)
+
+		const v3Res = await exports.default.fetch(
+			`${ORIGIN}/api/storefronts/v3/giftdropstore/2`,
+			{ headers }
+		)
+		expect(v3Res.status).toBe(200)
+		const v3Catalog = (await v3Res.json()) as { StoreItems: Array<{ PurchasableItemId: number }> }
+		expect(v3Catalog.StoreItems.length).toBe(roomCatalog.StoreItems.length)
+		expect(v3Catalog.StoreItems.some((item) => item.PurchasableItemId === 2176)).toBe(true)
+	})
 	test('GET /api/storefronts/v4/room 404s for rooms with no storefront', async () => {
 		for (const roomId of ['18', '99999']) {
 			const res = await exports.default.fetch(`${ORIGIN}/api/storefronts/v4/room/${roomId}`)
@@ -3085,15 +3110,15 @@ describe('econ endpoints', () => {
 				.ThumbnailImageName
 		expect(thumbnailFor('PaintballSet Shoes')).toBe('avatar/bkte1bx9xwngkf63cfbzj2wei.png')
 		expect(thumbnailFor('Creator Expo 2025 Hoodie')).toBe('avatar/b98w6cpkgsf9mcfyfq27jqxl4.png')
-		expect(thumbnailFor('Apple')).toBe('store-backpack-food-v2.png')
-		expect(thumbnailFor('Root Beer')).toBe('store-backpack-food-v2.png')
-		expect(thumbnailFor('Assorted Donuts')).toBe('store-backpack-food-v2.png')
-		expect(thumbnailFor('87 Flavor Cake')).toBe('store-backpack-food-v2.png')
-		expect(thumbnailFor('Blue Pulse Potion')).toBe('store-backpack-potion-v2.png')
-		expect(thumbnailFor('Alien Blaster')).toBe('store-backpack-weapon-v2.png')
-		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('store-backpack-weapon-v2.png')
-		expect(thumbnailFor('Cryptid Camera Skin')).toBe('store-backpack-camera-v2.png')
-		expect(thumbnailFor('2-Star Unique Box')).toBe('store-backpack-unique-box-2-v2.png')
+		expect(thumbnailFor('Apple')).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
+		expect(thumbnailFor('Root Beer')).toBe('dftf7822mxh6qptcetqjpetcs.png')
+		expect(thumbnailFor('Assorted Donuts')).toBe('dvtzzncutq8z5gcpx378mli8k.png')
+		expect(thumbnailFor('87 Flavor Cake')).toBe('evdt42n8s2y5vjf5s10ky2esv.png')
+		expect(thumbnailFor('Blue Pulse Potion')).toBe('2k971pdsgqer05tfq3cv3cmtl.png')
+		expect(thumbnailFor('Alien Blaster')).toBe('3se22q9g3ocaw8h7snlsf4bmr.png')
+		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('4gtpx2u7pldhk1e143mbxo5ro.png')
+		expect(thumbnailFor('Cryptid Camera Skin')).toBe('7yjasveeo5kctct8dhredhzlb.png')
+		expect(thumbnailFor('2-Star Unique Box')).toBe('besb2252ca3sxd11arwv7fmwi.png')
 		const fiveStarBox = currentStore.StoreItems.find(
 			(item) => item.GiftDrop.FriendlyName === '5-Star Unique Box'
 		)!
@@ -3216,7 +3241,7 @@ describe('econ endpoints', () => {
 		expect(appleGift).toMatchObject({
 			ConsumableItemId: 1616,
 			ConfigurationVersion: 2,
-			ThumbnailImageName: 'store-backpack-food-v2.png',
+			ThumbnailImageName: '5h9ul7otj4auhcbdvtdl2velt.png',
 		})
 		expect(JSON.parse(appleGift!.ConfigurationData!).UnityAssetData.UnityAssetId).toBe(
 			'52106138-cc33-4bd1-86fa-91adf31aca95'
@@ -3231,7 +3256,7 @@ describe('econ endpoints', () => {
 			Id: appleGift!.Id,
 			ConsumableItemId: 1616,
 			ConfigurationVersion: 2,
-			ThumbnailImageName: 'store-backpack-food-v2.png',
+			ThumbnailImageName: '5h9ul7otj4auhcbdvtdl2velt.png',
 		})
 		const pendingGiftsResponse = await exports.default.fetch(`${ORIGIN}/api/avatar/v2/gifts`, {
 			headers: await at('20250718.01'),
@@ -3255,7 +3280,7 @@ describe('econ endpoints', () => {
 			ConsumableItemId: 1616,
 			ConfigurationData: appleStoreItem.GiftDrop.ConfigurationData,
 			ConfigurationVersion: 2,
-			ThumbnailImageName: 'store-backpack-food-v2.png',
+			ThumbnailImageName: '5h9ul7otj4auhcbdvtdl2velt.png',
 		})
 
 		const addedWearablePurchase = await exports.default.fetch(
@@ -3592,7 +3617,7 @@ describe('econ endpoints', () => {
 		// The 2025 reveal path needs the same model lookup values as the backpack listing.
 		expect(drop.ConsumableItemId).toBe(8)
 		expect(drop.ConfigurationVersion).toBe(0)
-		expect(drop.ThumbnailImageName).toBe('store-backpack-food-v2.png')
+		expect(drop.ThumbnailImageName).toBe('3jqgwifva9cr69n8v33taa8b3.png')
 		// A self-buy is attributed to the "Coach" system account (id 1).
 		expect(drop.FromPlayerId).toBe(1)
 		const giftId = drop.Id
@@ -3610,7 +3635,7 @@ describe('econ endpoints', () => {
 			Id: giftId,
 			ConsumableItemId: 8,
 			ConfigurationVersion: 0,
-			ThumbnailImageName: 'store-backpack-food-v2.png',
+			ThumbnailImageName: '3jqgwifva9cr69n8v33taa8b3.png',
 		})
 
 		// It's owned as an unlocked consumable — one instance, count 1.
@@ -3643,7 +3668,7 @@ describe('econ endpoints', () => {
 		expect(first[0].Count).toBe(1)
 		expect(first[0]).toMatchObject({
 			ConsumableItemId: 8,
-			ThumbnailImageName: 'store-backpack-food-v2.png',
+			ThumbnailImageName: '3jqgwifva9cr69n8v33taa8b3.png',
 		})
 		expect(first[0].InitialCount).toBe(1)
 		expect(first[0].Ids).toHaveLength(1)
