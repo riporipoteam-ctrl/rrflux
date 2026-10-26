@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       workers:
-        description: 'Comma-separated worker dirs to deploy (default: auth,accounts,rooms,econ,api,lists,discovery,clubs,cdn,img,match)'
+        description: 'Comma-separated worker dirs to deploy (default: auth,accounts,rooms,econ,api,lists,discovery,clubs,cdn,img,match,commerce,ai,ns)'
         required: false
-        default: 'auth,accounts,rooms,econ,api,lists,discovery,clubs,cdn,img,match'
+        default: 'auth,accounts,rooms,econ,api,lists,discovery,clubs,cdn,img,match,commerce,ai,ns'
       target:
         description: "Deploy target: 'workers-dev' deploys to <name>.workers.dev; 'custom-domain' deploys onto <subdomain>.recflare.net (the client-facing hosts)"
         required: false
@@ -16,16 +16,20 @@ on:
   push:
     branches: [main]
     paths:
-      - '.github/workflows/deploy-workers.yml'
       - 'server/apps/api/**'
+      - 'server/apps/ai/**'
+      - 'server/apps/accounts/**'
       - 'server/apps/auth/**'
       - 'server/apps/cdn/**'
+      - 'server/apps/clubs/**'
+      - 'server/apps/commerce/**'
       - 'server/apps/econ/**'
       - 'server/apps/img/**'
       - 'server/apps/rooms/**'
       - 'server/apps/lists/**'
       - 'server/apps/match/**'
       - 'server/apps/discovery/**'
+      - 'server/apps/ns/**'
       - 'server/packages/domain/**'
       - 'server/packages/jwt/**'
       - 'server/packages/tools/**'
@@ -83,19 +87,14 @@ jobs:
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             changed_files="$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")"
-            workers="$(printf '%s\n' "$changed_files" | sed -nE 's#^server/apps/(accounts|api|auth|cdn|clubs|discovery|econ|img|lists|match|rooms)/.*#\1#p' | sort -u | paste -sd, -)"
+            workers="$(printf '%s\n' "$changed_files" | sed -nE 's#^server/apps/(accounts|ai|api|auth|cdn|clubs|commerce|discovery|econ|img|lists|match|ns|rooms)/.*#\1#p' | sort -u | paste -sd, -)"
             if printf '%s\n' "$changed_files" | grep -Eq '^server/packages/'; then
-              workers='auth,accounts,rooms,econ,api,lists,discovery,clubs,img,match'
-            fi
-            # The 2025 client uses a separate workers.dev name for Econ.
-            # Deploy it when workflow routing changes so this alias stays current.
-            if printf '%s\n' "$changed_files" | grep -Fxq '.github/workflows/deploy-workers.yml'; then
-              workers="$(printf '%s\n' "$workers" econ match | tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -)"
+              workers='auth,accounts,rooms,econ,api,lists,discovery,clubs,cdn,img,match,commerce,ai,ns'
             fi
           else
             workers="$REQUESTED_WORKERS"
             if [ -z "$workers" ]; then
-              workers='api,auth,cdn,econ,img,lists,discovery,rooms,match'
+              workers='auth,accounts,rooms,econ,api,lists,discovery,clubs,cdn,img,match,commerce,ai,ns'
             fi
           fi
           echo "workers=$workers" >> "$GITHUB_OUTPUT"
@@ -122,3 +121,4 @@ jobs:
               echo "=== fluxrec-econ deployed ==="
             fi
           done
+
