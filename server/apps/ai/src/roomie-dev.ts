@@ -11,7 +11,7 @@ export interface RoomieDevConfig {
 }
 
 /** Restricted test-only handshake. A caller must verify the player's JWT first. */
-export function roomieDevSocket(request: Request, env: RoomieDevConfig): Response {
+export function roomieDevSocket(request: Request, env: RoomieDevConfig, fetcher: typeof fetch = fetch): Response {
 	if (!['development', 'VITEST'].includes(env.ENVIRONMENT) || env.ROOMIE_REALTIME_DEV_ENABLED !== 'true') {
 		return new Response(null, { status: 404 })
 	}
@@ -29,6 +29,6 @@ export function roomieDevSocket(request: Request, env: RoomieDevConfig): Respons
 		return new Response(null, { status: 503 })
 	}
 	return createRoomieSocket(createRoomieProviders({
-		ai: env.AI, hfToken: env.HF_TOKEN, voiceToken: env.ROOMIE_VOICE_TOKEN,
+		ai: env.AI, hfToken: env.HF_TOKEN, voiceToken: env.ROOMIE_VOICE_TOKEN, fetcher,
 	}))
 }
