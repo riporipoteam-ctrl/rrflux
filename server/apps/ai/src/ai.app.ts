@@ -26,6 +26,7 @@ import {
 import { z } from 'zod'
 import { replyFromRipoBot } from './ripobot'
 import { pcm16ToWav } from './pcm'
+import { synthesizeRoomiePcm } from './roomie-voice'
 
 import type { Context } from 'hono'
 import type { App } from './context'
@@ -382,7 +383,7 @@ const app = new Hono<App>()
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
 
-			let body: { text?: string; voice?: string }
+			let body: { text?: string; voice?: string; format?: string }
 			try {
 				body = await c.req.json()
 			} catch {
@@ -391,6 +392,16 @@ const app = new Hono<App>()
 			const text = (body.text || '').trim()
 			if (!text) {
 				return c.json({ success: false, error: 'empty_text' }, 400)
+			}
+			if (body.format === 'pcm16') {
+				const token = (c.env as typeof c.env & { ROOMIE_VOICE_TOKEN?: string }).ROOMIE_VOICE_TOKEN
+				if (!token) return c.json({ success: false, error: 'pcm_voice_not_configured' }, 503)
+				const audio = await synthesizeRoomiePcm(text, token)
+				if (!audio) return c.json({ success: false, error: 'pcm_voice_unavailable' }, 503)
+				return new Response(audio as BodyInit, { headers: {
+					'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store',
+					'X-Audio-Format': 'pcm16le', 'X-Audio-Sample-Rate': '24000', 'X-Audio-Channels': '1',
+				} })
 			}
 
 			// Primary: Google Translate's free TTS (no key). ~200 chars per request,

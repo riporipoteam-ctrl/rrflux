@@ -283,6 +283,18 @@ describe('POST /realtime-session/create', () => {
 	})
 })
 
+describe('POST /roomieai/speak PCM output', () => {
+	it('refuses PCM output when the private voice service is not configured', async () => {
+		const response = await SELF.fetch(`${ORIGIN}/roomieai/speak`, {
+			method: 'POST',
+			headers: { ...(await bearer()), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ format: 'pcm16', text: 'Hello' }),
+		})
+		expect(response.status).toBe(503)
+		expect(await response.json()).toMatchObject({ error: 'pcm_voice_not_configured' })
+	})
+})
+
 describe('POST /roomieai/listen PCM input', () => {
 	it('rejects invalid base64 and incomplete PCM samples', async () => {
 		for (const audio of ['%%%invalid', btoa('x')]) {
