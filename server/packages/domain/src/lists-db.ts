@@ -19,6 +19,8 @@
  * tests can build the tables directly.
  */
 
+import { bindPlaceholders, chunkForBinds } from './d1-binds'
+
 /** Schema DDL (mirror of apps/lists/migrations/0001_curated_list.sql). */
 export const CURATED_LIST_SCHEMA_DDL: string[] = [
 	// `list_id` is an ordinary autoincrement integer. The reference's own ids run to 18
@@ -222,4 +224,47 @@ export async function getPlayerList(
 		.first<ListRow>()
 	if (row === null) return undefined
 	return toCuratedList(row, await getListItems(db, row.list_id))
+}
+
+/** Resolve public lists and the caller's own lists without exposing another player's private list. */
+export async function getPlayerListsByIds(
+	db: D1Database,
+	ids: string[],
+	callerId: number | null
+): Promise<CuratedList[]> {
+	// Stored IDs are safe integers; larger IDs belong to static captures and must not be
+	// converted to Number, which would silently round the ID.
+	const numericIds = [...new Set(ids)]
+		.filter((id) => /^[1-9]\d*$/.test(id))
+		.map(Number)
+		.filter(Number.isSafeInteger)
+	const rows: ListRow[] = []
+	for (const chunk of chunkForBinds(numericIds, 1)) {
+		const result = await db
+			.prepare(
+				`SELECT list_id, creator_account_id, list_type, list_name, list_description,
+				        image_name, accessibility, created_at
+				 FROM list WHERE list_id IN (${bindPlaceholders(chunk)})
+				 AND (accessibility IN (1, 2) OR creator_account_id = ?${chunk.length + 1})`
+			)
+			.bind(...chunk, callerId ?? -1)
+			.all<ListRow>()
+		rows.push(...result.results)
+	}
+	const items = new Map<number, string[]>()
+	for (const chunk of chunkForBinds(rows.map((row) => row.list_id))) {
+		const result = await db
+			.prepare(
+				`SELECT list_id, item_id FROM list_item WHERE list_id IN (${bindPlaceholders(chunk)})
+				 ORDER BY list_id, list_item_id`
+			)
+			.bind(...chunk)
+			.all<{ list_id: number; item_id: string }>()
+		for (const row of result.results) {
+			const list = items.get(row.list_id) ?? []
+			list.push(row.item_id)
+			items.set(row.list_id, list)
+		}
+	}
+	return rows.map((row) => toCuratedList(row, items.get(row.list_id) ?? []))
 }

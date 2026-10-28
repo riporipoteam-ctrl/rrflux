@@ -53,6 +53,11 @@ export const CuratedListType = {
  */
 const CURATED_LISTS: CuratedList[] = curatedLists
 
+/** Look up a captured list by its exact decimal ID, preserving 64-bit digits. */
+export function capturedCuratedListById(id: string): CuratedList | undefined {
+	return CURATED_LISTS.find((list) => list.ListId === id)
+}
+
 /**
  * A list's `ListId` is the reference's own, and those are 64-bit
  * (`624765592684307326`) — past what a JS number holds exactly, so parsing one rounds it

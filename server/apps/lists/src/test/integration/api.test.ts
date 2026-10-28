@@ -446,20 +446,38 @@ it('response with hello world', async () => {
 	expect(await res.text()).toMatchInlineSnapshot(`"hello, world!"`)
 })
 
-it('serves the canned curated-list bulk lookup', async () => {
-	const res = await SELF.fetch(`${ORIGIN}/curatedlists/bulk?id=17859340`)
+it('resolves only requested captured lists, preserving their 64-bit IDs', async () => {
+	const res = await SELF.fetch(
+		`${ORIGIN}/curatedlists/bulk?id=624765592684307326&id=5321092632685904804&id=624765592684307326&id=999999999999999999`
+	)
 	expect(res.status).toBe(200)
-	expect(await res.json()).toEqual([
-		{
-			ListId: 17859340,
-			CreatorAccountId: 1,
-			Name: 'My List',
-			Description: null,
-			ImageName: '',
-			Type: 1,
-			ItemIds: ['123', '456'],
-			CreatedAt: '2025-07-18T00:00:00Z',
-		},
+	const body = await res.text()
+	expect(body).toContain('"ListId":624765592684307326')
+	expect(body).toContain('"ListId":5321092632685904804')
+	const lists = JSON.parse(body) as Array<{ Name: string; ItemIds: string[] }>
+	expect(lists.map((list) => list.Name)).toEqual([
+		'Discovery.PageSource.PlayExplore',
+		'Discovery.PageSource.PlayLibrary',
+	])
+	expect(lists[0]!.ItemIds).toContain('Rooms_Quests_AlgoEndpoint_PlayHighlight_TabsTest_Explore')
+	expect(await (await SELF.fetch(`${ORIGIN}/curatedlists/bulk`)).json()).toEqual([])
+})
+
+it('includes public lists and the caller’s private lists without exposing other private lists', async () => {
+	// Reserve ID 1: the RoomGenreTags fixture already uses it.
+	await seedPlayerList({ creatorAccountId: 91, type: 1, name: 'collision-reserve' }, [])
+	const publicId = await seedPlayerList({ creatorAccountId: 92, type: 1, name: 'public-bulk' }, ['3'])
+	const privateId = await seedPlayerList(
+		{ creatorAccountId: 42, type: 1, name: 'private-bulk', accessibility: 0 },
+		['4', '8']
+	)
+	const url = `${ORIGIN}/curatedlists/bulk?id=${privateId}&id=${publicId}`
+	const anonymous = await SELF.fetch(url)
+	expect((await anonymous.json() as Array<{ Name: string }>).map((list) => list.Name)).toEqual(['public-bulk'])
+	const owner = await SELF.fetch(url, { headers: await bearer('42') })
+	expect(await owner.json()).toMatchObject([
+		{ Name: 'private-bulk', ItemIds: ['4', '8'] },
+		{ Name: 'public-bulk', ItemIds: ['3'] },
 	])
 })
 

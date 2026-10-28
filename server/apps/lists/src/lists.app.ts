@@ -8,6 +8,7 @@ import {
 	getHotRooms,
 	getNewRooms,
 	getPlayerList,
+	getPlayerListsByIds,
 	getRecentlyUpdatedRooms,
 	getVisitedRooms,
 } from '@repo/domain'
@@ -18,7 +19,12 @@ import { COACH_ACCOUNT_ID } from '../../api/src/custom-avatar-items-load'
 import { CatalogKind, catalogWearableStoreItems, UNSELLABLE_RARITIES } from '../../econ/src/catalog-load'
 import sf32025 from '../../econ/static/storefronts/sf3-2025.json'
 import avatarItemCatalog from '../../econ/static/db/avatar-items.json'
-import { placeholderCuratedList, resolveCuratedList, serializeCuratedList } from './curated-lists'
+import {
+	capturedCuratedListById,
+	placeholderCuratedList,
+	resolveCuratedList,
+	serializeCuratedList,
+} from './curated-lists'
 import {
 	ALGORITHMIC_LIST_PARAM,
 	ALGORITHMIC_TYPE_PARAM,
@@ -883,41 +889,37 @@ const app = new Hono<App>()
 		}
 	)
 
-	// Bulk curated-list lookup — the client asks for a set of lists by repeating `?id=`.
-	// Nothing curates lists here yet, so this serves one canned list: `ItemIds` are strings
-	// (not numbers) and `Description` may be null, but `ImageName` has to be a string — the
-	// client's parser reads it straight into a string field. A 404 shows as a failed load
-	// instead, so an unknown id still answers 200.
+	// Resolve the requested IDs rather than returning an unrelated placeholder. Captured
+	// IDs can exceed JavaScript's safe integer range and must stay as strings internally.
 	.get(
 		'/curatedlists/bulk',
 		describeRoute({
 			tags: ['Lists', '2025'],
 			summary: 'Curated lists by id',
 			description: [
-				'A set of curated lists, asked for by repeating `?id=`. Nothing curates lists here yet,',
-				'so this serves ONE canned list whatever is asked for — an unknown id included, because',
-				'a 404 shows as a row that failed to load rather than one the client hides.',
-				'',
-				'The canned list is shaped the way the client parses one: `ItemIds` are strings rather',
-				'than numbers, `Description` may be null, and `ImageName` has to be a string — the',
-				'client reads it straight into a string field.',
+				'Lists named by repeated `?id=` parameters, in request order. Missing IDs are omitted.',
+				'Public player lists and the authenticated caller’s own lists are included; another',
+				'player’s private list is not disclosed. Captured 64-bit IDs retain all their digits.',
 			].join('\n'),
 			parameters: [LIST_IDS_PARAM],
-			responses: { 200: json(CuratedListsBulk, 'The canned list, as a one-element array') },
+			responses: { 200: json(CuratedListsBulk, 'The requested accessible lists') },
 		}),
 		async (c) => {
-			return c.json([
-				{
-					ListId: 17859340,
-					CreatorAccountId: 1,
-					Name: 'My List',
-					Description: null,
-					ImageName: '',
-					Type: ListEntityType.Rooms,
-					ItemIds: ['123', '456'],
-					CreatedAt: '2025-07-18T00:00:00Z',
-				},
-			])
+			const ids = [...new Set(c.req.queries('id') ?? [])].filter((id) => /^[1-9]\d*$/.test(id))
+			if (ids.length === 0) return c.json([])
+			const accountId = c.req.header('Authorization') ? await authedId(c) : null
+			const stored = await getPlayerListsByIds(c.env.DB, ids, accountId)
+			const byId = new Map(stored.map((list) => [list.ListId, list]))
+			const lists = ids.flatMap((id) => {
+				const playerList = byId.get(id)
+				const captured = capturedCuratedListById(id)
+				// Fixture ID 1 can collide with a generated player-list ID.
+				const list = playerList?.CreatorAccountId === accountId ? playerList : captured ?? playerList
+				return list ? [list] : []
+			})
+			return c.body(`[${lists.map(serializeCuratedList).join(',')}]`, 200, {
+				'content-type': 'application/json',
+			})
 		}
 	)
 

@@ -1069,6 +1069,37 @@ fn install_logo_bundle(
     Ok(())
 }
 
+// Restore only the known legacy replacement and only from an exact 2026 backup.
+// Unknown files are left untouched, including bundles from newer game builds.
+fn restore_2026_ui_bundle(target: &Path) -> Result<bool, String> {
+    const LEGACY_MD5: &str = "1a8cdcfb9e56ef380db629469581829a";
+    const STOCK_MD5: &str = "869c3734bd8470c237c8ab0efa8433e3";
+    if !file_ok(target, Some(LEGACY_MD5), Some(19_822_299)) {
+        return Ok(false);
+    }
+    let backup = target.with_extension("bundle.stock");
+    if !file_ok(&backup, Some(STOCK_MD5), Some(15_994_007)) {
+        return Err("The 2026 UI bundle needs repair, but its verified original backup is missing. Run game file verification or reinstall the game.".into());
+    }
+    let staged = target.with_extension("bundle.restore-new");
+    std::fs::copy(&backup, &staged).map_err(|e| e.to_string())?;
+    if !file_ok(&staged, Some(STOCK_MD5), Some(15_994_007)) {
+        let _ = std::fs::remove_file(&staged);
+        return Err("The restored UI bundle failed verification".into());
+    }
+    // Keep the legacy file until the verified replacement is staged. If the
+    // swap fails, restore it so the game is never left without a bundle.
+    let old = target.with_extension("bundle.restore-old");
+    std::fs::rename(target, &old).map_err(|e| e.to_string())?;
+    if let Err(error) = std::fs::rename(&staged, target) {
+        let _ = std::fs::rename(&old, target);
+        let _ = std::fs::remove_file(&staged);
+        return Err(error.to_string());
+    }
+    let _ = std::fs::remove_file(&old);
+    Ok(true)
+}
+
 pub(crate) async fn apply_logo_bundle(
     client: &reqwest::Client,
     dir: &Path,
@@ -1076,13 +1107,14 @@ pub(crate) async fn apply_logo_bundle(
 ) -> Result<bool, String> {
     // v0.6.6: 2025 client uses Recroom_Release_Data, not RecRoom_Data.
     // Check both to support 2025 and 2026 layouts.
+    let is_2026 = is_2026_install(dir);
     let aa_dir = {
         let path2025 = dir
             .join("Recroom_Release_Data")
             .join("StreamingAssets")
             .join("aa")
             .join("StandaloneWindows64");
-        if path2025.exists() {
+        if !is_2026 && path2025.exists() {
             path2025
         } else {
             dir.join("RecRoom_Data")
@@ -1102,7 +1134,7 @@ pub(crate) async fn apply_logo_bundle(
     // Keep the verified patch in the installer so a fresh install works even
     // when the older branding CDN is unavailable.
     let logo_2026 = aa_dir.join("f124b399caea956fb2ae85b8413c07d2.bundle");
-    if logo_2026.exists()
+    if is_2026 && logo_2026.exists()
         && !file_ok(
             &logo_2026,
             Some("75784e90aa16878424a2f5926a77dc69"),
@@ -1140,6 +1172,16 @@ pub(crate) async fn apply_logo_bundle(
         result?;
         println!("[logo] Applied 2026 Flux Rec sign-in/loading artwork.");
         changed = true;
+    }
+    if is_2026 {
+        let shared_ui = aa_dir.join("6d3223da354de646ab79d5660dcac9d2.bundle");
+        if restore_2026_ui_bundle(&shared_ui)? {
+            println!("[logo] Restored the verified 2026 shared UI bundle.");
+            changed = true;
+        }
+        // The legacy branding bundles are from another client version; they
+        // must never replace shared assets in the 2026 client.
+        return Ok(changed);
     }
     // Apply each published branding bundle. The list deliberately contains
     // only assets currently present in `logo-patch-v5`; a missing URL must not
@@ -2299,6 +2341,17 @@ mod tests {
         enc.write_all(payload).unwrap();
         enc.finish().unwrap();
         p
+    }
+
+    #[test]
+    fn ui_restore_does_not_touch_unknown_bundle() {
+        let dir = tmp_dir("unknown-2026-ui");
+        let target = dir.join("shared.bundle");
+        std::fs::write(&target, b"newer-client-bundle").unwrap();
+        std::fs::write(target.with_extension("bundle.stock"), b"unverified-backup").unwrap();
+        assert!(!restore_2026_ui_bundle(&target).unwrap());
+        assert_eq!(std::fs::read(&target).unwrap(), b"newer-client-bundle");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn md5_of(bytes: &[u8]) -> String {

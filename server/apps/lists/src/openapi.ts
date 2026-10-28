@@ -54,22 +54,20 @@ export const AUTHED = [{ bearerAuth: [] }]
  * The repeated `?id=` query the bulk lookup selects on — repetition, not a delimiter, so
  * `explode: true` form style rather than one comma-joined value.
  *
- * Documented for the shape of the request only: nothing curates lists here yet, so the
- * answer is the same canned list whatever is asked for (see `CuratedListsBulk`).
+ * Captured IDs can exceed JavaScript's safe integer range, so they are read as strings.
  */
 export const LIST_IDS_PARAM: OpenAPIV3_1.ParameterObject = {
 	name: 'id',
 	in: 'query',
 	required: false,
 	description: [
-		'A list id to look up, repeated once per list wanted. Ignored today — the canned list',
-		'is served whatever is asked for, an unknown id included, because a 404 renders as a',
-		'row that failed to load rather than one the client hides.',
+		'A list id to look up, repeated once per list wanted. Unknown and inaccessible IDs',
+		'are omitted; duplicate IDs appear only once.',
 	].join(' '),
 	style: 'form',
 	explode: true,
 	schema: { type: 'array', items: { type: 'string' } },
-	example: ['17859340'],
+	example: ['624765592684307326'],
 }
 
 /**
@@ -232,7 +230,7 @@ export const CuratedListRead = z.object({
 /** The SAVE's projection: every key of the read, in the read's order, minus `Accessibility`. */
 export const CuratedListSaved = z.object(CuratedListFields)
 
-/** `GET /curatedlists/bulk` — a list per id asked for; today one canned list, always. */
+/** `GET /curatedlists/bulk` — the accessible lists requested by ID. */
 export const CuratedListsBulk = CuratedListRead.array()
 
 /**
