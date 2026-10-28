@@ -1069,24 +1069,46 @@ fn install_logo_bundle(
     Ok(())
 }
 
-// Restore only the known legacy replacement and only from an exact 2026 backup.
+// Restore only the known legacy replacement from verified 2026 bytes.
 // Unknown files are left untouched, including bundles from newer game builds.
 fn restore_2026_ui_bundle(target: &Path) -> Result<bool, String> {
+    let cache = client_download_cache_path();
+    let archived = if std::fs::metadata(&cache).map(|m| m.len()).ok() == Some(CLIENT_ZIP_SIZE) {
+        Some((cache.as_path(), "RecRoom_Data/StreamingAssets/aa/StandaloneWindows64/6d3223da354de646ab79d5660dcac9d2.bundle"))
+    } else {
+        None
+    };
     restore_ui_bundle(target, "1a8cdcfb9e56ef380db629469581829a", 19_822_299,
-        "869c3734bd8470c237c8ab0efa8433e3", 15_994_007)
+        "869c3734bd8470c237c8ab0efa8433e3", 15_994_007, archived)
 }
 
 fn restore_ui_bundle(target: &Path, legacy_md5: &str, legacy_size: u64,
-    stock_md5: &str, stock_size: u64) -> Result<bool, String> {
+    stock_md5: &str, stock_size: u64, archive: Option<(&Path, &str)>) -> Result<bool, String> {
     if !file_ok(target, Some(legacy_md5), Some(legacy_size)) {
         return Ok(false);
     }
     let backup = target.with_extension("bundle.stock");
-    if !file_ok(&backup, Some(stock_md5), Some(stock_size)) {
-        return Err("The 2026 UI bundle needs repair, but its verified original backup is missing. Run game file verification or reinstall the game.".into());
-    }
     let staged = target.with_extension("bundle.restore-new");
-    std::fs::copy(&backup, &staged).map_err(|e| e.to_string())?;
+    if file_ok(&backup, Some(stock_md5), Some(stock_size)) {
+        std::fs::copy(&backup, &staged).map_err(|e| e.to_string())?;
+    } else if let Some((archive_path, entry_name)) = archive {
+        let result = (|| -> Result<(), String> {
+            let file = std::fs::File::open(archive_path).map_err(|e| e.to_string())?;
+            let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+            let entry = zip.by_name(entry_name).map_err(|e| e.to_string())?;
+            if entry.size() != stock_size { return Err("unexpected UI asset size".into()); }
+            let mut bounded = std::io::Read::take(entry, stock_size + 1);
+            let mut output = std::fs::File::create(&staged).map_err(|e| e.to_string())?;
+            std::io::copy(&mut bounded, &mut output).map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let _ = std::fs::remove_file(&staged);
+            return Err(format!("Could not recover the 2026 UI bundle from the cached game archive: {error}"));
+        }
+    } else {
+        return Err("The 2026 UI bundle needs repair, but its verified original backup and cached game archive are missing. Reinstall the game.".into());
+    }
     if !file_ok(&staged, Some(stock_md5), Some(stock_size)) {
         let _ = std::fs::remove_file(&staged);
         return Err("The restored UI bundle failed verification".into());
@@ -2368,13 +2390,41 @@ mod tests {
         let backup = target.with_extension("bundle.stock");
         std::fs::write(&backup, b"bad backup").unwrap();
         assert!(restore_ui_bundle(&target, &md5_of(legacy), legacy.len() as u64,
-            &md5_of(stock), stock.len() as u64).is_err());
+            &md5_of(stock), stock.len() as u64, None).is_err());
         assert_eq!(std::fs::read(&target).unwrap(), legacy);
         std::fs::write(&backup, stock).unwrap();
         assert!(restore_ui_bundle(&target, &md5_of(legacy), legacy.len() as u64,
-            &md5_of(stock), stock.len() as u64).unwrap());
+            &md5_of(stock), stock.len() as u64, None).unwrap());
         assert_eq!(std::fs::read(&target).unwrap(), stock);
         assert_eq!(std::fs::read(&backup).unwrap(), stock);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ui_restore_can_recover_verified_asset_from_cached_archive() {
+        let dir = tmp_dir("restore-2026-ui-archive");
+        let target = dir.join("shared.bundle");
+        let zip_path = dir.join("client.zip");
+        let legacy = b"legacy bundle";
+        let stock = b"original bundle";
+        let write_archive = |bytes: &[u8]| {
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+            zip.start_file("client/shared.bundle", zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(bytes).unwrap();
+            zip.finish().unwrap();
+        };
+        write_archive(stock);
+        std::fs::write(&target, legacy).unwrap();
+        assert!(restore_ui_bundle(&target, &md5_of(legacy), legacy.len() as u64,
+            &md5_of(stock), stock.len() as u64, Some((&zip_path, "client/shared.bundle"))).unwrap());
+        assert_eq!(std::fs::read(&target).unwrap(), stock);
+
+        // A wrong entry, even one with the expected size, must leave the current game intact.
+        write_archive(b"corrupt  bundle");
+        std::fs::write(&target, legacy).unwrap();
+        assert!(restore_ui_bundle(&target, &md5_of(legacy), legacy.len() as u64,
+            &md5_of(stock), stock.len() as u64, Some((&zip_path, "client/shared.bundle"))).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), legacy);
         let _ = std::fs::remove_dir_all(dir);
     }
 
