@@ -27,6 +27,7 @@ import { z } from 'zod'
 import { replyFromRipoBot } from './ripobot'
 import { pcm16ToWav } from './pcm'
 import { synthesizeRoomiePcm } from './roomie-voice'
+import { roomieDevSocket } from './roomie-dev'
 
 import type { Context } from 'hono'
 import type { App } from './context'
@@ -659,6 +660,14 @@ const app = new Hono<App>()
 			})
 		}
 	)
+
+// This experimental socket is disabled by default, is impossible to enable in
+// production, and requires both a player JWT and a separate development key.
+app.get('/roomieai/realtime-dev', describeRoute({ hide: true }), async (c) => {
+	if (c.env.ENVIRONMENT !== 'development' && c.env.ENVIRONMENT !== 'VITEST') return c.body(null, 404)
+	if (await authedId(c) === null) return unauthorized(c)
+	return roomieDevSocket(c.req.raw, c.env)
+})
 
 // The generated spec. Documentation only — no request is validated against it (see
 // openapi.ts). `hide: true` keeps this route out of its own output.

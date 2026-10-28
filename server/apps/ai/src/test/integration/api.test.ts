@@ -283,6 +283,14 @@ describe('POST /realtime-session/create', () => {
 	})
 })
 
+describe('GET /roomieai/realtime-dev', () => {
+	it('requires player authentication and remains disabled without the development flag', async () => {
+		expect((await SELF.fetch(`${ORIGIN}/roomieai/realtime-dev`)).status).toBe(401)
+		const response = await SELF.fetch(`${ORIGIN}/roomieai/realtime-dev`, { headers: await bearer() })
+		expect(response.status).toBe(404)
+	})
+})
+
 describe('POST /roomieai/speak PCM output', () => {
 	it('refuses PCM output when the private voice service is not configured', async () => {
 		const response = await SELF.fetch(`${ORIGIN}/roomieai/speak`, {
