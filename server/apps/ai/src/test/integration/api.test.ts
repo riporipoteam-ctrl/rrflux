@@ -283,6 +283,20 @@ describe('POST /realtime-session/create', () => {
 	})
 })
 
+describe('POST /roomieai/listen PCM input', () => {
+	it('rejects invalid base64 and incomplete PCM samples', async () => {
+		for (const audio of ['%%%invalid', btoa('x')]) {
+			const response = await SELF.fetch(`${ORIGIN}/roomieai/listen`, {
+				method: 'POST',
+				headers: { ...(await bearer()), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ format: 'pcm16', audio }),
+			})
+			expect(response.status).toBe(400)
+			expect(await response.json()).toMatchObject({ error: 'invalid_audio' })
+		}
+	})
+})
+
 describe('GET /openapi.json', () => {
 	it('documents every route, with no dangling $refs', async () => {
 		const res = await SELF.fetch(`${ORIGIN}/openapi.json`)

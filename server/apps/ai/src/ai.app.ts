@@ -25,6 +25,7 @@ import {
 } from './openapi'
 import { z } from 'zod'
 import { replyFromRipoBot } from './ripobot'
+import { pcm16ToWav } from './pcm'
 
 import type { Context } from 'hono'
 import type { App } from './context'
@@ -469,7 +470,7 @@ const app = new Hono<App>()
 			let audio: ArrayBuffer
 			if (contentType.includes('application/json')) {
 				// Base64-encoded audio in JSON: { audio: "base64...", format: "mp3" }
-				let body: { audio?: string }
+				let body: { audio?: string; format?: string }
 				try {
 					body = await c.req.json()
 				} catch {
@@ -478,10 +479,16 @@ const app = new Hono<App>()
 				if (!body.audio) {
 					return c.json({ success: false, error: 'empty_audio' }, 400)
 				}
-				const binary = atob(body.audio)
-				const bytes = new Uint8Array(binary.length)
-				for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-				audio = bytes.buffer as ArrayBuffer
+				if (body.audio.length > 6_400_000) return c.json({ success: false, error: 'audio_too_large' }, 413)
+				try {
+					const binary = atob(body.audio)
+					const bytes = new Uint8Array(binary.length)
+					for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+					const converted = body.format === 'pcm16' ? pcm16ToWav(bytes) : bytes
+					audio = converted.buffer as ArrayBuffer
+				} catch {
+					return c.json({ success: false, error: 'invalid_audio' }, 400)
+				}
 			} else {
 				// Raw audio bytes in the body
 				audio = await c.req.arrayBuffer()
