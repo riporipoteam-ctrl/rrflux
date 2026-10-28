@@ -1072,18 +1072,22 @@ fn install_logo_bundle(
 // Restore only the known legacy replacement and only from an exact 2026 backup.
 // Unknown files are left untouched, including bundles from newer game builds.
 fn restore_2026_ui_bundle(target: &Path) -> Result<bool, String> {
-    const LEGACY_MD5: &str = "1a8cdcfb9e56ef380db629469581829a";
-    const STOCK_MD5: &str = "869c3734bd8470c237c8ab0efa8433e3";
-    if !file_ok(target, Some(LEGACY_MD5), Some(19_822_299)) {
+    restore_ui_bundle(target, "1a8cdcfb9e56ef380db629469581829a", 19_822_299,
+        "869c3734bd8470c237c8ab0efa8433e3", 15_994_007)
+}
+
+fn restore_ui_bundle(target: &Path, legacy_md5: &str, legacy_size: u64,
+    stock_md5: &str, stock_size: u64) -> Result<bool, String> {
+    if !file_ok(target, Some(legacy_md5), Some(legacy_size)) {
         return Ok(false);
     }
     let backup = target.with_extension("bundle.stock");
-    if !file_ok(&backup, Some(STOCK_MD5), Some(15_994_007)) {
+    if !file_ok(&backup, Some(stock_md5), Some(stock_size)) {
         return Err("The 2026 UI bundle needs repair, but its verified original backup is missing. Run game file verification or reinstall the game.".into());
     }
     let staged = target.with_extension("bundle.restore-new");
     std::fs::copy(&backup, &staged).map_err(|e| e.to_string())?;
-    if !file_ok(&staged, Some(STOCK_MD5), Some(15_994_007)) {
+    if !file_ok(&staged, Some(stock_md5), Some(stock_size)) {
         let _ = std::fs::remove_file(&staged);
         return Err("The restored UI bundle failed verification".into());
     }
@@ -2351,6 +2355,26 @@ mod tests {
         std::fs::write(target.with_extension("bundle.stock"), b"unverified-backup").unwrap();
         assert!(!restore_2026_ui_bundle(&target).unwrap());
         assert_eq!(std::fs::read(&target).unwrap(), b"newer-client-bundle");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ui_restore_requires_and_uses_verified_backup() {
+        let dir = tmp_dir("restore-2026-ui");
+        let target = dir.join("shared.bundle");
+        let legacy = b"legacy bundle";
+        let stock = b"original bundle";
+        std::fs::write(&target, legacy).unwrap();
+        let backup = target.with_extension("bundle.stock");
+        std::fs::write(&backup, b"bad backup").unwrap();
+        assert!(restore_ui_bundle(&target, &md5_of(legacy), legacy.len() as u64,
+            &md5_of(stock), stock.len() as u64).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), legacy);
+        std::fs::write(&backup, stock).unwrap();
+        assert!(restore_ui_bundle(&target, &md5_of(legacy), legacy.len() as u64,
+            &md5_of(stock), stock.len() as u64).unwrap());
+        assert_eq!(std::fs::read(&target).unwrap(), stock);
+        assert_eq!(std::fs::read(&backup).unwrap(), stock);
         let _ = std::fs::remove_dir_all(dir);
     }
 
