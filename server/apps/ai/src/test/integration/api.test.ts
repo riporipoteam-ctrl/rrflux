@@ -309,6 +309,9 @@ describe('GET /openapi.json', () => {
 			'GET /roomieai/user/access',
 			'GET /roomieai/user/facts',
 			'POST /realtime-session/create',
+			'POST /roomieai/chat',
+			'POST /roomieai/listen',
+			'POST /roomieai/speak',
 		])
 
 		for (const ops of Object.values(spec.paths)) {

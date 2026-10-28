@@ -24,14 +24,15 @@ import {
 	UNAUTHORIZED_RESPONSE,
 } from './openapi'
 import { z } from 'zod'
+import { replyFromRipoBot } from './ripobot'
 
 import type { Context } from 'hono'
 import type { App } from './context'
 
 /**
  * AI Worker. Serves the access checks and budget reads the client makes before offering
- * its AI features, plus the custom Roomie endpoints that actually make Roomie work:
- * `/roomieai/chat` (free Pollinations chat, same model RipoBot uses), `/roomieai/speak`
+ * its AI features, plus custom Roomie endpoints for a future client integration:
+ * `/roomieai/chat` (RipoBot's Hugging Face model when configured, otherwise Pollinations), `/roomieai/speak`
  * (free TTS) and `/roomieai/listen` (Cloudflare Whisper STT).
  *
  * - Game AI is a SERVER-side feature. This server cannot provide it, so both its reads are
@@ -244,15 +245,15 @@ const app = new Hono<App>()
 	// chatCompleteBackup): POST https://text.pollinations.ai/openai with
 	// { model: 'openai', messages, max_tokens, temperature, private: true }, and a
 	// GET https://text.pollinations.ai/{prompt}?model=openai fallback on the same
-	// free tier. A Roomie system prompt keeps it in character. This is what makes
-	// Roomie actually talk instead of being silent. No key, no signup, zero spend.
+	// free tier. A Roomie system prompt keeps it in character. The native realtime
+	// client does not call this endpoint without a separate compatible integration.
 	.post(
 		'/roomieai/chat',
 		describeRoute({
 			tags: ['Roomie AI', '2025'],
 			summary: 'Chat with Roomie',
 			description:
-				'Sends the player message to the AI model (Pollinations free chat, same as RipoBot) ' +
+				'Sends the player message to RipoBot’s Hugging Face model when configured, or Pollinations, ' +
 				'with a Roomie system prompt and returns Roomie\'s reply text.',
 			security: AUTHED,
 			responses: {
@@ -340,7 +341,11 @@ const app = new Hono<App>()
 			}
 
 			try {
-				const reply = await chatWithPollinations()
+				// Match RipoBot's primary model when a server-side token is configured.
+				// Keep the credential on the Worker and retain the existing free fallback.
+				const token = (c.env as typeof c.env & { HF_TOKEN?: string }).HF_TOKEN
+				let reply = token ? await replyFromRipoBot(token, messages) : null
+				reply ??= await chatWithPollinations()
 				if (!reply) {
 					return c.json({ success: false, error: 'ai_error' }, 502)
 				}
