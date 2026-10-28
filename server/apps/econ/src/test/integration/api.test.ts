@@ -84,6 +84,7 @@ import { CHALLENGE_GIFT_SCHEMA_DDL, CHALLENGE_STATUS_SCHEMA_DDL } from '../../ch
 import { buildRotation, rotationIndex, withWeeklyGift } from '../../challenge-rotation'
 import { CONSUMABLE_SCHEMA_DDL, grantConsumable } from '../../consumables-db'
 import { EQUIPMENT_SCHEMA_DDL, grantEquipment } from '../../equipment-db'
+import { OBJECTIVE_STATUS_SCHEMA_DDL } from '../../objective-db'
 import { grantCustomAvatarItem, INVENTORY_CUSTOM_SCHEMA_DDL } from '../../inventory-custom-db'
 import { INVENTORY_SCHEMA_DDL } from '../../inventory-db'
 import { REWARD_STATUS_SCHEMA_DDL } from '../../reward-db'
@@ -691,12 +692,22 @@ describe('econ endpoints', () => {
 		expect(Array.isArray(body.ObjectiveGroups)).toBe(true)
 	})
 
-	test('objectives/v1/cleargroup returns [] for GET and POST (no auth)', async () => {
-		for (const method of ['GET', 'POST'] as const) {
-			const res = await exports.default.fetch(`${ORIGIN}/api/objectives/v1/cleargroup`, { method })
-			expect(res.status).toBe(200)
-			expect(await res.json()).toEqual([])
+	test('objectives/v1/cleargroup returns the reset group object and preserves other accounts', async () => {
+		for (const stmt of OBJECTIVE_STATUS_SCHEMA_DDL.split(';').map((part) => part.trim()).filter(Boolean)) {
+			await env.DB.prepare(stmt).run()
 		}
+		await env.DB.prepare('INSERT OR REPLACE INTO objective_group_status (account_id, objective_group, is_completed, cleared_at, updated_at) VALUES (42, 7, 1, ?, ?), (43, 7, 1, ?, ?)')
+			.bind('2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z').run()
+		for (const method of ['GET', 'POST'] as const) {
+			const res = await exports.default.fetch(`${ORIGIN}/api/objectives/v1/cleargroup?group=7`, { method, headers: await bearer('42') })
+			expect(res.status).toBe(200)
+			const result = await res.json() as { Group: number; IsCompleted: boolean; ClearedAt: string }
+			expect(result).toMatchObject({ Group: 7, IsCompleted: false })
+			expect(Number.isNaN(Date.parse(result.ClearedAt))).toBe(false)
+		}
+		expect(await env.DB.prepare('SELECT account_id FROM objective_group_status WHERE account_id = 42 AND objective_group = 7').first()).toBeNull()
+		expect(await env.DB.prepare('SELECT account_id FROM objective_group_status WHERE account_id = 43 AND objective_group = 7').first()).not.toBeNull()
+		expect((await exports.default.fetch(`${ORIGIN}/api/objectives/v1/cleargroup`, { method: 'POST' })).status).toBe(401)
 	})
 
 	test('POST /api/objectives/v1/updateobjective echoes the group, never completed', async () => {

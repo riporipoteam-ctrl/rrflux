@@ -3867,7 +3867,7 @@ const app = new Hono<App>({ strict: false })
 			summary: 'Clear an objectives group',
 			description: 'Deletes the player’s progress for the given group. Accepts GET or POST.',
 			security: AUTHED,
-			responses: { 200: json(JsonArray, 'Empty on success') },
+			responses: { 200: json(z.object({ Group: z.number().int(), IsCompleted: z.boolean(), ClearedAt: z.string() }), 'Cleared objective group') },
 		}),
 		async (c) => {
 			const accountId = await authedId(c)
@@ -3885,7 +3885,9 @@ const app = new Hono<App>({ strict: false })
 				}
 			}
 			await clearObjectiveGroup(c.env.DB, accountId, group)
-			return c.json([])
+			// The 2026 client deserializes a single ObjectiveGroupProgress, not an array.
+			// Clearing deletes the stored completion, so report its reset state.
+			return c.json({ Group: group, IsCompleted: false, ClearedAt: new Date().toISOString() })
 		}
 	)
 
