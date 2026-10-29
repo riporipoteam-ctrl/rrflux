@@ -1539,7 +1539,7 @@ async function loadStorefront(
 	if (storefrontType === 2 && build !== null && build >= CLIENT_2026_BUILD) {
 		const catalog = buildRecCenterStorefront() as unknown as Storefront
 		return Array.isArray(catalog.StoreItems)
-			? { ...catalog, StoreItems: enrichWithThumbnails(catalog.StoreItems) }
+			? { ...catalog, StoreItems: enrichWithThumbnails(catalog.StoreItems, true) }
 			: null
 	}
 	const defaultToCurrentForPublicBrowse =
@@ -1621,7 +1621,7 @@ async function loadCachedStorefrontResponse(
 
 function recCenterFallbackItems(): StoreItem[] {
 	const catalog = buildRecCenterStorefront() as unknown as Storefront
-	return Array.isArray(catalog.StoreItems) ? enrichWithThumbnails(catalog.StoreItems) : []
+	return Array.isArray(catalog.StoreItems) ? enrichWithThumbnails(catalog.StoreItems, true) : []
 }
 
 /**

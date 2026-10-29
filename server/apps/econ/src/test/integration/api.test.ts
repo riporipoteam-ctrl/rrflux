@@ -2877,7 +2877,15 @@ describe('econ endpoints', () => {
 		expect(roomRes.status).toBe(200)
 		const roomCatalog = (await roomRes.json()) as {
 			StorefrontType: number
-			StoreItems: Array<{ PurchasableItemId: number; GiftDrop: { FriendlyName: string } }>
+			StoreItems: Array<{
+				PurchasableItemId: number
+				GiftDrop: {
+					FriendlyName: string
+					ConsumableItemId?: number
+					ConfigurationData?: string | null
+					ThumbnailImageName?: string
+				}
+			}>
 		}
 		expect(roomCatalog.StorefrontType).toBe(2)
 		expect(roomCatalog.StoreItems.length).toBeGreaterThan(30)
@@ -2885,15 +2893,44 @@ describe('econ endpoints', () => {
 		expect(roomCatalog.StoreItems.some((item) => item.GiftDrop.FriendlyName === 'Root Beer')).toBe(
 			true
 		)
+		const assortedDonuts = roomCatalog.StoreItems.find(
+			(item) => item.GiftDrop.FriendlyName === 'Assorted Donuts'
+		)?.GiftDrop
+		expect(assortedDonuts).toMatchObject({
+			ConsumableItemId: 30,
+			ThumbnailImageName: 'dvtzzncutq8z5gcpx378mli8k.png',
+		})
+		const rootBeer = roomCatalog.StoreItems.find(
+			(item) => item.GiftDrop.FriendlyName === 'Root Beer'
+		)?.GiftDrop
+		expect(rootBeer).toMatchObject({
+			ConsumableItemId: 5,
+			ThumbnailImageName: 'dftf7822mxh6qptcetqjpetcs.png',
+		})
 
 		const v3Res = await exports.default.fetch(
 			`${ORIGIN}/api/storefronts/v3/giftdropstore/2`,
 			{ headers }
 		)
 		expect(v3Res.status).toBe(200)
-		const v3Catalog = (await v3Res.json()) as { StoreItems: Array<{ PurchasableItemId: number }> }
+		const v3Catalog = (await v3Res.json()) as {
+			StoreItems: Array<{
+				PurchasableItemId: number
+				GiftDrop: {
+					FriendlyName: string
+					ConsumableItemId?: number
+					ThumbnailImageName?: string
+				}
+			}>
+		}
 		expect(v3Catalog.StoreItems.length).toBe(roomCatalog.StoreItems.length)
 		expect(v3Catalog.StoreItems.some((item) => item.PurchasableItemId === 2176)).toBe(true)
+		expect(
+			v3Catalog.StoreItems.find((item) => item.GiftDrop.FriendlyName === 'Assorted Donuts')?.GiftDrop
+		).toMatchObject({
+			ConsumableItemId: 30,
+			ThumbnailImageName: 'dvtzzncutq8z5gcpx378mli8k.png',
+		})
 	})
 	test('GET /api/storefronts/v4/room 404s for rooms with no storefront', async () => {
 		for (const roomId of ['18', '99999']) {
