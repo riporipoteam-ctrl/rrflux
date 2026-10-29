@@ -283,6 +283,40 @@ describe('POST /realtime-session/create', () => {
 	})
 })
 
+describe('GET /roomieai/realtime-dev', () => {
+	it('requires player authentication and remains disabled without the development flag', async () => {
+		expect((await SELF.fetch(`${ORIGIN}/roomieai/realtime-dev`)).status).toBe(401)
+		const response = await SELF.fetch(`${ORIGIN}/roomieai/realtime-dev`, { headers: await bearer() })
+		expect(response.status).toBe(404)
+	})
+})
+
+describe('POST /roomieai/speak PCM output', () => {
+	it('refuses PCM output when the private voice service is not configured', async () => {
+		const response = await SELF.fetch(`${ORIGIN}/roomieai/speak`, {
+			method: 'POST',
+			headers: { ...(await bearer()), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ format: 'pcm16', text: 'Hello' }),
+		})
+		expect(response.status).toBe(503)
+		expect(await response.json()).toMatchObject({ error: 'pcm_voice_not_configured' })
+	})
+})
+
+describe('POST /roomieai/listen PCM input', () => {
+	it('rejects invalid base64 and incomplete PCM samples', async () => {
+		for (const audio of ['%%%invalid', btoa('x')]) {
+			const response = await SELF.fetch(`${ORIGIN}/roomieai/listen`, {
+				method: 'POST',
+				headers: { ...(await bearer()), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ format: 'pcm16', audio }),
+			})
+			expect(response.status).toBe(400)
+			expect(await response.json()).toMatchObject({ error: 'invalid_audio' })
+		}
+	})
+})
+
 describe('GET /openapi.json', () => {
 	it('documents every route, with no dangling $refs', async () => {
 		const res = await SELF.fetch(`${ORIGIN}/openapi.json`)
@@ -309,6 +343,9 @@ describe('GET /openapi.json', () => {
 			'GET /roomieai/user/access',
 			'GET /roomieai/user/facts',
 			'POST /realtime-session/create',
+			'POST /roomieai/chat',
+			'POST /roomieai/listen',
+			'POST /roomieai/speak',
 		])
 
 		for (const ops of Object.values(spec.paths)) {

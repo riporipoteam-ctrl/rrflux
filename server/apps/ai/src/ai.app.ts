@@ -24,14 +24,18 @@ import {
 	UNAUTHORIZED_RESPONSE,
 } from './openapi'
 import { z } from 'zod'
+import { replyFromRipoBot } from './ripobot'
+import { pcm16ToWav } from './pcm'
+import { synthesizeRoomiePcm } from './roomie-voice'
+import { roomieDevSocket } from './roomie-dev'
 
 import type { Context } from 'hono'
 import type { App } from './context'
 
 /**
  * AI Worker. Serves the access checks and budget reads the client makes before offering
- * its AI features, plus the custom Roomie endpoints that actually make Roomie work:
- * `/roomieai/chat` (free Pollinations chat, same model RipoBot uses), `/roomieai/speak`
+ * its AI features, plus custom Roomie endpoints for a future client integration:
+ * `/roomieai/chat` (RipoBot's Hugging Face model when configured, otherwise Pollinations), `/roomieai/speak`
  * (free TTS) and `/roomieai/listen` (Cloudflare Whisper STT).
  *
  * - Game AI is a SERVER-side feature. This server cannot provide it, so both its reads are
@@ -244,15 +248,15 @@ const app = new Hono<App>()
 	// chatCompleteBackup): POST https://text.pollinations.ai/openai with
 	// { model: 'openai', messages, max_tokens, temperature, private: true }, and a
 	// GET https://text.pollinations.ai/{prompt}?model=openai fallback on the same
-	// free tier. A Roomie system prompt keeps it in character. This is what makes
-	// Roomie actually talk instead of being silent. No key, no signup, zero spend.
+	// free tier. A Roomie system prompt keeps it in character. The native realtime
+	// client does not call this endpoint without a separate compatible integration.
 	.post(
 		'/roomieai/chat',
 		describeRoute({
 			tags: ['Roomie AI', '2025'],
 			summary: 'Chat with Roomie',
 			description:
-				'Sends the player message to the AI model (Pollinations free chat, same as RipoBot) ' +
+				'Sends the player message to RipoBot’s Hugging Face model when configured, or Pollinations, ' +
 				'with a Roomie system prompt and returns Roomie\'s reply text.',
 			security: AUTHED,
 			responses: {
@@ -340,7 +344,11 @@ const app = new Hono<App>()
 			}
 
 			try {
-				const reply = await chatWithPollinations()
+				// Match RipoBot's primary model when a server-side token is configured.
+				// Keep the credential on the Worker and retain the existing free fallback.
+				const token = (c.env as typeof c.env & { HF_TOKEN?: string }).HF_TOKEN
+				let reply = token ? await replyFromRipoBot(token, messages) : null
+				reply ??= await chatWithPollinations()
 				if (!reply) {
 					return c.json({ success: false, error: 'ai_error' }, 502)
 				}
@@ -376,7 +384,7 @@ const app = new Hono<App>()
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
 
-			let body: { text?: string; voice?: string }
+			let body: { text?: string; voice?: string; format?: string }
 			try {
 				body = await c.req.json()
 			} catch {
@@ -385,6 +393,16 @@ const app = new Hono<App>()
 			const text = (body.text || '').trim()
 			if (!text) {
 				return c.json({ success: false, error: 'empty_text' }, 400)
+			}
+			if (body.format === 'pcm16') {
+				const token = (c.env as typeof c.env & { ROOMIE_VOICE_TOKEN?: string }).ROOMIE_VOICE_TOKEN
+				if (!token) return c.json({ success: false, error: 'pcm_voice_not_configured' }, 503)
+				const audio = await synthesizeRoomiePcm(text, token)
+				if (!audio) return c.json({ success: false, error: 'pcm_voice_unavailable' }, 503)
+				return new Response(audio as BodyInit, { headers: {
+					'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store',
+					'X-Audio-Format': 'pcm16le', 'X-Audio-Sample-Rate': '24000', 'X-Audio-Channels': '1',
+				} })
 			}
 
 			// Primary: Google Translate's free TTS (no key). ~200 chars per request,
@@ -464,7 +482,7 @@ const app = new Hono<App>()
 			let audio: ArrayBuffer
 			if (contentType.includes('application/json')) {
 				// Base64-encoded audio in JSON: { audio: "base64...", format: "mp3" }
-				let body: { audio?: string }
+				let body: { audio?: string; format?: string }
 				try {
 					body = await c.req.json()
 				} catch {
@@ -473,10 +491,16 @@ const app = new Hono<App>()
 				if (!body.audio) {
 					return c.json({ success: false, error: 'empty_audio' }, 400)
 				}
-				const binary = atob(body.audio)
-				const bytes = new Uint8Array(binary.length)
-				for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-				audio = bytes.buffer as ArrayBuffer
+				if (body.audio.length > 6_400_000) return c.json({ success: false, error: 'audio_too_large' }, 413)
+				try {
+					const binary = atob(body.audio)
+					const bytes = new Uint8Array(binary.length)
+					for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+					const converted = body.format === 'pcm16' ? pcm16ToWav(bytes) : bytes
+					audio = converted.buffer as ArrayBuffer
+				} catch {
+					return c.json({ success: false, error: 'invalid_audio' }, 400)
+				}
 			} else {
 				// Raw audio bytes in the body
 				audio = await c.req.arrayBuffer()
@@ -636,6 +660,14 @@ const app = new Hono<App>()
 			})
 		}
 	)
+
+// This experimental socket is disabled by default, is impossible to enable in
+// production, and requires both a player JWT and a separate development key.
+app.get('/roomieai/realtime-dev', describeRoute({ hide: true }), async (c) => {
+	if (c.env.ENVIRONMENT !== 'development' && c.env.ENVIRONMENT !== 'VITEST') return c.body(null, 404)
+	if (await authedId(c) === null) return unauthorized(c)
+	return roomieDevSocket(c.req.raw, c.env)
+})
 
 // The generated spec. Documentation only — no request is validated against it (see
 // openapi.ts). `hide: true` keeps this route out of its own output.
