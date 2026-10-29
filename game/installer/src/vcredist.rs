@@ -147,15 +147,6 @@ pub fn is_admin() -> bool {
     }
 }
 
-/// `ShellExecuteW` reports success with values greater than 32, but the
-/// `runas` verb uses Win32 `ERROR_CANCELLED` (1223) when the user dismisses
-/// UAC. That value is also greater than 32 and must not be mistaken for a
-/// launched elevated child.
-#[cfg(windows)]
-fn shell_execute_indicates_success(result: isize) -> bool {
-    result > 32 && result != 1223
-}
-
 /// Non-Windows: report admin so callers never try to elevate.
 #[cfg(not(windows))]
 pub fn is_admin() -> bool {
@@ -196,12 +187,9 @@ pub fn relaunch_elevated() -> Result<(), String> {
             SW_SHOWNORMAL,
         )
     };
-    // Success = value > 32, except ERROR_CANCELLED (1223), which is also
-    // greater than 32 but means that no elevated child was started.
-    if !shell_execute_indicates_success(ret.0 as isize) {
-        if ret.0 as usize == 1223 {
-            return Err("administrator request was cancelled".to_string());
-        }
+    // ShellExecuteW reports success as a value greater than 32. Its return
+    // value is not GetLastError; use the documented ShellExecute result codes.
+    if (ret.0 as usize) <= 32 {
         return Err(format!(
             "elevation request failed (code {})",
             ret.0 as usize
@@ -219,15 +207,6 @@ pub fn relaunch_elevated() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(windows)]
-    #[test]
-    fn shell_execute_result_rejects_cancelled_uac() {
-        assert!(!shell_execute_indicates_success(0));
-        assert!(!shell_execute_indicates_success(32));
-        assert!(!shell_execute_indicates_success(1223));
-        assert!(shell_execute_indicates_success(33));
-    }
 
     #[test]
     fn parse_vc_version_handles_registry_format() {
