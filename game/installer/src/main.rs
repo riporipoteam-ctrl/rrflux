@@ -179,6 +179,23 @@ fn persist_install_dir(dir: &Path) {
 /// removed file avoids assuming based on the directory name or current user.
 #[cfg(windows)]
 fn install_dir_accepts_unprivileged_write(dir: &Path) -> bool {
+    if !path_accepts_unprivileged_write(dir) {
+        return false;
+    }
+
+    // The 2026 logo/shared UI bundles live below the game root. A writable
+    // root does not prove that this nested addressables directory can be
+    // updated (its ACL may have been changed independently).
+    let addressables = dir
+        .join("RecRoom_Data")
+        .join("StreamingAssets")
+        .join("aa")
+        .join("StandaloneWindows64");
+    !addressables.is_dir() || path_accepts_unprivileged_write(&addressables)
+}
+
+#[cfg(windows)]
+fn path_accepts_unprivileged_write(dir: &Path) -> bool {
     let probe = dir.join(format!(
         ".ripo-update-write-check-{}-{}",
         std::process::id(),
@@ -2277,6 +2294,7 @@ fn main() {
     // once instead of failing halfway with access-denied errors.
     #[cfg(windows)]
     let can_update_2026_without_elevation = updated_mode
+        && find_game_exe(&dir).is_some()
         && is_2026_install(&dir)
         && install_dir_accepts_unprivileged_write(&dir);
 
@@ -2490,6 +2508,33 @@ mod tests {
         let missing_source = dir.join("missing-setup.exe");
         assert!(copy_launcher_with_retry(&missing_source, &target).is_err());
         assert_eq!(std::fs::read(&target).unwrap(), b"new launcher bytes");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn update_write_probe_checks_nested_2026_assets_directory() {
+        let dir = tmp_dir("update-write-probe");
+        let addressables = dir
+            .join("RecRoom_Data")
+            .join("StreamingAssets")
+            .join("aa")
+            .join("StandaloneWindows64");
+        std::fs::create_dir_all(&addressables).unwrap();
+
+        assert!(install_dir_accepts_unprivileged_write(&dir));
+        let probe_left_behind = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".ripo-update-write-check-")
+            });
+        assert!(!probe_left_behind);
+        assert!(std::fs::read_dir(&addressables).unwrap().next().is_none());
+
         std::fs::remove_dir_all(dir).unwrap();
     }
 
