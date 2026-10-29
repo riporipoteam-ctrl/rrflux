@@ -187,8 +187,8 @@ pub fn relaunch_elevated() -> Result<(), String> {
             SW_SHOWNORMAL,
         )
     };
-    // Success = value > 32. (Note: a UAC cancel also surfaces here as an
-    // error code > 32; either way the parent must exit.)
+    // ShellExecuteW reports success as a value greater than 32. Its return
+    // value is not GetLastError; use the documented ShellExecute result codes.
     if (ret.0 as usize) <= 32 {
         return Err(format!(
             "elevation request failed (code {})",
