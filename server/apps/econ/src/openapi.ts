@@ -67,6 +67,15 @@ export const JsonObject = z.record(z.string(), z.unknown())
 /** An opaque JSON array (a static catalog served verbatim). */
 export const JsonArray = z.array(z.unknown())
 
+/**
+ * `POST /api/storefronts/v1/purchasableitems` — the 2026 store resolves either id list
+ * against the storefront catalog and expects a positional result for every requested id.
+ */
+export const PurchasableItemsRequest = z.object({
+	PurchasableItemIds: z.array(z.int()).nullable().optional(),
+	GiftDropIds: z.array(z.int()).nullable().optional(),
+})
+
 // ---- Response schemas ------------------------------------------------------
 
 /**

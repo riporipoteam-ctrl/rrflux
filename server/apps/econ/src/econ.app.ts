@@ -144,6 +144,7 @@ import {
 	MakerAiFreeTrialEligibilityResponse,
 	OpaqueJsonBody,
 	OPTIONAL_AUTHED,
+	PurchasableItemsRequest,
 	ReferralProgressResponse,
 	RoomConsumableDto,
 	RoomConsumableEnvelope,
@@ -1071,15 +1072,9 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 			: undefined
 		if (consumablePreview) {
 			for (const [key, value] of Object.entries(consumablePreview)) {
-				// Prefer the storefront's own item thumbnail when present; definitions
-				// fill the same field on inventory responses and any sparse store rows.
-				if (
-					key === 'ThumbnailImageName' &&
-					typeof next[key] === 'string' &&
-					next[key].trim() !== ''
-				) {
-					continue
-				}
+				// The captured storefront can contain an obsolete thumbnail hash. The
+				// consumables definition is the authoritative per-item model and image
+				// mapping (for example, Root Beer and Assorted Donuts have distinct art).
 				if (next[key] !== value) {
 					next[key] = value
 					changed = true
@@ -1093,23 +1088,38 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 				? next.ThumbnailImageName
 				: existingThumb
 		const backpackThumb = name ? backpackThumbnailFor(drop, name) : undefined
+		const consumableThumb =
+			typeof consumablePreview?.ThumbnailImageName === 'string' &&
+			consumablePreview.ThumbnailImageName.trim() !== ''
+				? consumablePreview.ThumbnailImageName
+				: undefined
 		if (name) {
+			const isStarBox = /^([0-5])[- ]*star unique box$/.test(name)
 			const downloadableId = drop.AvatarItemInfo?.DownloadableAvatarItemId
 			const recovered2025Thumb =
 				(typeof downloadableId === 'string' &&
 					THUMBNAIL_BY_2025_CAI_ID.get(downloadableId.toLowerCase())) ||
 				THUMBNAIL_BY_2025_CAI_NAME.get(name)
-			if (recovered2025Thumb && existingThumb !== recovered2025Thumb) {
+			if (isStarBox && backpackThumb && next.ThumbnailImageName !== backpackThumb) {
+				// Star-box captures still carry image hashes from a retired CDN. The bundled
+				// box previews are local assets and must win over those stale names.
+				next.ThumbnailImageName = backpackThumb
+				changed = true
+			} else if (consumableThumb && next.ThumbnailImageName !== consumableThumb) {
+				// Per-consumable definitions carry the correct native thumbnail and model.
+				// Never let an old captured CDN hash or same-name clothing art replace it.
+				next.ThumbnailImageName = consumableThumb
+				changed = true
+			} else if (recovered2025Thumb && existingThumb !== recovered2025Thumb) {
 				next.ThumbnailImageName = recovered2025Thumb
 				changed = true
 			// Definitions for consumables already include their specific native thumbnail
 			// names (for example Root Beer and Assorted Donuts).  Do not replace those
 			// with category art: that turns distinct items into the same generic icon.
 			// Category art is only the last-resort fallback for sparse legacy drops.
-			} else if (
-				backpackThumb &&
-				(!preferredThumb || typeof preferredThumb !== 'string' || preferredThumb.trim() === '')
-			) {
+			} else if (backpackThumb && next.ThumbnailImageName !== backpackThumb) {
+				// Equipment and definitions without a per-item image otherwise retain dead
+				// legacy hashes, which the client renders as its generic fire placeholder.
 				next.ThumbnailImageName = backpackThumb
 				changed = true
 			} else if (
@@ -1349,6 +1359,8 @@ interface StoreItem {
 	CanBeGifted?: boolean
 	IsFeatured?: boolean
 	PurchasableItemId: number
+	Type?: number
+	OnlyAvailableThroughCv2?: boolean
 }
 
 /**
@@ -5885,6 +5897,108 @@ const app = new Hono<App>({ strict: false })
 			return c.json(catalog)
 		}
 	)
+
+// Resolve the 2026 store's batched listing lookups against the exact catalog used by browse
+// and purchase. The client zips this bare response array to the requested ids by position;
+// an omitted row faults the whole Store refresh, so preserve order and include a safe fallback
+// object for an unknown id rather than returning a short array.
+app.post(
+	'/api/storefronts/v1/purchasableitems',
+	describeRoute({
+		tags: ['Storefront'],
+		summary: 'Resolve store listings by id',
+		description:
+			'Returns a bare array of purchasable GiftDrop records in the same order as the requested PurchasableItemIds or GiftDropIds.',
+		requestBody: jsonBody(PurchasableItemsRequest, 'The listing ids to resolve'),
+		responses: {
+			200: json(JsonArray, 'One purchasable gift-drop record per requested id'),
+			400: { description: 'Malformed request body or both id lists populated' },
+			503: { description: 'The storefront catalog is unavailable' },
+		},
+	}),
+	async (c) => {
+		const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+		if (!body || typeof body !== 'object' || Array.isArray(body)) {
+			return c.json({ error: 'A JSON object is required' }, 400)
+		}
+		const parseIds = (value: unknown): number[] | null => {
+			if (value === undefined || value === null) return []
+			if (!Array.isArray(value) || value.some((id) => !Number.isSafeInteger(id))) return null
+			return value as number[]
+		}
+		const purchasableIds = parseIds(body.PurchasableItemIds)
+		const giftDropIds = parseIds(body.GiftDropIds)
+		if (purchasableIds === null || giftDropIds === null) {
+			return c.json({ error: 'Item id fields must be arrays of integers or null' }, 400)
+		}
+		if (purchasableIds.length > 0 && giftDropIds.length > 0) {
+			return c.json({ error: 'Only one item id list may be populated per request' }, 400)
+		}
+		const byGiftDropId = giftDropIds.length > 0
+		const requestedIds = byGiftDropId ? giftDropIds : purchasableIds
+		if (requestedIds.length > 10_000) {
+			return c.json({ error: 'Too many item ids in one request' }, 413)
+		}
+		if (requestedIds.length === 0) return c.json([])
+
+		const catalog = await loadStorefront(c, 3, { defaultToCurrentForPublicBrowse: true })
+		if (!catalog || !Array.isArray(catalog.StoreItems)) {
+			return c.json({ error: 'Store catalog is temporarily unavailable' }, 503)
+		}
+		const itemsByPurchasableId = new Map<number, StoreItem>()
+		const itemsByGiftDropId = new Map<number, StoreItem>()
+		for (const item of catalog.StoreItems) {
+			itemsByPurchasableId.set(item.PurchasableItemId, item)
+			if (typeof item.GiftDrop.GiftDropId === 'number') {
+				itemsByGiftDropId.set(item.GiftDrop.GiftDropId, item)
+			}
+		}
+
+		return c.json(
+			requestedIds.map((id) => {
+				const item = (byGiftDropId ? itemsByGiftDropId : itemsByPurchasableId).get(id)
+				const giftDrop = item?.GiftDrop ?? {
+					GiftDropId: id,
+					FriendlyName: `Unavailable item ${id}`,
+					Tooltip: '',
+					TagList: '',
+					ConsumableItemDesc: '',
+					AvatarItemDesc: '',
+					CustomAvatarItemId: null,
+					AvatarItemType: null,
+					EquipmentPrefabName: '',
+					EquipmentModificationGuid: '',
+					IsQuery: false,
+					Unique: false,
+					SubscribersOnly: false,
+					Rarity: 0,
+					CurrencyType: 0,
+					Currency: 0,
+					Context: 0,
+					ItemCount: 1,
+					ItemSetId: null,
+					ItemSetFriendlyName: '',
+					AvatarItemId: null,
+					EquipmentItemId: null,
+					ThumbnailImageName: '',
+				}
+				return {
+					GiftDrop: giftDrop,
+					PurchasableItemId: item?.PurchasableItemId ?? id,
+					Type: item?.Type ?? 0,
+					Prices: item?.Prices ?? [],
+					SubscriberPrices: item?.SubscriberPrices ?? [],
+					IsFeatured: item?.IsFeatured ?? false,
+					AvailableAt: item?.AvailableAt ?? null,
+					AvailableUntil: item?.AvailableUntil ?? null,
+					NewUntil: item?.NewUntil ?? null,
+					CanBeGifted: item?.CanBeGifted ?? false,
+					OnlyAvailableThroughCv2: item?.OnlyAvailableThroughCv2 ?? false,
+				}
+			})
+		)
+	}
+)
 
 // v3 storefront by id. The 2025 client calls GET /api/storefronts/v3/{id} when
 // opening the main Store from the Watch menu (Storefront_Watch → id 3).
