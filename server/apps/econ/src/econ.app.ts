@@ -1105,11 +1105,13 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 				// box previews are local assets and must win over those stale names.
 				next.ThumbnailImageName = backpackThumb
 				changed = true
-			} else if (consumableThumb && next.ThumbnailImageName !== consumableThumb) {
+			} else if (consumableThumb) {
 				// Per-consumable definitions carry the correct native thumbnail and model.
-				// Never let an old captured CDN hash or same-name clothing art replace it.
-				next.ThumbnailImageName = consumableThumb
-				changed = true
+				// Never replace specific item art with a generic food/potion fallback.
+				if (next.ThumbnailImageName !== consumableThumb) {
+					next.ThumbnailImageName = consumableThumb
+					changed = true
+				}
 			} else if (recovered2025Thumb && existingThumb !== recovered2025Thumb) {
 				next.ThumbnailImageName = recovered2025Thumb
 				changed = true
@@ -1117,7 +1119,12 @@ function enrichWithThumbnails(items: StoreItem[], includeConsumablePreview = fal
 			// names (for example Root Beer and Assorted Donuts).  Do not replace those
 			// with category art: that turns distinct items into the same generic icon.
 			// Category art is only the last-resort fallback for sparse legacy drops.
-			} else if (backpackThumb && next.ThumbnailImageName !== backpackThumb) {
+			} else if (
+				backpackThumb &&
+				(!next.ThumbnailImageName ||
+					typeof next.ThumbnailImageName !== 'string' ||
+					next.ThumbnailImageName.trim() === '')
+			) {
 				// Equipment and definitions without a per-item image otherwise retain dead
 				// legacy hashes, which the client renders as its generic fire placeholder.
 				next.ThumbnailImageName = backpackThumb
