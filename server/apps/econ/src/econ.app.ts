@@ -1577,9 +1577,11 @@ async function loadCachedStorefrontResponse(
 	build: number | null = null
 ): Promise<Response | null> {
 	const is2026Store = path === '/sf3-2025.json' && build !== null && build >= CLIENT_2026_BUILD
+	// Bump this segment when storefront enrichment changes so a deployment cannot keep
+	// serving a cached pre-fix catalog under the same SENTRY_RELEASE value.
 	const cacheKey = new Request(
 		new URL(
-			`/__storefront-cache/${encodeURIComponent(c.env.SENTRY_RELEASE)}/${is2026Store ? '2026' : 'other'}/${encodeURIComponent(path)}`,
+			`/__storefront-cache/v2/${encodeURIComponent(c.env.SENTRY_RELEASE)}/${is2026Store ? '2026' : 'other'}/${encodeURIComponent(path)}`,
 			c.req.url
 		),
 		{ method: 'GET' }
