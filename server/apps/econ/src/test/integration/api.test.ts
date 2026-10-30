@@ -3166,7 +3166,7 @@ describe('econ endpoints', () => {
 		expect(thumbnailFor('Alien Blaster')).toBe('3se22q9g3ocaw8h7snlsf4bmr.png')
 		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('4gtpx2u7pldhk1e143mbxo5ro.png')
 		expect(thumbnailFor('Cryptid Camera Skin')).toBe('7yjasveeo5kctct8dhredhzlb.png')
-		expect(thumbnailFor('2-Star Unique Box')).toBe('besb2252ca3sxd11arwv7fmwi.png')
+		expect(thumbnailFor('2-Star Unique Box')).toBe('store-backpack-unique-box-2-v2.png')
 		const fiveStarBox = currentStore.StoreItems.find(
 			(item) => item.GiftDrop.FriendlyName === '5-Star Unique Box'
 		)!
