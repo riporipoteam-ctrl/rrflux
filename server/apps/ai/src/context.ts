@@ -8,6 +8,12 @@ export type Env = SharedHonoEnv & {
 	 * `auth` verify here.
 	 */
 	JWT_SECRET: SecretsStoreSecret
+	HF_TOKEN?: string
+	HF_MODEL?: string
+	ROOMIE_VOICE_TOKEN?: string
+	ROOMIE_CHAT_URL?: string
+	ROOMIE_VOICE_URL?: string
+	ROOMIE_STT_URL?: string
 }
 
 /** Variables can be extended */

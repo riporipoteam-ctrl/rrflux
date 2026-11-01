@@ -24,9 +24,5 @@
 	"vars": {
 		"ENVIRONMENT": "development", // overridden during deployment
 		"SENTRY_RELEASE": "unknown" // overridden during deployment
-	},
-	// Workers AI binding for Whisper speech-to-text (Roomie hearing). Free tier.
-	"ai": {
-		"binding": "AI"
 	}
 }

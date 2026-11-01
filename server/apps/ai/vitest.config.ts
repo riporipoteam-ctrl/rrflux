@@ -5,9 +5,11 @@ export default defineConfig({
 	plugins: [
 		cloudflareTest({
 			wrangler: { configPath: `${__dirname}/wrangler.jsonc` },
+			remoteBindings: false,
 			miniflare: {
 				bindings: {
 					ENVIRONMENT: 'VITEST',
+					HF_TOKEN: 'test-hf-token',
 				},
 			},
 		}),
