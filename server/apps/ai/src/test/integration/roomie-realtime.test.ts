@@ -8,12 +8,23 @@ describe('experimental Roomie realtime bridge', () => {
 		const synthesize = vi.fn(async () => new Uint8Array([7, 0]))
 		const session = new RoomieRealtime({ transcribe, reply, synthesize })
 		expect(await session.handle({ type: 'input_audio_buffer.append', audio: btoa('\x01\x00') })).toEqual([])
-		expect(await session.handle({ type: 'input_audio_buffer.commit' })).toEqual([{ type: 'input_audio_buffer.committed' }])
+		expect((await session.handle({ type: 'input_audio_buffer.commit' })).map(event => event.type)).toEqual([
+			'input_audio_buffer.committed', 'conversation.item.created', 'conversation.item.input_audio_transcription.completed',
+		])
 		expect(transcribe).toHaveBeenCalledWith(new Uint8Array([1, 0]))
 		const events = await session.handle({ type: 'response.create' })
-		expect(reply).toHaveBeenCalledWith([{ role: 'user', content: 'hello' }])
+		expect(reply).toHaveBeenCalledWith(expect.arrayContaining([
+			{ role: 'system', content: expect.stringContaining('Roomie') },
+			{ role: 'user', content: 'hello' },
+		]))
 		expect(synthesize).toHaveBeenCalledWith('hi')
-		expect(events).toEqual([{ type: 'response.audio.delta', delta: btoa('\x07\x00') }, { type: 'response.audio.done' }, { type: 'response.done' }])
+		expect(events.map(event => event.type)).toEqual([
+			'response.created', 'response.output_item.added', 'response.content_part.added',
+			'response.output_audio_transcript.delta', 'response.output_audio.delta',
+			'response.output_audio_transcript.done', 'response.output_audio.done',
+			'response.content_part.done', 'response.output_item.done', 'response.done',
+		])
+		expect(events.find(event => event.type === 'response.output_audio.delta')?.delta).toBe(btoa('\x07\x00'))
 	})
 	it('rejects malformed data and does not send fabricated audio when a provider fails', async () => {
 		const session = new RoomieRealtime({ transcribe: async () => 'hi', reply: async () => 'hi', synthesize: async () => null })
@@ -21,7 +32,7 @@ describe('experimental Roomie realtime bridge', () => {
 		expect(await session.handle({ type: 'input_audio_buffer.commit' })).toMatchObject([{ type: 'error' }])
 		await session.handle({ type: 'input_audio_buffer.append', audio: btoa('\x01\x00') })
 		await session.handle({ type: 'input_audio_buffer.commit' })
-		expect(await session.handle({ type: 'response.create' })).toEqual([{ type: 'error', error: { code: 'voice_failed' } }])
+		expect(await session.handle({ type: 'response.create' })).toMatchObject([{ type: 'error', error: { code: 'voice_failed' } }])
 	})
 	it('does not emit a reply after cancellation during inference', async () => {
 		let finish!: (value: string) => void

@@ -2,17 +2,17 @@
 
 AI worker served on the `ai` subdomain (`ai.recflare.net`). The client checks here before
 offering any of its AI features — Game AI in a room, the Roomie assistant, and Maker AI's
-usage meter.
-
-No model runs behind this worker, so every answer is static. They are not all refusals,
-though, because the features fail at different points:
+usage meter. Roomie chat, speech synthesis, transcription, and its realtime-compatible
+bridge use the Hugging Face model and local Kokoro/Faster-Whisper services exposed by the
+RipoBot Space. Provider keys stay on the server.
 
 - **Game AI** is a **server-side** feature this server cannot provide, so both of its reads
   refuse and the client hides it.
-- **Roomie** runs on the **client** and only asks this service what it may spend, so the
-  budget reads grant everything. The refusal lands instead on
-  `POST /realtime-session/create` — the one call whose real answer is a working credential
-  rather than a description of one.
+- **Roomie** runs on the **client**. Budget reads grant everything; `POST
+  /realtime-session/create` can mint a short-lived, app-local session credential when the
+  private RipoBot service is configured. The server-side WebSocket speaks a
+  Realtime-compatible event format. The 2026 game client's transport still needs to be
+  verified to reach this Worker before claiming in-game Roomie works.
 - **Maker AI** meters model usage in dollars. Nothing here bills, so every figure is zero.
 
 - `GET /` — service status `{ "service": "ai", "status": "ok" }`. No auth.
@@ -113,27 +113,30 @@ though, because the features fail at different points:
   The time bucket is `Empty` at `DateTime.MinValue`, this server selling no timed access
   for it to hold. Flat body, no envelope.
 
-- `POST /realtime-session/create` — `[Authorize]`. Posted when the player actually pulls
-  out an assistant. Live, this mints a short-lived credential (`{ SessionId, ClientSecret }`
-  in `value`) that the **client** then uses to talk to the model provider directly.
-  Refused:
+- `POST /realtime-session/create` — `[Authorize]`. Posted when the player pulls out an
+  assistant. When the Roomie service is configured, it mints a 15-minute credential
+  (`{ SessionId, ClientSecret }` in `Value`) for the Worker’s `/v1/realtime` socket. This
+  credential does not contain provider keys. The Worker calls the RipoBot Space's `/chat`,
+  `/tts`, and `/stt` endpoints using a separate service secret. If the worker or Space is
+  missing required configuration, it returns a 503 instead of issuing an unusable session.
+
+  The socket translates the Realtime-compatible event stream into three service calls:
+  RipoBot's configured Hugging Face model for responses, Kokoro `af_heart` for synthesized
+  PCM audio, and Faster-Whisper `base` for microphone transcription. The client transport
+  and audio playback must be verified against the supported game build before describing
+  this as an end-to-end in-game feature.
 
   ```json
-  {
-    "success": false,
-    "error": "Realtime AI sessions are not available on this server",
-    "error_id": "",
-    "value": null
-  }
-  ```
+  Configuration is supplied as Cloudflare Worker secrets/vars:
 
-  This is the one endpoint here whose real answer is a working key rather than a
-  description of one, so there is nothing static to serve — which is why the budget reads
-  above grant everything and the stop lands here instead: the client offers the feature,
-  and the session it opens is what fails. Note `error_id` is an **empty string**, not a
-  code — the reference server sends no id for this refusal. The posted body (`AIType`) is
-  ignored; the answer is the same either way, and a missing or malformed body still gets
-  the refusal rather than a 500.
+  - `ROOMIE_VOICE_TOKEN` — shared secret for the private Space endpoints.
+  - `ROOMIE_VOICE_URL` — Space `/roomie/tts` endpoint.
+  - `ROOMIE_CHAT_URL` — optional; defaults to the same Space's `/roomie/chat`.
+  - `ROOMIE_STT_URL` — optional; defaults to the same Space's `/roomie/stt`.
+
+  Never commit the token or deploy these settings to a production Worker as part of local
+  development. `GET /roomieai/listen` accepts a WAV/PCM request from an authenticated
+  caller and returns the transcript using the same private STT endpoint.
 
 The worker exists so the client gets a definite answer on the host its endpoints document
 already names (`AI` → `ai`, see `apps/ns`), instead of a failed request to a host with

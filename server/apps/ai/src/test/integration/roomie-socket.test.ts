@@ -6,7 +6,7 @@ describe('isolated Roomie WebSocket', () => {
 		const response = createRoomieSocket({
 			transcribe: async () => 'hello', reply: async () => 'hi',
 			synthesize: async () => new Uint8Array([1, 0]),
-		})
+		}, { id: 'test-session' })
 		expect(response.status).toBe(101)
 		const socket = response.webSocket!
 		socket.accept()
@@ -14,6 +14,8 @@ describe('isolated Roomie WebSocket', () => {
 			socket.addEventListener('message', e => resolve(JSON.parse(e.data as string)), { once: true })
 		})
 		let message = next()
+		expect(await message).toMatchObject({ type: 'session.created', session: { id: 'test-session' } })
+		message = next()
 		socket.send('{bad json')
 		expect(await message).toMatchObject({ type: 'error', error: { code: 'invalid_event' } })
 		message = next()
@@ -28,10 +30,8 @@ describe('isolated Roomie WebSocket', () => {
 		}))
 		socket.send(JSON.stringify({ type: 'response.create' }))
 		await done
-		expect(results).toEqual([
-			{ type: 'response.audio.delta', delta: btoa('\x01\x00') },
-			{ type: 'response.audio.done' }, { type: 'response.done' },
-		])
+		expect(results.map(result => result.type)).toContain('response.output_audio.delta')
+		expect(results.at(-1)?.type).toBe('response.done')
 		socket.close(1000, 'test complete')
 	})
 })

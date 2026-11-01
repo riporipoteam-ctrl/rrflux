@@ -241,35 +241,27 @@ describe('GET /makerai/user/balances', () => {
 describe('POST /realtime-session/create', () => {
 	// The one call whose real answer is a working credential, so the one that can't be
 	// served statically. Note `error_id` is an empty string, not a code, and `value` null.
-	it('refuses to open a session', async () => {
+	it('requires the private RipoBot chat and voice services before issuing a client credential', async () => {
 		const res = await SELF.fetch(`${ORIGIN}/realtime-session/create`, {
 			method: 'POST',
 			headers: { ...(await bearer()), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ AIType: 'Roomie' }),
 		})
-		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({
-			success: false,
-			error: 'Realtime AI sessions are not available on this server',
-			error_id: '',
-			value: null,
-		})
+		expect(res.status).toBe(503)
+		expect(await res.json()).toMatchObject({ Success: false, error_id: 'AI.RoomieUnavailable', Value: null })
 	})
 
-	// The body is never read, so a missing or malformed one must not 500 — the answer is
-	// the same refusal either way.
 	it.each([
 		['no body', undefined],
-		['an empty body', '{}'],
 		['a malformed body', 'not json'],
+		['an unsupported assistant', JSON.stringify({ AIType: 'Other' })],
 	])('refuses with %s', async (_label, body) => {
 		const res = await SELF.fetch(`${ORIGIN}/realtime-session/create`, {
 			method: 'POST',
 			headers: { ...(await bearer()), 'Content-Type': 'application/json' },
 			body,
 		})
-		expect(res.status).toBe(200)
-		expect((await res.json()) as { success: boolean }).toMatchObject({ success: false })
+		expect(res.status).toBe(400)
 	})
 
 	it('401s without a bearer token', async () => {
