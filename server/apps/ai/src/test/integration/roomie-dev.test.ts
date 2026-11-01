@@ -19,34 +19,43 @@ describe('restricted Roomie development handshake', () => {
 	})
 	it('opens an isolated socket only with all required development configuration', () => {
 		const response = roomieDevSocket(request(), {
-			...config, HF_TOKEN: 'test', ROOMIE_VOICE_TOKEN: 'test', AI: { run: async () => ({ text: 'test' }) },
+			...config, ROOMIE_VOICE_TOKEN: 'test', ROOMIE_VOICE_URL: 'https://voice.example/roomie/tts',
 		})
 		expect(response.status).toBe(101)
 		response.webSocket?.accept()
 		response.webSocket?.close(1000, 'test complete')
 	})
 	it('runs an authenticated development audio turn through the provider interfaces', async () => {
-		const fetcher = (async (url: string) => {
-			if (url.includes('router.huggingface.co')) return Response.json({ choices: [{ message: { content: 'Hi' } }] })
+		const fetcher = (async (url: string | URL) => {
+			if (String(url).endsWith('/stt')) return Response.json({ text: 'hello' })
+			if (String(url).endsWith('/chat')) return Response.json({ reply: 'Hi' })
 			return new Response(new Uint8Array([2, 0]), { headers: {
 				'x-audio-format': 'pcm16le', 'x-audio-sample-rate': '24000', 'x-audio-channels': '1',
 			} })
 		}) as typeof fetch
 		const response = roomieDevSocket(request(), {
-			...config, HF_TOKEN: 'test', ROOMIE_VOICE_TOKEN: 'test', AI: { run: async () => ({ text: 'hello' }) },
+			...config, ROOMIE_VOICE_TOKEN: 'test', ROOMIE_VOICE_URL: 'https://voice.example/roomie/tts',
 		}, fetcher)
 		const socket = response.webSocket!
 		socket.accept()
+		const created = new Promise<Record<string, unknown>>(resolve => socket.addEventListener('message', e => resolve(JSON.parse(e.data as string)), { once: true }))
+		expect(await created).toMatchObject({ type: 'session.created' })
 		const next = () => new Promise<Record<string, unknown>>(resolve => socket.addEventListener(
 			'message', e => resolve(JSON.parse(e.data as string)), { once: true },
 		))
 		let received = next()
 		socket.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: btoa('\x01\x00') }))
 		socket.send(JSON.stringify({ type: 'input_audio_buffer.commit' }))
-		expect(await received).toEqual({ type: 'input_audio_buffer.committed' })
-		received = next()
+		expect(await received).toMatchObject({ type: 'input_audio_buffer.committed' })
+		const responseEvents: Record<string, unknown>[] = []
+		const responseDone = new Promise<void>(resolve => socket.addEventListener('message', e => {
+			const event = JSON.parse(e.data as string) as Record<string, unknown>
+			responseEvents.push(event)
+			if (event.type === 'response.done') resolve()
+		}))
 		socket.send(JSON.stringify({ type: 'response.create' }))
-		expect(await received).toEqual({ type: 'response.audio.delta', delta: btoa('\x02\x00') })
+		await responseDone
+		expect(responseEvents.map(event => event.type)).toContain('response.output_audio.delta')
 		socket.close(1000, 'test complete')
 	})
 })

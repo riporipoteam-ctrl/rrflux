@@ -18,7 +18,8 @@ import {
 	MakerAiAccessResponse,
 	MakerAiBalances,
 	RealtimeSessionCreateBody,
-	RealtimeSessionDenied,
+	RealtimeSessionCreated,
+	RealtimeSessionUnavailable,
 	RoomieAiAccess,
 	RoomieUserFacts,
 	UNAUTHORIZED_RESPONSE,
@@ -26,24 +27,26 @@ import {
 import { z } from 'zod'
 import { replyFromRipoBot } from './ripobot'
 import { pcm16ToWav } from './pcm'
-import { synthesizeRoomiePcm } from './roomie-voice'
+import { synthesizeRoomieMp3, synthesizeRoomiePcm } from './roomie-voice'
 import { roomieDevSocket } from './roomie-dev'
+import { createRoomieProviders, transcribeRoomieAudio } from './roomie-providers'
+import { createRoomieSocket } from './roomie-socket'
+import { createRoomieClientSecret, verifyRoomieClientSecret } from './roomie-session'
 
 import type { Context } from 'hono'
 import type { App } from './context'
 
 /**
  * AI Worker. Serves the access checks and budget reads the client makes before offering
- * its AI features, plus custom Roomie endpoints for a future client integration:
- * `/roomieai/chat` (RipoBot's Hugging Face model when configured, otherwise Pollinations), `/roomieai/speak`
- * (free TTS) and `/roomieai/listen` (Cloudflare Whisper STT).
+ * its AI features, plus Roomie's authenticated chat, speech and realtime-compatible routes:
+ * `/roomieai/chat` (RipoBot's configured Hugging Face model), `/roomieai/speak`
+ * (RipoBot Space Kokoro TTS) and `/roomieai/listen` (RipoBot Space Faster-Whisper STT).
  *
  * - Game AI is a SERVER-side feature. This server cannot provide it, so both its reads are
  *   refused and the client hides the feature.
- * - Roomie runs on the CLIENT and only asks this service what it may spend, so the budget
- *   reads are granted in full. The session that would actually reach a model
- *   (`/realtime-session/create`) is where it stops — we cannot mint free provider
- *   credentials for the native realtime voice path, so that refusal is honest.
+ * - Roomie runs on the CLIENT. Budget reads are granted in full, and its realtime-compatible
+ *   adapter keeps provider credentials server-side. Validate the 2026 client transport before
+ *   claiming in-game compatibility.
  * - Maker AI meters model usage in dollars. Nothing here bills, so every figure is zero.
  */
 
@@ -176,7 +179,7 @@ const app = new Hono<App>()
 	.get(
 		'/roomieai/user/access',
 		describeRoute({
-			tags: ['Roomie AI', '2025'],
+			tags: ['Roomie AI', '2026'],
 			summary: 'The caller’s Roomie AI energy budget',
 			description: [
 				'What Roomie may spend: an energy ceiling, what is left of it, and when it next',
@@ -216,7 +219,7 @@ const app = new Hono<App>()
 	.get(
 		'/roomieai/user/facts',
 		describeRoute({
-			tags: ['Roomie AI', '2025'],
+			tags: ['Roomie AI', '2026'],
 			summary: 'What Roomie knows about the caller',
 			description: [
 				'The memory Roomie is primed with: `UserContext`, a prose profile written from past',
@@ -242,22 +245,17 @@ const app = new Hono<App>()
 		}
 	)
 
-	// Roomie chat. The client sends the player's message (from room chat text or
-	// transcribed mic audio); we run it through Pollinations' free anonymous text API
-	// — the exact same backend RipoBot uses (see ripobot's utils/ai.js
-	// chatCompleteBackup): POST https://text.pollinations.ai/openai with
-	// { model: 'openai', messages, max_tokens, temperature, private: true }, and a
-	// GET https://text.pollinations.ai/{prompt}?model=openai fallback on the same
-	// free tier. A Roomie system prompt keeps it in character. The native realtime
-	// client does not call this endpoint without a separate compatible integration.
+	// Roomie chat. Uses the same Hugging Face model configured for RipoBot. It has no
+	// anonymous third-party or OpenAI fallback. The native realtime client does not call
+	// this custom HTTP endpoint without a separate compatible integration.
 	.post(
 		'/roomieai/chat',
 		describeRoute({
-			tags: ['Roomie AI', '2025'],
+			tags: ['Roomie AI', '2026'],
 			summary: 'Chat with Roomie',
 			description:
-				'Sends the player message to RipoBot’s Hugging Face model when configured, or Pollinations, ' +
-				'with a Roomie system prompt and returns Roomie\'s reply text.',
+				'Sends the player message to RipoBot’s configured Hugging Face model with a Roomie system ' +
+				'prompt. Returns service unavailable when Hugging Face is not configured.',
 			security: AUTHED,
 			responses: {
 				200: json(z.object({}).passthrough(), 'Roomie\'s reply'),
@@ -268,7 +266,7 @@ const app = new Hono<App>()
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
 
-			let body: { message?: string; history?: Array<{ role: string; content: string }> }
+			let body: { message?: string; history?: unknown[] }
 			try {
 				body = await c.req.json()
 			} catch {
@@ -278,6 +276,9 @@ const app = new Hono<App>()
 			if (!message) {
 				return c.json({ success: false, error: 'empty_message' }, 400)
 			}
+			if (message.length > 2000) {
+				return c.json({ success: false, error: 'message_too_long' }, 413)
+			}
 
 			const systemPrompt =
 				'You are Roomie, a friendly AI pet companion in the game Flux Rec (a Rec Room-style ' +
@@ -285,95 +286,40 @@ const app = new Hono<App>()
 				'(1-3 sentences) since players read them in-game. You love the game world, making ' +
 				'friends, and going on adventures. Never break character. Never mention you are an AI ' +
 				'language model — you are Roomie, the player\'s loyal companion.'
+			const history = Array.isArray(body.history)
+				? body.history.slice(-10).flatMap((entry) => {
+						if (!entry || typeof entry !== 'object') return []
+						const item = entry as { role?: unknown; content?: unknown }
+						if ((item.role !== 'user' && item.role !== 'assistant') || typeof item.content !== 'string') {
+							return []
+						}
+						const content = item.content.trim().slice(0, 1000)
+						return content ? [{ role: item.role, content }] : []
+					})
+				: []
 			const messages = [
 				{ role: 'system', content: systemPrompt },
-				...(Array.isArray(body.history) ? body.history.slice(-10) : []),
+				...history,
 				{ role: 'user', content: message },
 			]
-
-			// Pollinations free anonymous chat — the same model RipoBot uses.
-			// Primary: RipoBot's exact pattern (OpenAI-compatible POST). Fallback: the
-			// GET text path on the same free tier (same model, different route) — the
-			// POST route has intermittent server-side hiccups, so the GET keeps Roomie
-			// answering. Both are keyless and cost nothing.
-			const chatWithPollinations = async (): Promise<string | null> => {
-				// 1) RipoBot's exact pattern: POST /openai
-				try {
-					const res = await fetch('https://text.pollinations.ai/openai', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({
-							model: 'openai',
-							messages,
-							max_tokens: 256,
-							temperature: 0.8,
-							private: true,
-						}),
-						signal: AbortSignal.timeout(30_000),
-					})
-					if (res.ok) {
-						const data = (await res.json()) as {
-							choices?: Array<{ message?: { content?: string } }>
-						}
-						const reply = data?.choices?.[0]?.message?.content?.trim()
-						if (reply) return reply
-					}
-				} catch {
-					// fall through to the GET fallback below
-				}
-
-				// 2) GET fallback: prompt built from the conversation, same free model.
-				try {
-					const prompt = messages
-						.map((m) => `${m.role}: ${m.content}`)
-						.join('\n')
-						.slice(0, 4000)
-					const url =
-						'https://text.pollinations.ai/' +
-						encodeURIComponent(prompt) +
-						'?model=openai&private=true'
-					const res = await fetch(url, {
-						signal: AbortSignal.timeout(30_000),
-					})
-					if (!res.ok) return null
-					const text = (await res.text()).trim()
-					return text || null
-				} catch {
-					return null
-				}
-			}
-
-			try {
-				// Match RipoBot's primary model when a server-side token is configured.
-				// Keep the credential on the Worker and retain the existing free fallback.
-				const token = (c.env as typeof c.env & { HF_TOKEN?: string }).HF_TOKEN
-				let reply = token ? await replyFromRipoBot(token, messages) : null
-				reply ??= await chatWithPollinations()
-				if (!reply) {
-					return c.json({ success: false, error: 'ai_error' }, 502)
-				}
-				return c.json({ success: true, error: null, value: { reply } })
-			} catch {
-				return c.json({ success: false, error: 'ai_error' }, 502)
-			}
+			const token = c.env.HF_TOKEN
+			if (!token) return c.json({ success: false, error: 'roomie_model_not_configured' }, 503)
+			const reply = await replyFromRipoBot(token, messages, fetch, c.env.HF_MODEL)
+			if (!reply) return c.json({ success: false, error: 'roomie_model_unavailable' }, 503)
+			return c.json({ success: true, error: null, value: { reply } })
 		}
 	)
 
-	// Roomie voice (TTS). Converts Roomie's reply text to speech audio (MP3) so
-	// Roomie has a voice in-game. Primary: Google Translate's free TTS endpoint (no
-	// key; ~200 chars per request) — verified returning valid MP3 audio 2026-10-01.
-	// Fallback: Pollinations openai-audio (GET https://text.pollinations.ai/{prompt}?
-	// model=openai-audio&voice=nova) — free and keyless, but the model was removed
-	// from the anonymous tier (404 as of 2026-10-01); kept as a fallback in case it
-	// comes back.
+	// Roomie voice (TTS). Google Translate supplies the legacy MP3 path. PCM output is
+	// sent only to a separately configured RipoBot voice endpoint; no OpenAI fallback.
 	.post(
 		'/roomieai/speak',
 		describeRoute({
-			tags: ['Roomie AI', '2025'],
+			tags: ['Roomie AI', '2026'],
 			summary: 'Roomie text-to-speech',
 			description:
-				'Converts text to speech audio (MP3) for Roomie\'s voice using free ' +
-				'TTS APIs (Google TTS primary, Pollinations TTS fallback).',
+				'Converts text to MP3 with Google TTS for the legacy path or PCM16 with a configured ' +
+				'RipoBot voice service.',
 			security: AUTHED,
 			responses: {
 				200: json(z.object({}).passthrough(), 'Audio data'),
@@ -395,9 +341,10 @@ const app = new Hono<App>()
 				return c.json({ success: false, error: 'empty_text' }, 400)
 			}
 			if (body.format === 'pcm16') {
-				const token = (c.env as typeof c.env & { ROOMIE_VOICE_TOKEN?: string }).ROOMIE_VOICE_TOKEN
-				if (!token) return c.json({ success: false, error: 'pcm_voice_not_configured' }, 503)
-				const audio = await synthesizeRoomiePcm(text, token)
+				const token = c.env.ROOMIE_VOICE_TOKEN
+				const voiceUrl = c.env.ROOMIE_VOICE_URL
+				if (!token || !voiceUrl) return c.json({ success: false, error: 'pcm_voice_not_configured' }, 503)
+				const audio = await synthesizeRoomiePcm(text, token, voiceUrl)
 				if (!audio) return c.json({ success: false, error: 'pcm_voice_unavailable' }, 503)
 				return new Response(audio as BodyInit, { headers: {
 					'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store',
@@ -405,65 +352,20 @@ const app = new Hono<App>()
 				} })
 			}
 
-			// Primary: Google Translate's free TTS (no key). ~200 chars per request,
-			// verified live 2026-10-01 (HTTP 200, valid MP3).
-			const voice = body.voice || 'nova'
-			try {
-				const gUrl =
-					'https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=' +
-					encodeURIComponent(text.slice(0, 200))
-				const res = await fetch(gUrl, {
-					headers: { 'User-Agent': 'Mozilla/5.0' },
-					signal: AbortSignal.timeout(30_000),
-				})
-				const ct = res.headers.get('content-type') || ''
-				if (res.ok && ct.includes('audio')) {
-					const audio = await res.arrayBuffer()
-					return new Response(audio, {
-						headers: {
-							'Content-Type': 'audio/mpeg',
-							'Cache-Control': 'public, max-age=3600',
-						},
-					})
-				}
-			} catch {
-				// fall through to the Pollinations fallback below
-			}
-
-			// Fallback: Pollinations free TTS
-			// (GET https://text.pollinations.ai/{prompt}?model=openai-audio&voice=nova).
-			// The openai-audio model was removed from the anonymous tier (404 as of
-			// 2026-10-01), so this is kept only in case it returns.
-			const ttsUrl =
-				'https://text.pollinations.ai/' +
-				encodeURIComponent(text.slice(0, 500)) +
-				'?model=openai-audio&voice=' +
-				encodeURIComponent(voice)
-			try {
-				const res = await fetch(ttsUrl, { signal: AbortSignal.timeout(60_000) })
-				const ct = res.headers.get('content-type') || ''
-				if (!res.ok || !ct.includes('audio')) {
-					return c.json({ success: false, error: 'tts_unavailable' }, 502)
-				}
-				const audio = await res.arrayBuffer()
-				return new Response(audio, {
-					headers: {
-						'Content-Type': 'audio/mpeg',
-						'Cache-Control': 'public, max-age=3600',
-					},
-				})
-			} catch {
-				return c.json({ success: false, error: 'tts_error' }, 502)
-			}
+			const audio = await synthesizeRoomieMp3(text)
+			if (!audio) return c.json({ success: false, error: 'tts_unavailable' }, 502)
+			return new Response(audio, {
+				headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store' },
+			})
 		}
 	)
 
-	// Roomie hearing (STT). Accepts audio from the in-game mic, transcribes it with
-	// Cloudflare's Whisper model, and returns the text so it can be sent to /roomieai/chat.
+	// Roomie hearing (STT). Audio goes to the private RipoBot Space's local Faster-Whisper
+	// endpoint; no Cloudflare AI or OpenAI speech endpoint is used.
 	.post(
 		'/roomieai/listen',
 		describeRoute({
-			tags: ['Roomie AI', '2025'],
+			tags: ['Roomie AI', '2026'],
 			summary: 'Roomie speech-to-text',
 			description:
 				'Transcribes player mic audio to text using Whisper, so players can talk ' +
@@ -509,21 +411,14 @@ const app = new Hono<App>()
 				}
 			}
 
-			// Use Cloudflare Workers AI Whisper for transcription (free tier).
-			// The AI binding must be configured in wrangler.jsonc.
-			try {
-				const ai = (c.env as unknown as { AI?: { run: (model: string, input: unknown) => Promise<{ text?: string }> } }).AI
-				if (!ai) {
-					return c.json({ success: false, error: 'stt_not_configured' }, 503)
-				}
-				const result = await ai.run('@cf/openai/whisper', {
-					audio: Array.from(new Uint8Array(audio)),
-				})
-				const text = (result.text || '').trim()
-				return c.json({ success: true, error: null, value: { text } })
-			} catch {
-				return c.json({ success: false, error: 'stt_error' }, 502)
-			}
+			const token = c.env.ROOMIE_VOICE_TOKEN
+			const voiceUrl = c.env.ROOMIE_VOICE_URL || 'https://echoxr-ripobot.hf.space/roomie/tts'
+			const sttUrl = c.env.ROOMIE_STT_URL || voiceUrl.replace(/\/tts\/?$/, '/stt')
+			if (!token || !sttUrl) return c.json({ success: false, error: 'stt_not_configured' }, 503)
+			if (audio.byteLength > 1_500_000) return c.json({ success: false, error: 'audio_too_large' }, 413)
+			const text = await transcribeRoomieAudio(new Uint8Array(audio), token, sttUrl)
+			if (text === null) return c.json({ success: false, error: 'stt_unavailable' }, 502)
+			return c.json({ success: true, error: null, value: { text } })
 		}
 	)
 
@@ -618,48 +513,75 @@ const app = new Hono<App>()
 		}
 	)
 
-	// Opening a live voice session with an assistant — the one call here that would reach a
-	// real model, and so the one that cannot be answered statically. Refused.
+	// Open a client session. The returned key is app-local and can only authenticate to the
+	// Realtime-compatible socket below; no provider credential reaches the game client.
 	.post(
 		'/realtime-session/create',
 		describeRoute({
-			tags: ['Roomie AI', '2025'],
+			tags: ['Roomie AI', '2026'],
 			summary: 'Open a realtime AI session',
-			description: [
-				'Posted when the player actually pulls out an assistant. Live, this mints a short-',
-				'lived credential the CLIENT then uses to talk to the model provider directly, and',
-				'answers with `{ SessionId, ClientSecret }` in `value`.',
-				'',
-				'Refused here. This is the one endpoint on the worker whose answer is a working key',
-				'rather than a description of one, so there is nothing static to serve — which is why',
-				'the budget reads above grant everything and the refusal lands at this point instead:',
-				'the client offers the feature, and the session it opens is what fails.',
-				'',
-				'The refusal is still a 200 with `success: false`, and `error_id` is an EMPTY STRING',
-				'rather than a code — the reference server sends no id for this one. `value` is null.',
-			].join(' '),
+			description:
+				'Creates a 15-minute Roomie credential. The game connects to this service’s realtime ' +
+				'socket; RipoBot Space Faster-Whisper handles transcription, its configured Hugging Face ' +
+				'model handles replies, and the Space Kokoro endpoint produces PCM voice.',
 			security: AUTHED,
-			requestBody: jsonBody(
-				RealtimeSessionCreateBody,
-				'Which assistant is being opened. Read for the log only — the answer is the same either way.'
-			),
+			requestBody: jsonBody(RealtimeSessionCreateBody, 'Roomie realtime session options.'),
 			responses: {
-				200: json(RealtimeSessionDenied, 'Always a refusal — no session is created'),
+				200: json(RealtimeSessionCreated, 'Short-lived Roomie session credentials'),
 				401: UNAUTHORIZED_RESPONSE,
+				503: json(RealtimeSessionUnavailable, 'Roomie model or voice service is not configured'),
 			},
 		}),
 		async (c) => {
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
-
-			return c.json({
-				success: false,
-				error: 'Realtime AI sessions are not available on this server',
-				error_id: '',
-				value: null,
+			let body: unknown
+			try { body = await c.req.json() } catch {
+				return c.json({ Success: false, Error: 'Invalid realtime session request', error_id: 'AI.InvalidRequest', Value: null }, 400)
+			}
+			const parsed = RealtimeSessionCreateBody.safeParse(body)
+			if (!parsed.success || !['RoomieAI', 'Roomie'].includes(parsed.data.AIType || 'RoomieAI')) {
+				return c.json({ Success: false, Error: 'Unsupported realtime assistant', error_id: 'AI.UnsupportedAssistant', Value: null }, 400)
+			}
+			if (!c.env.ROOMIE_VOICE_TOKEN || !c.env.ROOMIE_VOICE_URL) {
+				return c.json({ Success: false, Error: 'Roomie service is not configured', error_id: 'AI.RoomieUnavailable', Value: null }, 503)
+			}
+			const voiceUrl = c.env.ROOMIE_VOICE_URL
+			const chatUrl = c.env.ROOMIE_CHAT_URL || voiceUrl.replace(/\/tts\/?$/, '/chat')
+			const sttUrl = c.env.ROOMIE_STT_URL || voiceUrl.replace(/\/tts\/?$/, '/stt')
+			if (!chatUrl || !sttUrl) {
+				return c.json({ Success: false, Error: 'Roomie service endpoints are invalid', error_id: 'AI.RoomieUnavailable', Value: null }, 503)
+			}
+			const sessionId = crypto.randomUUID()
+			const clientSecret = await createRoomieClientSecret(await c.env.JWT_SECRET.get(), id, sessionId, {
+				model: parsed.data.Model,
+				instructions: parsed.data.Instructions,
+				voice: 'af_heart',
 			})
+			return c.json({ Success: true, Error: null, error_id: null, Value: { SessionId: sessionId, ClientSecret: clientSecret } })
 		}
 	)
+
+// Realtime-compatible bridge. The exact 2026 client transport must be verified to route
+// WebSocket traffic here; the client secret and service credentials stay server-side.
+app.get('/v1/realtime', async (c) => {
+	if (c.req.header('upgrade')?.toLowerCase() !== 'websocket') return c.body(null, 426)
+	const match = /^Bearer\s+(\S+)$/i.exec(c.req.header('authorization') || '')
+	if (!match) return c.body(null, 401)
+	const claims = await verifyRoomieClientSecret(await c.env.JWT_SECRET.get(), match[1])
+	if (!claims) return c.body(null, 401)
+	const serviceToken = c.env.ROOMIE_VOICE_TOKEN
+	const voiceUrl = c.env.ROOMIE_VOICE_URL || 'https://echoxr-ripobot.hf.space/roomie/tts'
+	const chatUrl = c.env.ROOMIE_CHAT_URL || voiceUrl.replace(/\/tts\/?$/, '/chat')
+	const sttUrl = c.env.ROOMIE_STT_URL || voiceUrl.replace(/\/tts\/?$/, '/stt')
+	if (!serviceToken) return c.body(null, 503)
+	return createRoomieSocket(createRoomieProviders({
+		serviceToken,
+		chatUrl,
+		voiceUrl,
+		sttUrl,
+	}), { id: claims.sid, model: claims.model, instructions: claims.instructions, voice: claims.voice })
+})
 
 // This experimental socket is disabled by default, is impossible to enable in
 // production, and requires both a player JWT and a separate development key.
@@ -685,15 +607,14 @@ app.get(
 						'backend. The client checks here before offering any of its AI features: Game AI in a',
 						'room, the Roomie assistant, and Maker AI’s usage meter.',
 						'',
-						'Roomie also talks through this worker: POST /roomieai/chat answers via the free',
-						'Pollinations chat API (the same model RipoBot uses), /roomieai/speak turns the',
-						'reply into MP3 audio, and /roomieai/listen transcribes mic audio with Whisper.',
+						'Roomie custom chat uses the configured RipoBot Hugging Face model; the legacy MP3',
+						'speech path uses Google TTS, while PCM output requires a configured RipoBot voice URL.',
 						'',
 						'Game AI is a server-side feature this server cannot provide, so both its reads',
 						'refuse. Roomie and Maker AI only ask what the caller may SPEND, which nothing here',
-						'meters, so those reads are granted in full; the refusal lands instead on',
-						'`POST /realtime-session/create`, the one call whose real answer is a working',
-						'credential rather than a description of one.',
+						'meters, so those reads are granted in full; session creation returns a short-lived',
+						'worker credential for the realtime-compatible Roomie adapter. Validate the game',
+						'transport against the 2026 client before claiming in-game compatibility.',
 						'',
 						'The refusals are 200s carrying `success: false`, which is the shape the client',
 						'branches on — the worker exists so the client gets a definite answer on the host its',

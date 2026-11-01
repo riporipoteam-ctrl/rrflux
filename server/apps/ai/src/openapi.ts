@@ -144,24 +144,29 @@ export const MakerAiBalances = z.object({
 	RRPlusUsagePercent: z.number().describe('Share of the RR+ allowance consumed. Always 0'),
 })
 
-/** The body the client posts to open a realtime session. Read for documentation only. */
+/** Request DTO used by the game before opening a realtime Roomie socket. */
 export const RealtimeSessionCreateBody = z.object({
-	AIType: z
-		.string()
-		.optional()
-		.describe('Which assistant the client is opening a session for, e.g. `Roomie`'),
+	AIType: z.string().max(80).optional().describe('Assistant type, normally `RoomieAI`'),
+	Model: z.string().max(120).optional().describe('Client-requested model name; server maps it to RipoBot'),
+	Instructions: z.string().max(1500).optional().describe('Roomie style preferences from the client'),
+	Voice: z.string().max(40).optional().describe('Client voice enum name'),
+	TranscriptionModel: z.string().max(120).optional().describe('Client-requested transcription model; server uses Workers AI Whisper'),
+	Temperature: z.number().min(0).max(2).optional().describe('Client-requested sampling temperature'),
 })
 
-/**
- * The realtime-session refusal. `{ success, error, error_id, value }` — note `error_id` is
- * an empty string rather than a machine-readable code, and `value` (which would carry the
- * session id and its client secret) is null.
- */
-export const RealtimeSessionDenied = z.object({
-	success: z.literal(false),
-	error: z.string().describe('The message shown to the player'),
-	error_id: z.string().describe('Empty — the reference server sends no code for this refusal'),
-	value: z.null().describe('The session credentials. Null: no session is created'),
+/** Wire-compatible response shape for the game's realtime session creation call. */
+export const RealtimeSessionCreated = z.object({
+	Success: z.literal(true),
+	Error: z.null(),
+	error_id: z.null(),
+	Value: z.object({ SessionId: z.string(), ClientSecret: z.string() }),
+})
+
+export const RealtimeSessionUnavailable = z.object({
+	Success: z.literal(false),
+	Error: z.string(),
+	error_id: z.string(),
+	Value: z.null(),
 })
 
 /**
