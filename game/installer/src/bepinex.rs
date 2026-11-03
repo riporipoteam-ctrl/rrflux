@@ -46,7 +46,8 @@ pub(crate) fn render_2025patch_ini(ns_host: &str, existing_ini: Option<&str>) ->
 
 /// Render the supported March 2026 patch configuration. The 2026 patch needs
 /// both discovery and the common service domain; Flux Rec's discovery hostname
-/// is a subdomain of the Worker service domain.
+/// is a subdomain of the Worker service domain. Roomie's realtime signaling
+/// endpoint lives on the AI worker, so derive that host from the same domain.
 pub(crate) fn render_2026patch_ini(ns_host: &str, existing_ini: Option<&str>) -> String {
     let voice_key_xml = existing_ini
         .and_then(extract_public_voice_key)
@@ -76,12 +77,13 @@ pub(crate) fn render_2026patch_ini(ns_host: &str, existing_ini: Option<&str>) ->
          ApiHost={}\n\
          ServerDomain={}\n\
          CachedServerDomain=\n\
+         RoomieRealtimeHost=ai.{}\n\
          DisableCertificatePinning=true\n\
          AllowUnsignedImages=true\n\
          FramesPerSecond=0\n\
          EnableTracing=false\n\
          VoiceKeyXml={}\n",
-        host, service_domain, voice_key_xml
+        host, service_domain, service_domain, voice_key_xml
     )
 }
 
@@ -305,6 +307,7 @@ mod tests {
         let rendered = render_2026patch_ini("ns.ripo-ripoteam.workers.dev", None);
         assert!(rendered.contains("[config]\nApiHost=ns.ripo-ripoteam.workers.dev\n"));
         assert!(rendered.contains("ServerDomain=ripo-ripoteam.workers.dev\n"));
+        assert!(rendered.contains("RoomieRealtimeHost=ai.ripo-ripoteam.workers.dev\n"));
         assert!(!rendered.contains("\\n"));
     }
 }
