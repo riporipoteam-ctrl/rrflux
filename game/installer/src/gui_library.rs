@@ -261,9 +261,18 @@ mod imp {
     const WIN_W: i32 = 1440;
     const WIN_H: i32 = 880;
     const SIDEBAR_W: i32 = 224;
-    const CONTENT_X: i32 = SIDEBAR_W + 28;
     const TITLE_H: i32 = 66;
     const CORNER: i32 = 22;
+
+    // Give the content area a little more room on compact laptop displays.
+    // The sidebar returns to its full width once the window has room for it.
+    fn sidebar_width(win_w: i32) -> i32 {
+        if win_w < 1180 { 204 } else { SIDEBAR_W }
+    }
+
+    fn content_left(win_w: i32) -> i32 {
+        sidebar_width(win_w) + 28
+    }
 
     const SPLASH_W: i32 = 480;
     const SPLASH_H: i32 = 320;
@@ -1170,7 +1179,8 @@ mod imp {
     // Layout: compute button rects.
     // ------------------------------------------------------------------
     fn compute_rects(win_w: i32, win_h: i32) -> Rects {
-        let content_x = CONTENT_X + 8;
+        let side_w = sidebar_width(win_w);
+        let content_x = content_left(win_w) + 8;
         let content_right = win_w - 32;
         let content_w = (content_right - content_x).max(420);
         let hero_top = TITLE_H + 82;
@@ -1191,6 +1201,11 @@ mod imp {
         let settings_right = content_right - 24;
         let settings_gap = 14;
         let settings_action_w = ((settings_right - settings_left - settings_gap) / 2).max(120);
+        let theme_card_left = content_left(win_w);
+        let theme_card_right = theme_card_left + ((content_right - theme_card_left) * 49 / 100) - 10;
+        let theme_button_gap = 12;
+        let theme_button_width = ((theme_card_right - theme_card_left - 44 - theme_button_gap) / 2).max(120);
+        let theme_button_left = theme_card_left + 22;
         let install_actions_top = TITLE_H + 180;
         let welcome_top = TITLE_H + 50;
         let welcome_art_w = ((content_w - 28) * 48 / 100).clamp(320, 600);
@@ -1205,11 +1220,11 @@ mod imp {
         let account_card_w = ((account_right - account_left - 24) / 2).max(240);
         let account_button_w = ((account_card_w - 48) / 2).clamp(112, 250);
         Rects {
-            nav_store: RECT { left: 14, top: TITLE_H + 48, right: SIDEBAR_W - 14, bottom: TITLE_H + 96 },
-            nav_library: RECT { left: 14, top: TITLE_H + 104, right: SIDEBAR_W - 14, bottom: TITLE_H + 152 },
-            nav_downloads: RECT { left: 14, top: TITLE_H + 184, right: SIDEBAR_W - 14, bottom: TITLE_H + 232 },
-            nav_settings: RECT { left: 14, top: TITLE_H + 240, right: SIDEBAR_W - 14, bottom: TITLE_H + 288 },
-            nav_account: RECT { left: 14, top: TITLE_H + 320, right: SIDEBAR_W - 14, bottom: TITLE_H + 368 },
+            nav_store: RECT { left: 14, top: TITLE_H + 48, right: side_w - 14, bottom: TITLE_H + 96 },
+            nav_library: RECT { left: 14, top: TITLE_H + 104, right: side_w - 14, bottom: TITLE_H + 152 },
+            nav_downloads: RECT { left: 14, top: TITLE_H + 184, right: side_w - 14, bottom: TITLE_H + 232 },
+            nav_settings: RECT { left: 14, top: TITLE_H + 240, right: side_w - 14, bottom: TITLE_H + 288 },
+            nav_account: RECT { left: 14, top: TITLE_H + 320, right: side_w - 14, bottom: TITLE_H + 368 },
             // Home hero.
             card: RECT {
                 left: content_x,
@@ -1249,15 +1264,15 @@ mod imp {
             },
             // Settings view
             theme_light: RECT {
-                left: content_x + 24,
+                left: theme_button_left,
                 top: TITLE_H + 142,
-                right: content_x + 194,
+                right: theme_button_left + theme_button_width,
                 bottom: TITLE_H + 190,
             },
             theme_dark: RECT {
-                left: content_x + 208,
+                left: theme_button_left + theme_button_width + theme_button_gap,
                 top: TITLE_H + 142,
-                right: content_x + 378,
+                right: theme_button_left + theme_button_width * 2 + theme_button_gap,
                 bottom: TITLE_H + 190,
             },
             check_updates: RECT {
@@ -1510,6 +1525,7 @@ mod imp {
     unsafe fn on_paint(hwnd: HWND, st: &mut State) -> Silent {
         let p = pal(st.theme);
         let rects = compute_rects(st.win_w, st.win_h);
+        let side_w = sidebar_width(st.win_w);
 
         let mut ps = PAINTSTRUCT::default();
         let hdc = BeginPaint(hwnd, &mut ps);
@@ -1555,14 +1571,14 @@ mod imp {
         let sidebar = RECT {
             left: 0,
             top: TITLE_H,
-            right: SIDEBAR_W,
+            right: side_w,
             bottom: paint_h,
         };
         fill_rect(mem, &sidebar, p.bg_side)?;
         let divider = RECT {
-            left: SIDEBAR_W - 1,
+            left: side_w - 1,
             top: TITLE_H,
-            right: SIDEBAR_W,
+            right: side_w,
             bottom: paint_h,
         };
         fill_rect(mem, &divider, p.border)?;
@@ -1586,9 +1602,9 @@ mod imp {
         };
         fill_rect(mem, &RECT { left: 392, top: 16, right: 393, bottom: 50 }, p.border)?;
         draw_text_ellipsis(mem, section_label, 414, 21, (paint_w - 760).max(180), 22, p.text_dim, 10)?;
-        draw_text(mem, "BROWSE", 24, TITLE_H + 20, SIDEBAR_W - 48, 16, p.nav_text_dim, 9, true, false)?;
-        draw_text(mem, "MANAGE", 24, TITLE_H + 158, SIDEBAR_W - 48, 16, p.nav_text_dim, 9, true, false)?;
-        draw_text(mem, "ACCOUNT", 24, TITLE_H + 294, SIDEBAR_W - 48, 16, p.nav_text_dim, 9, true, false)?;
+        draw_text(mem, "BROWSE", 24, TITLE_H + 20, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
+        draw_text(mem, "MANAGE", 24, TITLE_H + 158, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
+        draw_text(mem, "ACCOUNT", 24, TITLE_H + 294, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
         if !matches!(st.view, View::Welcome | View::Onboarding) {
             draw_nav(
                 mem,
@@ -1604,7 +1620,7 @@ mod imp {
         let footer = RECT {
             left: 16,
             top: footer_y,
-            right: SIDEBAR_W - 16,
+            right: side_w - 16,
             bottom: paint_h - 18,
         };
         round_rect_path(mem, &footer, 14, p.nav_card)?;
@@ -1962,7 +1978,7 @@ mod imp {
     }
 
     unsafe fn draw_welcome_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let left = CONTENT_X + 8;
+        let left = content_left(st.win_w) + 8;
         let right = st.win_w - 32;
         let content_w = (right - left).max(420);
         let top = TITLE_H + 50;
@@ -2009,7 +2025,7 @@ mod imp {
     }
 
     unsafe fn draw_onboarding_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let left = CONTENT_X + 8;
+        let left = content_left(st.win_w) + 8;
         let right = st.win_w - 32;
         let content_w = (right - left).max(420);
         let top = TITLE_H + 50;
@@ -2066,7 +2082,7 @@ mod imp {
     }
 
     unsafe fn draw_account_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let left = CONTENT_X + 10;
+        let left = content_left(st.win_w) + 10;
         let right = st.win_w - 42;
         let middle = left + (right - left) / 2;
         let top = TITLE_H + 68;
@@ -2284,7 +2300,7 @@ mod imp {
     }
 
     unsafe fn draw_dashboard_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let content_x = CONTENT_X;
+        let content_x = content_left(st.win_w);
         let content_right = st.win_w - 28;
         let status_x = content_right - 272;
         let card = &rects.card;
@@ -2784,7 +2800,7 @@ mod imp {
     }
 
     unsafe fn draw_library_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let cx = CONTENT_X;
+        let cx = content_left(st.win_w);
         draw_text(
             hdc,
             "My Games",
@@ -3170,7 +3186,7 @@ mod imp {
         rects: &Rects,
         p: &Palette,
     ) -> Silent {
-        let left = CONTENT_X;
+        let left = content_left(st.win_w);
         let right = st.win_w - 36;
         let middle = left + (right - left) * 49 / 100;
         draw_text(hdc, "PREFERENCES", left, TITLE_H + 8, 260, 17, p.game_accent, 10, true, false)?;
@@ -3222,6 +3238,35 @@ mod imp {
         ] {
             let hover = st.hover == hot;
             draw_action_button(hdc, r, label, hover, active, p)?;
+        }
+        let preview = RECT {
+            left: theme_card.left + 22,
+            top: theme_card.top + 132,
+            right: theme_card.right - 22,
+            bottom: theme_card.bottom - 14,
+        };
+        round_rect_path(hdc, &preview, 10, p.bg_alt)?;
+        draw_text(
+            hdc,
+            if st.theme == Theme::Light { "LIGHT MODE  ·  DEFAULT" } else { "DARK MODE" },
+            preview.left + 12,
+            preview.top + 6,
+            (preview.right - preview.left - 132).max(100),
+            preview.bottom - preview.top - 12,
+            p.text_dim,
+            9,
+            true,
+            false,
+        )?;
+        let swatch_right = preview.right - 12;
+        for (offset, color) in [(0, p.text), (34, p.game_accent), (68, p.accent_soft)] {
+            let swatch = RECT {
+                left: swatch_right - 24 - offset,
+                top: preview.top + 8,
+                right: swatch_right - offset,
+                bottom: preview.bottom - 8,
+            };
+            round_rect_path(hdc, &swatch, 5, color)?;
         }
 
         let install_card = RECT {
@@ -3437,33 +3482,81 @@ mod imp {
         let status_top = card.top + 250;
         let status_left = card.left + 28;
         let status_right = card.right - 28;
-        let status_w = (status_right - status_left) / 3;
-        let rule = RECT { left: status_left, top: status_top, right: status_right, bottom: status_top + 1 };
-        fill_rect(hdc, &rule, p.border)?;
-        let install_x = status_left;
-        let update_x = status_left + status_w;
-        let location_x = status_left + status_w * 2;
-        for x in [update_x, location_x] {
-            fill_rect(hdc, &RECT { left: x, top: status_top + 18, right: x + 1, bottom: status_top + 118 }, p.border)?;
+        let status_gap = 12;
+        let status_w = (status_right - status_left - status_gap * 2) / 3;
+        let status_bottom = (rects.downloads_play.top - 18).max(status_top + 92);
+        let tile_h = (status_bottom - status_top - 30).max(78);
+        let compact = tile_h < 170;
+        let tile_top = status_top + if compact { 8 } else { 26 };
+        let tile_bottom = (tile_top + tile_h).min(status_bottom);
+        draw_text(hdc, "INSTALLATION OVERVIEW", status_left, status_top, 300, 18, p.game_accent, 9, true, false)?;
+        let tiles = [
+            RECT { left: status_left, top: tile_top, right: status_left + status_w, bottom: tile_bottom },
+            RECT { left: status_left + status_w + status_gap, top: tile_top, right: status_left + (status_w + status_gap) * 2, bottom: tile_bottom },
+            RECT { left: status_left + (status_w + status_gap) * 2, top: tile_top, right: status_right, bottom: tile_bottom },
+        ];
+        for tile in &tiles {
+            draw_surface(hdc, tile, p, 14)?;
         }
-        draw_text(hdc, "INSTALL", install_x + 12, status_top + 20, status_w - 24, 18, p.game_accent, 9, true, false)?;
-        draw_text(hdc, if st.install_required { "Ready to install" } else { "Installed" }, install_x + 12, status_top + 47, status_w - 24, 27, p.text, 17, true, false)?;
-        draw_text(hdc, "Flux Rec on this PC", install_x + 12, status_top + 80, status_w - 24, 20, p.text_dim, 10, false, false)?;
-        draw_text(hdc, "UPDATE POLICY", update_x + 18, status_top + 20, status_w - 32, 18, p.game_accent, 9, true, false)?;
-        draw_text(hdc, "Checked before play", update_x + 18, status_top + 47, status_w - 32, 27, p.text, 17, true, false)?;
-        let update_note = if st.update_available {
+        let install_title = if st.install_required { "Not installed" } else { "Installed" };
+        let install_note = if st.install_required { "Ready to add to your library" } else { "Flux Rec is on this PC" };
+        let update_title = if st.update_available {
+            "Update available"
+        } else if st.checking {
+            "Checking now"
+        } else if !st.check_error.is_empty() {
+            "Check will retry"
+        } else {
+            "Checked before play"
+        };
+        let install_meta = if st.install_required { "Choose Install Flux Rec to begin." } else { "Installed game files are ready." };
+        let location_meta = "Manage this folder in Settings.";
+        let update_meta = if st.update_available {
             format!("Version {} is ready to apply.", display_update_version(&st.update_version))
         } else if st.checking {
-            "Checking the latest game version now.".to_string()
+            "The launcher is checking the latest version.".to_string()
         } else if !st.check_error.is_empty() {
             "The check will retry automatically at launch.".to_string()
         } else {
-            "Flux Rec stays current automatically.".to_string()
+            "Updates are checked before every launch.".to_string()
         };
-        draw_text_ellipsis(hdc, &update_note, update_x + 18, status_top + 80, status_w - 32, 24, p.text_dim, 10)?;
-        draw_text(hdc, "GAME LOCATION", location_x + 18, status_top + 20, status_w - 30, 18, p.game_accent, 9, true, false)?;
-        draw_text_ellipsis(hdc, &st.install_dir, location_x + 18, status_top + 49, status_w - 30, 22, p.text, 10)?;
-        draw_text(hdc, "Change this in Settings", location_x + 18, status_top + 80, status_w - 30, 20, p.text_dim, 10, false, false)?;
+        for (tile, label, value, note, icon) in [
+            (&tiles[0], "INSTALL STATUS", install_title, install_note, "Library"),
+            (&tiles[1], "UPDATE STATUS", update_title, update_meta.as_str(), "Downloads"),
+            (&tiles[2], "GAME FOLDER", "Install location", location_meta, "Store"),
+        ] {
+            if compact {
+                draw_nav_icon(hdc, icon, tile.left + 15, tile.top + 10, p.game_accent)?;
+                draw_text(hdc, label, tile.left + 43, tile.top + 11, tile.right - tile.left - 56, 18, p.game_accent, 8, true, false)?;
+                draw_text_ellipsis(hdc, value, tile.left + 15, tile.top + 37, tile.right - tile.left - 30, 22, p.text, 13)?;
+                let detail = if label == "GAME FOLDER" { st.install_dir.as_str() } else { note };
+                draw_text_ellipsis(hdc, detail, tile.left + 15, tile.top + 61, tile.right - tile.left - 30, 15, p.text_dim, 9)?;
+            } else {
+                draw_nav_icon(hdc, icon, tile.left + 18, tile.top + 20, p.game_accent)?;
+                draw_text(hdc, label, tile.left + 48, tile.top + 20, tile.right - tile.left - 66, 18, p.game_accent, 9, true, false)?;
+                let value_color = if (label == "UPDATE STATUS" && st.update_available) || (label == "INSTALL STATUS" && st.install_required) { p.game_accent } else { p.text };
+                draw_text_ellipsis(hdc, value, tile.left + 18, tile.top + 72, tile.right - tile.left - 36, 28, value_color, 17)?;
+                let detail = if label == "GAME FOLDER" { st.install_dir.as_str() } else { note };
+                draw_text(hdc, detail, tile.left + 18, tile.top + 108, tile.right - tile.left - 36, 42, p.text_dim, 10, false, false)?;
+                let state = if label == "GAME FOLDER" {
+                    "MANAGED BY LAUNCHER"
+                } else if label == "UPDATE STATUS" {
+                    if st.update_available { "UPDATE READY" } else if st.checking { "CHECK IN PROGRESS" } else if !st.check_error.is_empty() { "RETRY BEFORE PLAY" } else { "AUTOMATIC CHECKS" }
+                } else if st.install_required {
+                    "READY TO INSTALL"
+                } else {
+                    "READY ON THIS PC"
+                };
+                let state_tint = if (label == "UPDATE STATUS" && st.update_available) || (label == "INSTALL STATUS" && st.install_required) { p.game_accent } else { p.accent_soft };
+                let state_fg = if (label == "UPDATE STATUS" && st.update_available) || (label == "INSTALL STATUS" && st.install_required) { COLORREF(0x00FFFFFF) } else { p.accent_dark };
+                let state_badge = RECT { left: tile.left + 18, top: tile.top + 174, right: tile.right - 18, bottom: tile.top + 204 };
+                draw_pill(hdc, &state_badge, state, state_tint, state_fg)?;
+                let rule_y = tile.bottom - 54;
+                fill_rect(hdc, &RECT { left: tile.left + 18, top: rule_y, right: tile.right - 18, bottom: rule_y + 1 }, p.border)?;
+                let footer = if label == "GAME FOLDER" { "Change this in Settings" } else if label == "UPDATE STATUS" { "Automatic update checks" } else { install_meta };
+                draw_text_ellipsis(hdc, footer, tile.left + 18, rule_y + 14, tile.right - tile.left - 36, 22, p.text_dim, 9)?;
+            }
+        }
 
         for (r, label, hot) in [
             (&rects.downloads_check_updates, "Check for updates", Hot::CheckForUpdates),
@@ -3479,7 +3572,7 @@ mod imp {
         Ok(())
     }
     unsafe fn draw_working_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let left = CONTENT_X + 8;
+        let left = content_left(st.win_w) + 8;
         let right = st.win_w - 32;
         let top = TITLE_H + 42;
         let bottom = st.win_h - 32;
