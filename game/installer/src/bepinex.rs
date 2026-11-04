@@ -76,7 +76,7 @@ pub(crate) fn render_2026patch_ini(ns_host: &str, existing_ini: Option<&str>) ->
          [config]\n\
          ApiHost={}\n\
          ServerDomain={}\n\
-         CachedServerDomain=\n\
+         CachedServerDomain=recflare.net\n\
          RoomieRealtimeHost=ai.{}\n\
          DisableCertificatePinning=true\n\
          AllowUnsignedImages=true\n\
@@ -307,6 +307,7 @@ mod tests {
         let rendered = render_2026patch_ini("ns.ripo-ripoteam.workers.dev", None);
         assert!(rendered.contains("[config]\nApiHost=ns.ripo-ripoteam.workers.dev\n"));
         assert!(rendered.contains("ServerDomain=ripo-ripoteam.workers.dev\n"));
+        assert!(rendered.contains("CachedServerDomain=recflare.net\n"));
         assert!(rendered.contains("RoomieRealtimeHost=ai.ripo-ripoteam.workers.dev\n"));
         assert!(!rendered.contains("\\n"));
     }
