@@ -1175,6 +1175,8 @@ mod imp {
         let content_w = (content_right - content_x).max(420);
         let hero_top = TITLE_H + 82;
         let hero_bottom = hero_top + ((win_h - TITLE_H - 48) * 54 / 100).clamp(320, 430);
+        let store_panel_w = (content_w / 3).clamp(266, 320);
+        let store_panel_left = content_right - store_panel_w;
         let library_top = TITLE_H + 62;
         let library_bottom = library_top + 380;
         let library_action_y = library_bottom - 62;
@@ -1216,10 +1218,10 @@ mod imp {
                 bottom: hero_bottom,
             },
             play: RECT {
-                left: content_x + 24,
-                top: hero_bottom - 74,
-                right: content_x + 244,
-                bottom: hero_bottom - 20,
+                left: store_panel_left + 20,
+                top: hero_bottom - 116,
+                right: content_right - 20,
+                bottom: hero_bottom - 64,
             },
             library_play: RECT {
                 left: content_right - 224,
@@ -1240,10 +1242,10 @@ mod imp {
                 bottom: library_action_y + 48,
             },
             details: RECT {
-                left: content_x + 258,
-                top: hero_bottom - 74,
-                right: content_x + 438,
-                bottom: hero_bottom - 20,
+                left: store_panel_left + 20,
+                top: hero_bottom - 58,
+                right: content_right - 20,
+                bottom: hero_bottom - 12,
             },
             // Settings view
             theme_light: RECT {
@@ -2126,53 +2128,136 @@ mod imp {
         let content_x = hero.left;
         let content_w = hero.right - hero.left;
         draw_text(hdc, "DISCOVER", content_x, TITLE_H + 3, 320, 17, p.game_accent, 10, true, false)?;
-        draw_text(hdc, "A world of your own", content_x, TITLE_H + 24, 590, 38, p.text, 29, true, false)?;
-        draw_text(hdc, "Meet up, jump into a game, or build the next place to explore.", content_x, TITLE_H + 62, 700, 22, p.text_dim, 12, false, false)?;
+        draw_text(hdc, "Find your next favorite", content_x, TITLE_H + 24, 590, 38, p.text, 29, true, false)?;
+        draw_text(hdc, "Explore, play and create with the Flux Rec community.", content_x, TITLE_H + 62, 700, 22, p.text_dim, 12, false, false)?;
         let shadow = RECT { left: hero.left + 2, top: hero.top + 5, right: hero.right + 2, bottom: hero.bottom + 5 };
         round_rect_path(hdc, &shadow, 22, p.shadow)?;
-        draw_gallery_image(hdc, st, st.carousel_idx, hero, p)?;
-        let art_scrim = RECT { left: hero.left, top: hero.bottom - 190, right: hero.right, bottom: hero.bottom };
+        let panel_w = ((hero.right - hero.left) / 3).clamp(266, 320);
+        let panel = RECT { left: hero.right - panel_w, top: hero.top, right: hero.right, bottom: hero.bottom };
+        let art = RECT { left: hero.left, top: hero.top, right: panel.left + 1, bottom: hero.bottom };
+        draw_surface(hdc, hero, p, 22)?;
+        draw_gallery_image(hdc, st, st.carousel_idx, &art, p)?;
+        let art_scrim = RECT { left: art.left, top: art.bottom - 190, right: art.right, bottom: art.bottom };
         fill_gradient(hdc, &art_scrim, COLORREF(0x00382B20), COLORREF(0x00180F09))?;
-        let brand_chip = RECT { left: hero.left + 24, top: hero.top + 22, right: hero.left + 194, bottom: hero.top + 52 };
-        draw_pill(hdc, &brand_chip, "RIPO TEAM  ·  FEATURED", p.game_accent, COLORREF(0x00FFFFFF))?;
+        let brand_chip = RECT { left: art.left + 24, top: art.top + 22, right: art.left + 160, bottom: art.top + 52 };
+        draw_pill(hdc, &brand_chip, "FEATURED GAME", p.game_accent, COLORREF(0x00FFFFFF))?;
 
+        let title_y = art.bottom - 176;
+        if draw_logo_bitmap(hdc, st.logo_bitmap, art.left + 26, title_y, 58).is_err() {
+            draw_logo(hdc, art.left + 26, title_y, 58, COLORREF(0x00FFFFFF))?;
+        }
+        draw_text(hdc, "FLUX REC", art.left + 98, title_y + 2, 420, 40, COLORREF(0x00FFFFFF), 30, true, false)?;
+        draw_text(hdc, "Meet friends, discover rooms and make your own.", art.left + 100, title_y + 45, (art.right - art.left - 124).max(180), 24, COLORREF(0x00E9E1DA), 11, false, false)?;
+
+        // Store-style product panel keeps install, update and online state
+        // visible beside the feature art, without covering the screenshot.
+        round_rect_path(hdc, &panel, 22, p.bg_card)?;
+        round_rect_outline(hdc, &panel, 22, p.border)?;
+        let panel_rule = RECT {
+            left: panel.left + 1,
+            top: panel.top + 24,
+            right: panel.left + 4,
+            bottom: panel.bottom - 24,
+        };
+        fill_rect(hdc, &panel_rule, p.game_accent)?;
+        round_rect_outline(hdc, hero, 22, p.border)?;
+        let panel_x = panel.left + 22;
+        let panel_right = panel.right - 18;
+        let panel_text_w = panel_right - panel_x;
+        let compact_panel = hero.bottom - hero.top < 370;
         let status = if st.checking {
-            "CHECKING STATUS"
+            "CHECKING FOR UPDATES"
         } else if st.install_required {
             "READY TO INSTALL"
         } else if st.update_available {
             "UPDATE AVAILABLE"
         } else if !st.check_error.is_empty() {
-            "CHECK WILL RETRY"
+            "UPDATE CHECK WILL RETRY"
         } else {
-            "AVAILABLE NOW"
+            "READY TO PLAY"
         };
-        let status_w = 196;
-        let status_chip = RECT { left: hero.right - status_w - 24, top: hero.top + 22, right: hero.right - 24, bottom: hero.top + 52 };
-        let status_color = if st.update_available || st.install_required { p.game_accent } else { p.success };
-        draw_pill(hdc, &status_chip, status, COLORREF(0x00FFFFFF), status_color)?;
-
+        let status_fg = if st.update_available || st.install_required {
+            p.game_accent
+        } else if st.check_error.is_empty() {
+            p.success
+        } else {
+            p.text_dim
+        };
+        let status_bg = if st.update_available || st.install_required {
+            p.game_accent_soft
+        } else {
+            p.bg_alt
+        };
+        let status_y = panel.top + if compact_panel { 18 } else { 22 };
+        let status_chip = RECT {
+            left: panel_x,
+            top: status_y,
+            right: panel_right,
+            bottom: status_y + 28,
+        };
+        draw_pill(hdc, &status_chip, status, status_bg, status_fg)?;
+        draw_text(
+            hdc,
+            "Flux Rec",
+            panel_x,
+            panel.top + if compact_panel { 52 } else { 64 },
+            panel_text_w,
+            34,
+            p.text,
+            24,
+            true,
+            false,
+        )?;
+        draw_text(
+            hdc,
+            "Explore rooms, play and create together.",
+            panel_x,
+            panel.top + if compact_panel { 88 } else { 101 },
+            panel_text_w,
+            42,
+            p.text_dim,
+            10,
+            false,
+            false,
+        )?;
+        let separator_y = panel.top + if compact_panel { 136 } else { 153 };
+        fill_rect(
+            hdc,
+            &RECT {
+                left: panel_x,
+                top: separator_y,
+                right: panel_right,
+                bottom: separator_y + 1,
+            },
+            p.border,
+        )?;
+        let row_y = separator_y + if compact_panel { 14 } else { 18 };
+        draw_people_icon(hdc, panel_x + 1, row_y, p.accent)?;
         let players = match (st.players, st.player_count_pending) {
-            (Some(count), _) => format!("{count} online"),
+            (Some(count), _) => format!("{count} players online"),
             (None, true) => "Checking online".to_string(),
             (None, false) => "Online count unavailable".to_string(),
         };
-        let title_y = hero.bottom - 190;
-        draw_people_icon(hdc, hero.left + 30, title_y - 34, COLORREF(0x00FFFFFF))?;
-        draw_text_ellipsis(hdc, &players, hero.left + 62, title_y - 33, 220, 22, COLORREF(0x00F4EDE6), 10)?;
-        if draw_logo_bitmap(hdc, st.logo_bitmap, hero.left + 24, title_y, 62).is_err() {
-            draw_logo(hdc, hero.left + 24, title_y, 62, COLORREF(0x00FFFFFF))?;
+        draw_text_ellipsis(hdc, &players, panel_x + 30, row_y, panel_text_w - 32, 20, p.text, 10)?;
+        draw_text(
+            hdc,
+            "WINDOWS  ·  MULTIPLAYER",
+            panel_x,
+            separator_y + if compact_panel { 43 } else { 50 },
+            panel_text_w,
+            17,
+            p.text_dim,
+            8,
+            true,
+            false,
+        )?;
+        let free_label_y = separator_y + 75;
+        if hero.bottom - hero.top >= 370 {
+            draw_text(hdc, "Free to install", panel_x, free_label_y, panel_text_w, 19, p.text, 10, true, false)?;
         }
-        draw_text(hdc, "FLUX REC", hero.left + 102, title_y + 1, 430, 42, COLORREF(0x00FFFFFF), 31, true, false)?;
-        draw_text(hdc, "Explore rooms. Find your people. Build something new.", hero.left + 104, title_y + 44, 610, 24, COLORREF(0x00E9E1DA), 11, false, false)?;
-        let free_tag = RECT { left: hero.left + 104, top: title_y + 76, right: hero.left + 226, bottom: title_y + 102 };
-        let platform_tag = RECT { left: hero.left + 236, top: title_y + 76, right: hero.left + 352, bottom: title_y + 102 };
-        draw_pill(hdc, &free_tag, "FREE TO PLAY", COLORREF(0x00F4EDE6), p.game_accent)?;
-        draw_pill(hdc, &platform_tag, "WINDOWS PC", COLORREF(0x00F4EDE6), p.text)?;
         let play_label = if st.install_required { "Install Flux Rec" } else if st.update_available { "Update & play" } else { "Play now" };
         draw_action_button(hdc, &rects.play, play_label, st.hover == Hot::Play, true, p)?;
-        draw_action_button(hdc, &rects.details, "View game details", st.hover == Hot::Details, false, p)?;
-        round_rect_outline(hdc, hero, 22, p.border)?;
+        draw_action_button(hdc, &rects.details, "Game details", st.hover == Hot::Details, false, p)?;
 
         let section_y = hero.bottom + 20;
         draw_text(hdc, "Step inside", content_x, section_y, 430, 26, p.text, 19, true, false)?;
