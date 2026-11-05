@@ -14,6 +14,10 @@ export type Env = SharedHonoEnv & {
 	ROOMIE_CHAT_URL?: string
 	ROOMIE_VOICE_URL?: string
 	ROOMIE_STT_URL?: string
+	ROOMIE_SFU_APP_ID?: string
+	ROOMIE_SFU_APP_SECRET?: string
+	ROOMIE_SFU_SOCKET_ORIGIN?: string
+	ROOMIE_SFU_BRIDGE?: DurableObjectNamespace
 }
 
 /** Variables can be extended */

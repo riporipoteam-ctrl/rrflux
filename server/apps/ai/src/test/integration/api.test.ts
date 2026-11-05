@@ -253,15 +253,20 @@ describe('POST /realtime-session/create', () => {
 
 	it.each([
 		['no body', undefined],
+		['an empty body', ''],
 		['a malformed body', 'not json'],
-		['an unsupported assistant', JSON.stringify({ AIType: 'Other' })],
-	])('refuses with %s', async (_label, body) => {
+		['a wrapped Roomie options object', JSON.stringify({ Value: { AIType: 'RoomieAI' } })],
+		['a legacy assistant enum', JSON.stringify({ AIType: 'RecRoomAI' })],
+	])('accepts legacy Roomie request shape: %s', async (_label, body) => {
 		const res = await SELF.fetch(`${ORIGIN}/realtime-session/create`, {
 			method: 'POST',
 			headers: { ...(await bearer()), 'Content-Type': 'application/json' },
 			body,
 		})
-		expect(res.status).toBe(400)
+		// The integration environment intentionally omits the model token; reaching
+		// 503 proves the client body was normalized instead of rejected with 400.
+		expect(res.status).toBe(503)
+		expect(await res.json()).toMatchObject({ Success: false, error_id: 'AI.RoomieUnavailable', Value: null })
 	})
 
 	it('401s without a bearer token', async () => {

@@ -32,6 +32,8 @@ import { roomieDevSocket } from './roomie-dev'
 import { createRoomieProviders, transcribeRoomieAudio } from './roomie-providers'
 import { createRoomieSocket } from './roomie-socket'
 import { createRoomieClientSecret, verifyRoomieClientSecret } from './roomie-session'
+import { createRoomieSfuSession } from './roomie-sfu'
+export { RoomieSfuBridge } from './roomie-sfu-bridge'
 
 import type { Context } from 'hono'
 import type { App } from './context'
@@ -82,12 +84,42 @@ function unauthorized(c: Context<App>) {
 	return c.body(null, 401)
 }
 
+/**
+ * Roomie session creation is called by multiple 2026 client builds whose JSON
+ * shape is not stable. Keep this endpoint tolerant of omitted, wrapped, and
+ * overlong preference fields; authentication still gates session creation.
+ */
+function roomieSessionOptions(input: unknown): { Model?: string; Instructions?: string } {
+	let source: Record<string, unknown> = {}
+	if (input && typeof input === 'object' && !Array.isArray(input)) {
+		source = input as Record<string, unknown>
+		for (const key of ['Value', 'value', 'Options', 'options', 'SessionOptions', 'sessionOptions']) {
+			const nested = source[key]
+			if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+				source = nested as Record<string, unknown>
+				break
+			}
+		}
+	}
+
+	const readText = (...keys: string[]) => {
+		for (const key of keys) {
+			const value = source[key]
+			if (typeof value === 'string') return value.trim()
+		}
+		return undefined
+	}
+	const model = readText('Model', 'model')?.slice(0, 120)
+	const instructions = readText('Instructions', 'instructions', 'Prompt', 'prompt')?.slice(0, 1500)
+	return { ...(model ? { Model: model } : {}), ...(instructions ? { Instructions: instructions } : {}) }
+}
+
 const app = new Hono<App>()
 	.use(
 		'*',
 		// middleware
 		(c, next) =>
-			useWorkersLogger(c.env.NAME, {
+			c.req.path === '/roomieai/sfu/audio' ? next() : useWorkersLogger(c.env.NAME, {
 				environment: c.env.ENVIRONMENT,
 				release: c.env.SENTRY_RELEASE,
 			})(c, next)
@@ -342,7 +374,7 @@ const app = new Hono<App>()
 			}
 			if (body.format === 'pcm16') {
 				const token = c.env.ROOMIE_VOICE_TOKEN
-				const voiceUrl = c.env.ROOMIE_VOICE_URL
+				const voiceUrl = c.env.ROOMIE_VOICE_URL || 'https://echoxr-ripobot.hf.space/roomie/tts'
 				if (!token || !voiceUrl) return c.json({ success: false, error: 'pcm_voice_not_configured' }, 503)
 				const audio = await synthesizeRoomiePcm(text, token, voiceUrl)
 				if (!audio) return c.json({ success: false, error: 'pcm_voice_unavailable' }, 503)
@@ -535,18 +567,20 @@ const app = new Hono<App>()
 		async (c) => {
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
-			let body: unknown
-			try { body = await c.req.json() } catch {
-				return c.json({ Success: false, Error: 'Invalid realtime session request', error_id: 'AI.InvalidRequest', Value: null }, 400)
+			let body: unknown = {}
+			try {
+				const rawBody = await c.req.text()
+				if (rawBody.trim()) body = JSON.parse(rawBody)
+			} catch {
+				// Older clients sometimes send an empty or malformed options body.
+				// Roomie is the only assistant served by this route, so use defaults.
+				body = {}
 			}
-			const parsed = RealtimeSessionCreateBody.safeParse(body)
-			if (!parsed.success || !['RoomieAI', 'Roomie'].includes(parsed.data.AIType || 'RoomieAI')) {
-				return c.json({ Success: false, Error: 'Unsupported realtime assistant', error_id: 'AI.UnsupportedAssistant', Value: null }, 400)
-			}
-			if (!c.env.ROOMIE_VOICE_TOKEN || !c.env.ROOMIE_VOICE_URL) {
+			const options = roomieSessionOptions(body)
+			if (!c.env.ROOMIE_VOICE_TOKEN) {
 				return c.json({ Success: false, Error: 'Roomie service is not configured', error_id: 'AI.RoomieUnavailable', Value: null }, 503)
 			}
-			const voiceUrl = c.env.ROOMIE_VOICE_URL
+			const voiceUrl = c.env.ROOMIE_VOICE_URL || 'https://echoxr-ripobot.hf.space/roomie/tts'
 			const chatUrl = c.env.ROOMIE_CHAT_URL || voiceUrl.replace(/\/tts\/?$/, '/chat')
 			const sttUrl = c.env.ROOMIE_STT_URL || voiceUrl.replace(/\/tts\/?$/, '/stt')
 			if (!chatUrl || !sttUrl) {
@@ -554,13 +588,86 @@ const app = new Hono<App>()
 			}
 			const sessionId = crypto.randomUUID()
 			const clientSecret = await createRoomieClientSecret(await c.env.JWT_SECRET.get(), id, sessionId, {
-				model: parsed.data.Model,
-				instructions: parsed.data.Instructions,
+				model: options.Model,
+				instructions: options.Instructions,
 				voice: 'af_heart',
 			})
 			return c.json({ Success: true, Error: null, error_id: null, Value: { SessionId: sessionId, ClientSecret: clientSecret } })
 		}
 	)
+
+// Development signaling endpoint: publishes one microphone track to the SFU.
+// Audio processing and the client redirect require separate integration.
+app.get('/roomieai/sfu/audio', async (c) => {
+	if (c.env.ENVIRONMENT !== 'development' && c.env.ENVIRONMENT !== 'VITEST') return c.body(null, 404)
+	const token = c.req.query('token') || ''
+	const claims = await verifyRoomieClientSecret(await c.env.JWT_SECRET.get(), token)
+	if (!claims) return c.body(null, 401)
+	if (!c.env.ROOMIE_SFU_BRIDGE) return c.body(null, 503)
+	const direction = c.req.query('direction')
+	if (direction !== 'input' && direction !== 'output') return c.body(null, 400)
+	const stub = c.env.ROOMIE_SFU_BRIDGE.get(c.env.ROOMIE_SFU_BRIDGE.idFromName(claims.sid))
+	return stub.fetch(c.req.raw)
+})
+
+async function roomieSfuOffer(c: Context<App>, rawAnswer: boolean) {
+	if (c.env.ENVIRONMENT !== 'development' && c.env.ENVIRONMENT !== 'VITEST') return c.body(null, 404)
+	const authorization = /^Bearer\s+(\S+)$/i.exec(c.req.header('authorization') || '')?.[1]
+	const contentType = c.req.header('content-type') || ''
+	const rawBody = await c.req.text()
+	let bodyToken: string | undefined
+	let sdp = rawBody
+	if (contentType.toLowerCase().startsWith('application/x-www-form-urlencoded')) {
+		const fields = new URLSearchParams(rawBody)
+		// Unity's WebRTC call sends a form-encoded SDP offer and may put the
+		// short-lived credential returned by /realtime-session/create in the
+		// form instead of an Authorization header. Accept only a signed Roomie
+		// credential; never treat the player's long-lived account token as one.
+		bodyToken = fields.get('client_secret') || fields.get('ClientSecret') ||
+			Array.from(fields.values()).find(value => value.startsWith('ek_roomie.'))
+		sdp = fields.get('sdp') || fields.get('offer') || rawBody
+		console.info(JSON.stringify({ event: 'roomie_sfu_offer', contentType, fields: Array.from(fields.keys()),
+			bearerPresent: Boolean(authorization), roomieCredentialFieldPresent: Boolean(bodyToken), bodyLength: rawBody.length }))
+	}
+	const token = authorization || bodyToken
+	const claims = token ? await verifyRoomieClientSecret(await c.env.JWT_SECRET.get(), token) : null
+	if (!claims) return c.body(null, 401)
+	if (!c.env.ROOMIE_SFU_APP_ID || !c.env.ROOMIE_SFU_APP_SECRET || !c.env.ROOMIE_SFU_BRIDGE) return c.body(null, 503)
+	if (sdp.length > 100_000 || !sdp.startsWith('v=0')) return c.body(null, 400)
+	try {
+		const session = await createRoomieSfuSession(c.env.ROOMIE_SFU_APP_ID, c.env.ROOMIE_SFU_APP_SECRET, sdp)
+		const stub = c.env.ROOMIE_SFU_BRIDGE.get(c.env.ROOMIE_SFU_BRIDGE.idFromName(claims.sid))
+		const bound = await stub.fetch('https://roomie.internal/bind', { method: 'POST', body: JSON.stringify({ sessionId: session.sessionId }) })
+		if (!bound.ok) return c.body(null, 502)
+		if (rawAnswer) {
+			c.executionCtx.waitUntil(stub.fetch('https://roomie.internal/ready', {
+				method: 'POST', body: JSON.stringify({ token }),
+			}).then(() => undefined).catch(() => undefined))
+			return c.text(session.answer, 200, { 'Content-Type': 'application/sdp' })
+		}
+		return c.json(session)
+	} catch {
+		return c.json({ error: 'SFU session could not be established' }, 502)
+	}
+}
+
+app.post('/roomieai/sfu/session', c => roomieSfuOffer(c, false))
+// The 2026 client contains this route; raw SDP compatibility requires live validation.
+app.post('/v1/realtime/calls', c => roomieSfuOffer(c, true))
+
+// Called after the player has applied the initial SDP answer and connected.
+app.post('/roomieai/sfu/:step{ready|answer}', async (c) => {
+	if (c.env.ENVIRONMENT !== 'development' && c.env.ENVIRONMENT !== 'VITEST') return c.body(null, 404)
+	const match = /^Bearer\s+(\S+)$/i.exec(c.req.header('authorization') || '')
+	const claims = match ? await verifyRoomieClientSecret(await c.env.JWT_SECRET.get(), match[1]) : null
+	if (!match || !claims) return c.body(null, 401)
+	if (!c.env.ROOMIE_SFU_BRIDGE) return c.body(null, 503)
+	const step = c.req.param('step')
+	const body = step === 'ready' ? JSON.stringify({ token: match[1] }) : await c.req.text()
+	if (body.length > 101_000) return c.body(null, 413)
+	const stub = c.env.ROOMIE_SFU_BRIDGE.get(c.env.ROOMIE_SFU_BRIDGE.idFromName(claims.sid))
+	return stub.fetch(`https://roomie.internal/${step}`, { method: 'POST', body })
+})
 
 // Realtime-compatible bridge. The exact 2026 client transport must be verified to route
 // WebSocket traffic here; the client secret and service credentials stay server-side.
