@@ -5,9 +5,10 @@ export interface RoomieDevConfig {
 	ENVIRONMENT: string
 	ROOMIE_REALTIME_DEV_ENABLED?: string
 	ROOMIE_REALTIME_DEV_KEY?: string
-	HF_TOKEN?: string
 	ROOMIE_VOICE_TOKEN?: string
-	AI?: { run(model: string, input: { audio: number[] }): Promise<{ text?: string }> }
+	ROOMIE_CHAT_URL?: string
+	ROOMIE_VOICE_URL?: string
+	ROOMIE_STT_URL?: string
 }
 
 /** Restricted test-only handshake. A caller must verify the player's JWT first. */
@@ -25,10 +26,16 @@ export function roomieDevSocket(request: Request, env: RoomieDevConfig, fetcher:
 	if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
 		return new Response(null, { status: 426 })
 	}
-	if (!env.AI || !env.HF_TOKEN || !env.ROOMIE_VOICE_TOKEN) {
+	if (!env.ROOMIE_VOICE_TOKEN || !env.ROOMIE_VOICE_URL) {
 		return new Response(null, { status: 503 })
 	}
+	const chatUrl = env.ROOMIE_CHAT_URL || env.ROOMIE_VOICE_URL.replace(/\/tts\/?$/, '/chat')
+	const sttUrl = env.ROOMIE_STT_URL || env.ROOMIE_VOICE_URL.replace(/\/tts\/?$/, '/stt')
 	return createRoomieSocket(createRoomieProviders({
-		ai: env.AI, hfToken: env.HF_TOKEN, voiceToken: env.ROOMIE_VOICE_TOKEN, fetcher,
-	}))
+		serviceToken: env.ROOMIE_VOICE_TOKEN,
+		chatUrl,
+		voiceUrl: env.ROOMIE_VOICE_URL,
+		sttUrl,
+		fetcher,
+	}), { id: crypto.randomUUID() })
 }

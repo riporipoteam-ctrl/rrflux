@@ -4,6 +4,8 @@
 	"main": "src/ai.app.ts",
 	"compatibility_date": "2026-06-16",
 	"compatibility_flags": ["nodejs_compat"],
+	"durable_objects": { "bindings": [{ "name": "ROOMIE_SFU_BRIDGE", "class_name": "RoomieSfuBridge" }] },
+	"migrations": [{ "tag": "roomie-sfu-v1", "new_sqlite_classes": ["RoomieSfuBridge"] }],
 	// Shared Secrets Store holding the HS256 JWT signing key. Every worker binds the
 	// same store as JWT_SECRET so tokens signed by `auth` verify here. The "local"
 	// store_id placeholder is replaced with RECFLARE_SECRETS_STORE at deploy time.
@@ -16,6 +18,7 @@
 	],
 	"upload_source_maps": true,
 	"observability": {
+		"redact_query_string": true,
 		"logs": {
 			"enabled": true,
 			"head_sampling_rate": 1 // 100%
@@ -24,9 +27,5 @@
 	"vars": {
 		"ENVIRONMENT": "development", // overridden during deployment
 		"SENTRY_RELEASE": "unknown" // overridden during deployment
-	},
-	// Workers AI binding for Whisper speech-to-text (Roomie hearing). Free tier.
-	"ai": {
-		"binding": "AI"
 	}
 }
