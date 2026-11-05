@@ -218,6 +218,41 @@ const consumableDefinitionsByDesc = new Map(
 	consumableDefinitions.map((definition) => [definition.ConsumableItemDesc, definition])
 )
 
+/**
+ * Local renders of matching 2026 Unity consumable models. The upstream thumbnail
+ * hashes for these items are unavailable and resolve to transparent pixels. Keep
+ * this keyed by the captured item id so unrelated items retain their own thumbnails.
+ */
+const consumableModelPreviewById: Readonly<Record<number, string>> = {
+	5: 'store/consumable-previews/root-beer-ko-cola.png',
+	8: 'store/consumable-previews/supreme-pizza.png',
+	14: 'store/consumable-previews/pepperoni-pizza.png',
+	29: 'store/consumable-previews/donut-glazed.png',
+	30: 'store/consumable-previews/assorted-donuts.png',
+	31: 'store/consumable-previews/donut-frosted.png',
+	55: 'store/consumable-previews/hawaiian-pizza.png',
+	57: 'store/consumable-previews/red-apples.png',
+	62: 'store/consumable-previews/popcorn.png',
+	64: 'store/consumable-previews/chocolate-cake.png',
+	65: 'store/consumable-previews/red-velvet-cake.png',
+	66: 'store/consumable-previews/celebration-cake.png',
+	67: 'store/consumable-previews/87-flavor-cake.png',
+	68: 'store/consumable-previews/candy-apple.png',
+	70: 'store/consumable-previews/latte.png',
+	71: 'store/consumable-previews/sushi-salmon.png',
+	73: 'store/consumable-previews/flaming-popcorn.png',
+	74: 'store/consumable-previews/chocolate-popcorn.png',
+	89: 'store/consumable-previews/dessert-pizza.png',
+	91: 'store/consumable-previews/pumpkin-spice-latte.png',
+	96: 'store/consumable-previews/cheese-cake.png',
+	99: 'store/consumable-previews/monster-munchies-popcorn.png',
+	107: 'store/consumable-previews/root-beer-ko-cola.png',
+	117: 'store/consumable-previews/mochi.png',
+	1490: 'store/consumable-previews/turkey-legs.png',
+	1578: 'store/consumable-previews/fruit-cake.png',
+	1616: 'store/consumable-previews/red-apples.png',
+}
+
 /** Model/configuration and local preview fields for a resolved consumable desc. */
 function consumablePreviewFor(desc: unknown): Record<string, unknown> | undefined {
 	if (typeof desc !== 'string' || desc === '') return undefined
@@ -242,6 +277,8 @@ function consumablePreviewFor(desc: unknown): Record<string, unknown> | undefine
  * food, potion, and tool look like the same Store tile.
  */
 function consumableThumbnailFor(definition: (typeof consumableDefinitions)[number]) {
+	const modelPreview = consumableModelPreviewById[definition.ConsumableItemId]
+	if (modelPreview) return modelPreview
 	const nativeThumbnail = definition.ThumbnailImageName?.trim()
 	if (nativeThumbnail) return nativeThumbnail
 	return backpackThumbnailFor(

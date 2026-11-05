@@ -261,9 +261,18 @@ mod imp {
     const WIN_W: i32 = 1440;
     const WIN_H: i32 = 880;
     const SIDEBAR_W: i32 = 224;
-    const CONTENT_X: i32 = SIDEBAR_W + 28;
     const TITLE_H: i32 = 66;
     const CORNER: i32 = 22;
+
+    // Give the content area a little more room on compact laptop displays.
+    // The sidebar returns to its full width once the window has room for it.
+    fn sidebar_width(win_w: i32) -> i32 {
+        if win_w < 1180 { 204 } else { SIDEBAR_W }
+    }
+
+    fn content_left(win_w: i32) -> i32 {
+        sidebar_width(win_w) + 28
+    }
 
     const SPLASH_W: i32 = 480;
     const SPLASH_H: i32 = 320;
@@ -377,6 +386,7 @@ mod imp {
         Back, // v1.0.4: back from detail to library
         CarouselPrev,
         CarouselNext,
+        CarouselSelect(usize),
         DetailPlay, // PLAY button in detail view
         WelcomeLogin,
         WelcomeSignup,
@@ -1170,11 +1180,14 @@ mod imp {
     // Layout: compute button rects.
     // ------------------------------------------------------------------
     fn compute_rects(win_w: i32, win_h: i32) -> Rects {
-        let content_x = CONTENT_X + 8;
+        let side_w = sidebar_width(win_w);
+        let content_x = content_left(win_w) + 8;
         let content_right = win_w - 32;
         let content_w = (content_right - content_x).max(420);
         let hero_top = TITLE_H + 82;
         let hero_bottom = hero_top + ((win_h - TITLE_H - 48) * 54 / 100).clamp(320, 430);
+        let store_panel_w = (content_w / 3).clamp(266, 320);
+        let store_panel_left = content_right - store_panel_w;
         let library_top = TITLE_H + 62;
         let library_bottom = library_top + 380;
         let library_action_y = library_bottom - 62;
@@ -1189,6 +1202,11 @@ mod imp {
         let settings_right = content_right - 24;
         let settings_gap = 14;
         let settings_action_w = ((settings_right - settings_left - settings_gap) / 2).max(120);
+        let theme_card_left = content_left(win_w);
+        let theme_card_right = theme_card_left + ((content_right - theme_card_left) * 49 / 100) - 10;
+        let theme_button_gap = 12;
+        let theme_button_width = ((theme_card_right - theme_card_left - 44 - theme_button_gap) / 2).max(120);
+        let theme_button_left = theme_card_left + 22;
         let install_actions_top = TITLE_H + 180;
         let welcome_top = TITLE_H + 50;
         let welcome_art_w = ((content_w - 28) * 48 / 100).clamp(320, 600);
@@ -1203,11 +1221,11 @@ mod imp {
         let account_card_w = ((account_right - account_left - 24) / 2).max(240);
         let account_button_w = ((account_card_w - 48) / 2).clamp(112, 250);
         Rects {
-            nav_store: RECT { left: 14, top: TITLE_H + 48, right: SIDEBAR_W - 14, bottom: TITLE_H + 96 },
-            nav_library: RECT { left: 14, top: TITLE_H + 104, right: SIDEBAR_W - 14, bottom: TITLE_H + 152 },
-            nav_downloads: RECT { left: 14, top: TITLE_H + 184, right: SIDEBAR_W - 14, bottom: TITLE_H + 232 },
-            nav_settings: RECT { left: 14, top: TITLE_H + 240, right: SIDEBAR_W - 14, bottom: TITLE_H + 288 },
-            nav_account: RECT { left: 14, top: TITLE_H + 320, right: SIDEBAR_W - 14, bottom: TITLE_H + 368 },
+            nav_store: RECT { left: 14, top: TITLE_H + 48, right: side_w - 14, bottom: TITLE_H + 96 },
+            nav_library: RECT { left: 14, top: TITLE_H + 104, right: side_w - 14, bottom: TITLE_H + 152 },
+            nav_downloads: RECT { left: 14, top: TITLE_H + 184, right: side_w - 14, bottom: TITLE_H + 232 },
+            nav_settings: RECT { left: 14, top: TITLE_H + 240, right: side_w - 14, bottom: TITLE_H + 288 },
+            nav_account: RECT { left: 14, top: TITLE_H + 320, right: side_w - 14, bottom: TITLE_H + 368 },
             // Home hero.
             card: RECT {
                 left: content_x,
@@ -1216,10 +1234,10 @@ mod imp {
                 bottom: hero_bottom,
             },
             play: RECT {
-                left: content_x + 24,
-                top: hero_bottom - 74,
-                right: content_x + 244,
-                bottom: hero_bottom - 20,
+                left: store_panel_left + 20,
+                top: hero_bottom - 116,
+                right: content_right - 20,
+                bottom: hero_bottom - 64,
             },
             library_play: RECT {
                 left: content_right - 224,
@@ -1240,22 +1258,22 @@ mod imp {
                 bottom: library_action_y + 48,
             },
             details: RECT {
-                left: content_x + 258,
-                top: hero_bottom - 74,
-                right: content_x + 438,
-                bottom: hero_bottom - 20,
+                left: store_panel_left + 20,
+                top: hero_bottom - 58,
+                right: content_right - 20,
+                bottom: hero_bottom - 12,
             },
             // Settings view
             theme_light: RECT {
-                left: content_x + 24,
+                left: theme_button_left,
                 top: TITLE_H + 142,
-                right: content_x + 194,
+                right: theme_button_left + theme_button_width,
                 bottom: TITLE_H + 190,
             },
             theme_dark: RECT {
-                left: content_x + 208,
+                left: theme_button_left + theme_button_width + theme_button_gap,
                 top: TITLE_H + 142,
-                right: content_x + 378,
+                right: theme_button_left + theme_button_width * 2 + theme_button_gap,
                 bottom: TITLE_H + 190,
             },
             check_updates: RECT {
@@ -1367,7 +1385,35 @@ mod imp {
         x >= r.left && x < r.right && y >= r.top && y < r.bottom
     }
 
-    fn hit_test(rects: &Rects, view: View, x: i32, y: i32) -> Hot {
+    fn carousel_thumbnail_rects(carousel: &RECT, count: usize) -> Vec<RECT> {
+        let thumb_count = count.min(6);
+        if thumb_count == 0 {
+            return Vec::new();
+        }
+
+        let thumb_gap = 8;
+        let width = (carousel.right - carousel.left).max(1);
+        let thumb_w = ((width - 32 - thumb_gap * (thumb_count as i32 - 1))
+            / thumb_count as i32)
+            .clamp(56, 124);
+        let thumb_h = thumb_w * 9 / 16;
+        let thumbs_w = thumb_count as i32 * (thumb_w + thumb_gap) - thumb_gap;
+        let thumb_x = carousel.left + (width - thumbs_w) / 2;
+
+        (0..thumb_count)
+            .map(|index| {
+                let left = thumb_x + index as i32 * (thumb_w + thumb_gap);
+                RECT {
+                    left,
+                    top: carousel.bottom + 19,
+                    right: left + thumb_w,
+                    bottom: carousel.bottom + 19 + thumb_h,
+                }
+            })
+            .collect()
+    }
+
+    fn hit_test(rects: &Rects, view: View, x: i32, y: i32, carousel_count: usize) -> Hot {
         if pt_in(&rects.close, x, y) {
             return Hot::Close;
         }
@@ -1442,6 +1488,13 @@ mod imp {
                 if pt_in(&rects.back, x, y) {
                     return Hot::Back;
                 }
+                for (index, thumbnail) in
+                    carousel_thumbnail_rects(&rects.carousel, carousel_count).iter().enumerate()
+                {
+                    if pt_in(thumbnail, x, y) {
+                        return Hot::CarouselSelect(index);
+                    }
+                }
                 if pt_in(&rects.carousel_prev, x, y) {
                     return Hot::CarouselPrev;
                 }
@@ -1508,6 +1561,7 @@ mod imp {
     unsafe fn on_paint(hwnd: HWND, st: &mut State) -> Silent {
         let p = pal(st.theme);
         let rects = compute_rects(st.win_w, st.win_h);
+        let side_w = sidebar_width(st.win_w);
 
         let mut ps = PAINTSTRUCT::default();
         let hdc = BeginPaint(hwnd, &mut ps);
@@ -1553,14 +1607,14 @@ mod imp {
         let sidebar = RECT {
             left: 0,
             top: TITLE_H,
-            right: SIDEBAR_W,
+            right: side_w,
             bottom: paint_h,
         };
         fill_rect(mem, &sidebar, p.bg_side)?;
         let divider = RECT {
-            left: SIDEBAR_W - 1,
+            left: side_w - 1,
             top: TITLE_H,
-            right: SIDEBAR_W,
+            right: side_w,
             bottom: paint_h,
         };
         fill_rect(mem, &divider, p.border)?;
@@ -1584,9 +1638,9 @@ mod imp {
         };
         fill_rect(mem, &RECT { left: 392, top: 16, right: 393, bottom: 50 }, p.border)?;
         draw_text_ellipsis(mem, section_label, 414, 21, (paint_w - 760).max(180), 22, p.text_dim, 10)?;
-        draw_text(mem, "BROWSE", 24, TITLE_H + 20, SIDEBAR_W - 48, 16, p.nav_text_dim, 9, true, false)?;
-        draw_text(mem, "MANAGE", 24, TITLE_H + 158, SIDEBAR_W - 48, 16, p.nav_text_dim, 9, true, false)?;
-        draw_text(mem, "ACCOUNT", 24, TITLE_H + 294, SIDEBAR_W - 48, 16, p.nav_text_dim, 9, true, false)?;
+        draw_text(mem, "BROWSE", 24, TITLE_H + 20, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
+        draw_text(mem, "MANAGE", 24, TITLE_H + 158, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
+        draw_text(mem, "ACCOUNT", 24, TITLE_H + 294, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
         if !matches!(st.view, View::Welcome | View::Onboarding) {
             draw_nav(
                 mem,
@@ -1602,7 +1656,7 @@ mod imp {
         let footer = RECT {
             left: 16,
             top: footer_y,
-            right: SIDEBAR_W - 16,
+            right: side_w - 16,
             bottom: paint_h - 18,
         };
         round_rect_path(mem, &footer, 14, p.nav_card)?;
@@ -1960,7 +2014,7 @@ mod imp {
     }
 
     unsafe fn draw_welcome_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let left = CONTENT_X + 8;
+        let left = content_left(st.win_w) + 8;
         let right = st.win_w - 32;
         let content_w = (right - left).max(420);
         let top = TITLE_H + 50;
@@ -2007,7 +2061,7 @@ mod imp {
     }
 
     unsafe fn draw_onboarding_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let left = CONTENT_X + 8;
+        let left = content_left(st.win_w) + 8;
         let right = st.win_w - 32;
         let content_w = (right - left).max(420);
         let top = TITLE_H + 50;
@@ -2064,7 +2118,7 @@ mod imp {
     }
 
     unsafe fn draw_account_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let left = CONTENT_X + 10;
+        let left = content_left(st.win_w) + 10;
         let right = st.win_w - 42;
         let middle = left + (right - left) / 2;
         let top = TITLE_H + 68;
@@ -2126,53 +2180,136 @@ mod imp {
         let content_x = hero.left;
         let content_w = hero.right - hero.left;
         draw_text(hdc, "DISCOVER", content_x, TITLE_H + 3, 320, 17, p.game_accent, 10, true, false)?;
-        draw_text(hdc, "A world of your own", content_x, TITLE_H + 24, 590, 38, p.text, 29, true, false)?;
-        draw_text(hdc, "Meet up, jump into a game, or build the next place to explore.", content_x, TITLE_H + 62, 700, 22, p.text_dim, 12, false, false)?;
+        draw_text(hdc, "Find your next favorite", content_x, TITLE_H + 24, 590, 38, p.text, 29, true, false)?;
+        draw_text(hdc, "Explore, play and create with the Flux Rec community.", content_x, TITLE_H + 62, 700, 22, p.text_dim, 12, false, false)?;
         let shadow = RECT { left: hero.left + 2, top: hero.top + 5, right: hero.right + 2, bottom: hero.bottom + 5 };
         round_rect_path(hdc, &shadow, 22, p.shadow)?;
-        draw_gallery_image(hdc, st, st.carousel_idx, hero, p)?;
-        let art_scrim = RECT { left: hero.left, top: hero.bottom - 190, right: hero.right, bottom: hero.bottom };
+        let panel_w = ((hero.right - hero.left) / 3).clamp(266, 320);
+        let panel = RECT { left: hero.right - panel_w, top: hero.top, right: hero.right, bottom: hero.bottom };
+        let art = RECT { left: hero.left, top: hero.top, right: panel.left + 1, bottom: hero.bottom };
+        draw_surface(hdc, hero, p, 22)?;
+        draw_gallery_image(hdc, st, st.carousel_idx, &art, p)?;
+        let art_scrim = RECT { left: art.left, top: art.bottom - 190, right: art.right, bottom: art.bottom };
         fill_gradient(hdc, &art_scrim, COLORREF(0x00382B20), COLORREF(0x00180F09))?;
-        let brand_chip = RECT { left: hero.left + 24, top: hero.top + 22, right: hero.left + 194, bottom: hero.top + 52 };
-        draw_pill(hdc, &brand_chip, "RIPO TEAM  ·  FEATURED", p.game_accent, COLORREF(0x00FFFFFF))?;
+        let brand_chip = RECT { left: art.left + 24, top: art.top + 22, right: art.left + 160, bottom: art.top + 52 };
+        draw_pill(hdc, &brand_chip, "FEATURED GAME", p.game_accent, COLORREF(0x00FFFFFF))?;
 
+        let title_y = art.bottom - 176;
+        if draw_logo_bitmap(hdc, st.logo_bitmap, art.left + 26, title_y, 58).is_err() {
+            draw_logo(hdc, art.left + 26, title_y, 58, COLORREF(0x00FFFFFF))?;
+        }
+        draw_text(hdc, "FLUX REC", art.left + 98, title_y + 2, 420, 40, COLORREF(0x00FFFFFF), 30, true, false)?;
+        draw_text(hdc, "Meet friends, discover rooms and make your own.", art.left + 100, title_y + 45, (art.right - art.left - 124).max(180), 24, COLORREF(0x00E9E1DA), 11, false, false)?;
+
+        // Store-style product panel keeps install, update and online state
+        // visible beside the feature art, without covering the screenshot.
+        round_rect_path(hdc, &panel, 22, p.bg_card)?;
+        round_rect_outline(hdc, &panel, 22, p.border)?;
+        let panel_rule = RECT {
+            left: panel.left + 1,
+            top: panel.top + 24,
+            right: panel.left + 4,
+            bottom: panel.bottom - 24,
+        };
+        fill_rect(hdc, &panel_rule, p.game_accent)?;
+        round_rect_outline(hdc, hero, 22, p.border)?;
+        let panel_x = panel.left + 22;
+        let panel_right = panel.right - 18;
+        let panel_text_w = panel_right - panel_x;
+        let compact_panel = hero.bottom - hero.top < 370;
         let status = if st.checking {
-            "CHECKING STATUS"
+            "CHECKING FOR UPDATES"
         } else if st.install_required {
             "READY TO INSTALL"
         } else if st.update_available {
             "UPDATE AVAILABLE"
         } else if !st.check_error.is_empty() {
-            "CHECK WILL RETRY"
+            "UPDATE CHECK WILL RETRY"
         } else {
-            "AVAILABLE NOW"
+            "READY TO PLAY"
         };
-        let status_w = 196;
-        let status_chip = RECT { left: hero.right - status_w - 24, top: hero.top + 22, right: hero.right - 24, bottom: hero.top + 52 };
-        let status_color = if st.update_available || st.install_required { p.game_accent } else { p.success };
-        draw_pill(hdc, &status_chip, status, COLORREF(0x00FFFFFF), status_color)?;
-
+        let status_fg = if st.update_available || st.install_required {
+            p.game_accent
+        } else if st.check_error.is_empty() {
+            p.success
+        } else {
+            p.text_dim
+        };
+        let status_bg = if st.update_available || st.install_required {
+            p.game_accent_soft
+        } else {
+            p.bg_alt
+        };
+        let status_y = panel.top + if compact_panel { 18 } else { 22 };
+        let status_chip = RECT {
+            left: panel_x,
+            top: status_y,
+            right: panel_right,
+            bottom: status_y + 28,
+        };
+        draw_pill(hdc, &status_chip, status, status_bg, status_fg)?;
+        draw_text(
+            hdc,
+            "Flux Rec",
+            panel_x,
+            panel.top + if compact_panel { 52 } else { 64 },
+            panel_text_w,
+            34,
+            p.text,
+            24,
+            true,
+            false,
+        )?;
+        draw_text(
+            hdc,
+            "Explore rooms, play and create together.",
+            panel_x,
+            panel.top + if compact_panel { 88 } else { 101 },
+            panel_text_w,
+            42,
+            p.text_dim,
+            10,
+            false,
+            false,
+        )?;
+        let separator_y = panel.top + if compact_panel { 136 } else { 153 };
+        fill_rect(
+            hdc,
+            &RECT {
+                left: panel_x,
+                top: separator_y,
+                right: panel_right,
+                bottom: separator_y + 1,
+            },
+            p.border,
+        )?;
+        let row_y = separator_y + if compact_panel { 14 } else { 18 };
+        draw_people_icon(hdc, panel_x + 1, row_y, p.accent)?;
         let players = match (st.players, st.player_count_pending) {
-            (Some(count), _) => format!("{count} online"),
+            (Some(count), _) => format!("{count} players online"),
             (None, true) => "Checking online".to_string(),
             (None, false) => "Online count unavailable".to_string(),
         };
-        let title_y = hero.bottom - 190;
-        draw_people_icon(hdc, hero.left + 30, title_y - 34, COLORREF(0x00FFFFFF))?;
-        draw_text_ellipsis(hdc, &players, hero.left + 62, title_y - 33, 220, 22, COLORREF(0x00F4EDE6), 10)?;
-        if draw_logo_bitmap(hdc, st.logo_bitmap, hero.left + 24, title_y, 62).is_err() {
-            draw_logo(hdc, hero.left + 24, title_y, 62, COLORREF(0x00FFFFFF))?;
+        draw_text_ellipsis(hdc, &players, panel_x + 30, row_y, panel_text_w - 32, 20, p.text, 10)?;
+        draw_text(
+            hdc,
+            "WINDOWS  ·  MULTIPLAYER",
+            panel_x,
+            separator_y + if compact_panel { 43 } else { 50 },
+            panel_text_w,
+            17,
+            p.text_dim,
+            8,
+            true,
+            false,
+        )?;
+        let free_label_y = separator_y + 75;
+        if hero.bottom - hero.top >= 370 {
+            draw_text(hdc, "Free to install", panel_x, free_label_y, panel_text_w, 19, p.text, 10, true, false)?;
         }
-        draw_text(hdc, "FLUX REC", hero.left + 102, title_y + 1, 430, 42, COLORREF(0x00FFFFFF), 31, true, false)?;
-        draw_text(hdc, "Explore rooms. Find your people. Build something new.", hero.left + 104, title_y + 44, 610, 24, COLORREF(0x00E9E1DA), 11, false, false)?;
-        let free_tag = RECT { left: hero.left + 104, top: title_y + 76, right: hero.left + 226, bottom: title_y + 102 };
-        let platform_tag = RECT { left: hero.left + 236, top: title_y + 76, right: hero.left + 352, bottom: title_y + 102 };
-        draw_pill(hdc, &free_tag, "FREE TO PLAY", COLORREF(0x00F4EDE6), p.game_accent)?;
-        draw_pill(hdc, &platform_tag, "WINDOWS PC", COLORREF(0x00F4EDE6), p.text)?;
         let play_label = if st.install_required { "Install Flux Rec" } else if st.update_available { "Update & play" } else { "Play now" };
         draw_action_button(hdc, &rects.play, play_label, st.hover == Hot::Play, true, p)?;
-        draw_action_button(hdc, &rects.details, "View game details", st.hover == Hot::Details, false, p)?;
-        round_rect_outline(hdc, hero, 22, p.border)?;
+        draw_action_button(hdc, &rects.details, "Game details", st.hover == Hot::Details, false, p)?;
 
         let section_y = hero.bottom + 20;
         draw_text(hdc, "Step inside", content_x, section_y, 430, 26, p.text, 19, true, false)?;
@@ -2199,7 +2336,7 @@ mod imp {
     }
 
     unsafe fn draw_dashboard_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let content_x = CONTENT_X;
+        let content_x = content_left(st.win_w);
         let content_right = st.win_w - 28;
         let status_x = content_right - 272;
         let card = &rects.card;
@@ -2699,7 +2836,7 @@ mod imp {
     }
 
     unsafe fn draw_library_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let cx = CONTENT_X;
+        let cx = content_left(st.win_w);
         draw_text(
             hdc,
             "My Games",
@@ -3026,21 +3163,25 @@ mod imp {
             draw_text(hdc, label, r.left, r.top + 1, r.right - r.left, r.bottom - r.top, if st.hover == hot { COLORREF(0x00FFFFFF) } else { p.text }, 22, true, true)?;
         }
         let count = st.carousel_bitmaps.len();
-        let thumb_count = count.min(6);
-        let thumb_gap = 8;
-        let thumb_w = if thumb_count > 0 { ((car.right - car.left - 32 - thumb_gap * (thumb_count as i32 - 1)) / thumb_count as i32).clamp(56, 124) } else { 0 };
-        let thumb_h = thumb_w * 9 / 16;
-        let thumbs_w = thumb_count as i32 * (thumb_w + thumb_gap) - thumb_gap;
-        let thumb_x = car.left + ((car.right - car.left) - thumbs_w) / 2;
-        for i in 0..thumb_count {
-            let shot_index = i;
-            let thumb = RECT { left: thumb_x + i as i32 * (thumb_w + thumb_gap), top: car.bottom + 19, right: thumb_x + i as i32 * (thumb_w + thumb_gap) + thumb_w, bottom: car.bottom + 19 + thumb_h };
-            draw_gallery_image(hdc, st, shot_index, &thumb, p)?;
-            round_rect_outline(hdc, &thumb, 7, if i == idx { p.game_accent } else { p.border })?;
+        let thumbnails = carousel_thumbnail_rects(car, count);
+        let thumb_h = thumbnails
+            .first()
+            .map(|thumb| thumb.bottom - thumb.top)
+            .unwrap_or(0);
+        for (i, thumb) in thumbnails.iter().enumerate() {
+            draw_gallery_image(hdc, st, i, thumb, p)?;
+            let outline = if i == idx {
+                p.game_accent
+            } else if st.hover == Hot::CarouselSelect(i) {
+                p.accent
+            } else {
+                p.border
+            };
+            round_rect_outline(hdc, thumb, 7, outline)?;
         }
         let screenshot_name = SCREENSHOT_NAMES.get(idx).copied().unwrap_or("Game screenshot");
         let gallery_label = if count > 0 { format!("{}  ·  {} / {}", screenshot_name.to_uppercase(), idx + 1, count) } else { "GAME SCREENSHOTS".to_string() };
-        draw_text(hdc, "SCREENSHOTS", car.left, car.bottom + 19 + thumb_h + 8, 144, 18, p.game_accent, 9, true, false)?;
+        draw_text(hdc, "SCREENSHOTS  ·  SELECT A PREVIEW", car.left, car.bottom + 19 + thumb_h + 8, 260, 18, p.game_accent, 9, true, false)?;
         draw_text_ellipsis(hdc, &gallery_label, car.left + 146, car.bottom + 19 + thumb_h + 8, car.right - car.left - 146, 18, p.text_dim, 9)?;
 
         let info_top = car.bottom + 19 + thumb_h + 35;
@@ -3085,7 +3226,7 @@ mod imp {
         rects: &Rects,
         p: &Palette,
     ) -> Silent {
-        let left = CONTENT_X;
+        let left = content_left(st.win_w);
         let right = st.win_w - 36;
         let middle = left + (right - left) * 49 / 100;
         draw_text(hdc, "PREFERENCES", left, TITLE_H + 8, 260, 17, p.game_accent, 10, true, false)?;
@@ -3137,6 +3278,35 @@ mod imp {
         ] {
             let hover = st.hover == hot;
             draw_action_button(hdc, r, label, hover, active, p)?;
+        }
+        let preview = RECT {
+            left: theme_card.left + 22,
+            top: theme_card.top + 132,
+            right: theme_card.right - 22,
+            bottom: theme_card.bottom - 14,
+        };
+        round_rect_path(hdc, &preview, 10, p.bg_alt)?;
+        draw_text(
+            hdc,
+            if st.theme == Theme::Light { "LIGHT MODE  ·  DEFAULT" } else { "DARK MODE" },
+            preview.left + 12,
+            preview.top + 6,
+            (preview.right - preview.left - 132).max(100),
+            preview.bottom - preview.top - 12,
+            p.text_dim,
+            9,
+            true,
+            false,
+        )?;
+        let swatch_right = preview.right - 12;
+        for (offset, color) in [(0, p.text), (34, p.game_accent), (68, p.accent_soft)] {
+            let swatch = RECT {
+                left: swatch_right - 24 - offset,
+                top: preview.top + 8,
+                right: swatch_right - offset,
+                bottom: preview.bottom - 8,
+            };
+            round_rect_path(hdc, &swatch, 5, color)?;
         }
 
         let install_card = RECT {
@@ -3352,33 +3522,81 @@ mod imp {
         let status_top = card.top + 250;
         let status_left = card.left + 28;
         let status_right = card.right - 28;
-        let status_w = (status_right - status_left) / 3;
-        let rule = RECT { left: status_left, top: status_top, right: status_right, bottom: status_top + 1 };
-        fill_rect(hdc, &rule, p.border)?;
-        let install_x = status_left;
-        let update_x = status_left + status_w;
-        let location_x = status_left + status_w * 2;
-        for x in [update_x, location_x] {
-            fill_rect(hdc, &RECT { left: x, top: status_top + 18, right: x + 1, bottom: status_top + 118 }, p.border)?;
+        let status_gap = 12;
+        let status_w = (status_right - status_left - status_gap * 2) / 3;
+        let status_bottom = (rects.downloads_play.top - 18).max(status_top + 92);
+        let tile_h = (status_bottom - status_top - 30).max(78);
+        let compact = tile_h < 170;
+        let tile_top = status_top + if compact { 8 } else { 26 };
+        let tile_bottom = (tile_top + tile_h).min(status_bottom);
+        draw_text(hdc, "INSTALLATION OVERVIEW", status_left, status_top, 300, 18, p.game_accent, 9, true, false)?;
+        let tiles = [
+            RECT { left: status_left, top: tile_top, right: status_left + status_w, bottom: tile_bottom },
+            RECT { left: status_left + status_w + status_gap, top: tile_top, right: status_left + (status_w + status_gap) * 2, bottom: tile_bottom },
+            RECT { left: status_left + (status_w + status_gap) * 2, top: tile_top, right: status_right, bottom: tile_bottom },
+        ];
+        for tile in &tiles {
+            draw_surface(hdc, tile, p, 14)?;
         }
-        draw_text(hdc, "INSTALL", install_x + 12, status_top + 20, status_w - 24, 18, p.game_accent, 9, true, false)?;
-        draw_text(hdc, if st.install_required { "Ready to install" } else { "Installed" }, install_x + 12, status_top + 47, status_w - 24, 27, p.text, 17, true, false)?;
-        draw_text(hdc, "Flux Rec on this PC", install_x + 12, status_top + 80, status_w - 24, 20, p.text_dim, 10, false, false)?;
-        draw_text(hdc, "UPDATE POLICY", update_x + 18, status_top + 20, status_w - 32, 18, p.game_accent, 9, true, false)?;
-        draw_text(hdc, "Checked before play", update_x + 18, status_top + 47, status_w - 32, 27, p.text, 17, true, false)?;
-        let update_note = if st.update_available {
+        let install_title = if st.install_required { "Not installed" } else { "Installed" };
+        let install_note = if st.install_required { "Ready to add to your library" } else { "Flux Rec is on this PC" };
+        let update_title = if st.update_available {
+            "Update available"
+        } else if st.checking {
+            "Checking now"
+        } else if !st.check_error.is_empty() {
+            "Check will retry"
+        } else {
+            "Checked before play"
+        };
+        let install_meta = if st.install_required { "Choose Install Flux Rec to begin." } else { "Installed game files are ready." };
+        let location_meta = "Manage this folder in Settings.";
+        let update_meta = if st.update_available {
             format!("Version {} is ready to apply.", display_update_version(&st.update_version))
         } else if st.checking {
-            "Checking the latest game version now.".to_string()
+            "The launcher is checking the latest version.".to_string()
         } else if !st.check_error.is_empty() {
             "The check will retry automatically at launch.".to_string()
         } else {
-            "Flux Rec stays current automatically.".to_string()
+            "Updates are checked before every launch.".to_string()
         };
-        draw_text_ellipsis(hdc, &update_note, update_x + 18, status_top + 80, status_w - 32, 24, p.text_dim, 10)?;
-        draw_text(hdc, "GAME LOCATION", location_x + 18, status_top + 20, status_w - 30, 18, p.game_accent, 9, true, false)?;
-        draw_text_ellipsis(hdc, &st.install_dir, location_x + 18, status_top + 49, status_w - 30, 22, p.text, 10)?;
-        draw_text(hdc, "Change this in Settings", location_x + 18, status_top + 80, status_w - 30, 20, p.text_dim, 10, false, false)?;
+        for (tile, label, value, note, icon) in [
+            (&tiles[0], "INSTALL STATUS", install_title, install_note, "Library"),
+            (&tiles[1], "UPDATE STATUS", update_title, update_meta.as_str(), "Downloads"),
+            (&tiles[2], "GAME FOLDER", "Install location", location_meta, "Store"),
+        ] {
+            if compact {
+                draw_nav_icon(hdc, icon, tile.left + 15, tile.top + 10, p.game_accent)?;
+                draw_text(hdc, label, tile.left + 43, tile.top + 11, tile.right - tile.left - 56, 18, p.game_accent, 8, true, false)?;
+                draw_text_ellipsis(hdc, value, tile.left + 15, tile.top + 37, tile.right - tile.left - 30, 22, p.text, 13)?;
+                let detail = if label == "GAME FOLDER" { st.install_dir.as_str() } else { note };
+                draw_text_ellipsis(hdc, detail, tile.left + 15, tile.top + 61, tile.right - tile.left - 30, 15, p.text_dim, 9)?;
+            } else {
+                draw_nav_icon(hdc, icon, tile.left + 18, tile.top + 20, p.game_accent)?;
+                draw_text(hdc, label, tile.left + 48, tile.top + 20, tile.right - tile.left - 66, 18, p.game_accent, 9, true, false)?;
+                let value_color = if (label == "UPDATE STATUS" && st.update_available) || (label == "INSTALL STATUS" && st.install_required) { p.game_accent } else { p.text };
+                draw_text_ellipsis(hdc, value, tile.left + 18, tile.top + 72, tile.right - tile.left - 36, 28, value_color, 17)?;
+                let detail = if label == "GAME FOLDER" { st.install_dir.as_str() } else { note };
+                draw_text(hdc, detail, tile.left + 18, tile.top + 108, tile.right - tile.left - 36, 42, p.text_dim, 10, false, false)?;
+                let state = if label == "GAME FOLDER" {
+                    "MANAGED BY LAUNCHER"
+                } else if label == "UPDATE STATUS" {
+                    if st.update_available { "UPDATE READY" } else if st.checking { "CHECK IN PROGRESS" } else if !st.check_error.is_empty() { "RETRY BEFORE PLAY" } else { "AUTOMATIC CHECKS" }
+                } else if st.install_required {
+                    "READY TO INSTALL"
+                } else {
+                    "READY ON THIS PC"
+                };
+                let state_tint = if (label == "UPDATE STATUS" && st.update_available) || (label == "INSTALL STATUS" && st.install_required) { p.game_accent } else { p.accent_soft };
+                let state_fg = if (label == "UPDATE STATUS" && st.update_available) || (label == "INSTALL STATUS" && st.install_required) { COLORREF(0x00FFFFFF) } else { p.accent_dark };
+                let state_badge = RECT { left: tile.left + 18, top: tile.top + 174, right: tile.right - 18, bottom: tile.top + 204 };
+                draw_pill(hdc, &state_badge, state, state_tint, state_fg)?;
+                let rule_y = tile.bottom - 54;
+                fill_rect(hdc, &RECT { left: tile.left + 18, top: rule_y, right: tile.right - 18, bottom: rule_y + 1 }, p.border)?;
+                let footer = if label == "GAME FOLDER" { "Change this in Settings" } else if label == "UPDATE STATUS" { "Automatic update checks" } else { install_meta };
+                draw_text_ellipsis(hdc, footer, tile.left + 18, rule_y + 14, tile.right - tile.left - 36, 22, p.text_dim, 9)?;
+            }
+        }
 
         for (r, label, hot) in [
             (&rects.downloads_check_updates, "Check for updates", Hot::CheckForUpdates),
@@ -3394,7 +3612,7 @@ mod imp {
         Ok(())
     }
     unsafe fn draw_working_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
-        let left = CONTENT_X + 8;
+        let left = content_left(st.win_w) + 8;
         let right = st.win_w - 32;
         let top = TITLE_H + 42;
         let bottom = st.win_h - 32;
@@ -3586,8 +3804,9 @@ mod imp {
                         // the old 5 fps progress animation.
                         repaint = true;
                     }
-                    // Auto-advance the carousel every ~4s (50ms timer * 80).
-                    if matches!(st.view, View::Library | View::Detail) && !st.carousel_bitmaps.is_empty() {
+                    // Auto-advance the Library feature image. Details stays on the
+                    // selected screenshot until the user changes it.
+                    if st.view == View::Library && !st.carousel_bitmaps.is_empty() {
                         st.anim_t = st.anim_t.wrapping_add(1);
                         st.carousel_tick += 1;
                         if st.carousel_tick >= 80 {
@@ -3642,7 +3861,7 @@ mod imp {
                     let x = (lparam.0 & 0xFFFF) as i16 as i32;
                     let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
                     let rects = compute_rects(st.win_w, st.win_h);
-                    let hot = hit_test(&rects, st.view, x, y);
+                    let hot = hit_test(&rects, st.view, x, y, st.carousel_bitmaps.len());
                     if hot != st.hover {
                         st.hover = hot;
                         let _ = InvalidateRect(hwnd, None, false);
@@ -3661,7 +3880,7 @@ mod imp {
                     let x = (lparam.0 & 0xFFFF) as i16 as i32;
                     let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
                     let rects = compute_rects(st.win_w, st.win_h);
-                    let hot = hit_test(&rects, st.view, x, y);
+                    let hot = hit_test(&rects, st.view, x, y, st.carousel_bitmaps.len());
                     handle_click(hwnd, st, hot, &rects);
                 }
                 LRESULT(0)
@@ -3802,6 +4021,13 @@ mod imp {
                 if matches!(st.view, View::Library | View::Detail) && !st.carousel_bitmaps.is_empty() {
                     let n = st.carousel_bitmaps.len();
                     st.carousel_idx = (st.carousel_idx + 1) % n;
+                    st.carousel_tick = 0;
+                    let _ = InvalidateRect(hwnd, None, false);
+                }
+            }
+            Hot::CarouselSelect(index) => {
+                if st.view == View::Detail && index < st.carousel_bitmaps.len() {
+                    st.carousel_idx = index;
                     st.carousel_tick = 0;
                     let _ = InvalidateRect(hwnd, None, false);
                 }
