@@ -2480,7 +2480,7 @@ describe('econ endpoints', () => {
 			}>
 			expect(list).toHaveLength(1)
 			expect(list[0]).toMatchObject({ ConsumableItemDesc: desc, ConsumableItemId: 1616 })
-			expect(list[0].ThumbnailImageName).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
+			expect(list[0].ThumbnailImageName).toBe('store/consumable-previews/red-apples.png')
 			expect(JSON.parse(list[0].ConfigurationData).UnityAssetData.UnityAssetId).toBe(
 				'52106138-cc33-4bd1-86fa-91adf31aca95'
 			)
@@ -2534,23 +2534,23 @@ describe('econ endpoints', () => {
 			'52106138-cc33-4bd1-86fa-91adf31aca95'
 		)
 		expect(appleConfiguration.UnityAssetData.ReferencedUnityAssetIds).toHaveLength(3)
-		expect(apple.ThumbnailImageName).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
+		expect(apple.ThumbnailImageName).toBe('store/consumable-previews/red-apples.png')
 		expect(
 			definitions.find((definition) => definition.FriendlyName === 'Root Beer')?.ThumbnailImageName
-		).toBe('dftf7822mxh6qptcetqjpetcs.png')
+		).toBe('store/consumable-previews/root-beer-ko-cola.png')
 		expect(
 			definitions.find((definition) => definition.FriendlyName === 'Assorted Donuts')
 				?.ThumbnailImageName
-		).toBe('dvtzzncutq8z5gcpx378mli8k.png')
+		).toBe('store/consumable-previews/assorted-donuts.png')
 		expect(
 			definitions.find((definition) => definition.FriendlyName === 'Red Apples')?.ThumbnailImageName
-		).toBe('7rpdksfkh3fp7dc3nnkho1ft9.png')
+		).toBe('store/consumable-previews/red-apples.png')
 
 		const potion = definitions.find(
 			(definition) => definition.FriendlyName === 'Blue Pulse Potion'
 		)!
 		expect(potion.ConfigurationData).toBeTruthy()
-		expect(potion.ThumbnailImageName).toBe('store-backpack-potion-v2.png')
+		expect(potion.ThumbnailImageName).toBe('2k971pdsgqer05tfq3cv3cmtl.png')
 
 		const form = new URLSearchParams()
 		form.append('descriptors', apple.ConsumableItemDesc)
@@ -2575,7 +2575,7 @@ describe('econ endpoints', () => {
 		])
 		expect(
 			resolved.find((definition) => definition.ConsumableItemDesc === apple.ConsumableItemDesc)
-		).toMatchObject({ ThumbnailImageName: '5h9ul7otj4auhcbdvtdl2velt.png' })
+		).toMatchObject({ ThumbnailImageName: 'store/consumable-previews/red-apples.png' })
 		expect(
 			resolved.find((definition) => definition.ConsumableItemDesc === potion.ConsumableItemDesc)
 		).toMatchObject({ ThumbnailImageName: '2k971pdsgqer05tfq3cv3cmtl.png' })
@@ -2585,7 +2585,7 @@ describe('econ endpoints', () => {
 					definition.ConsumableItemDesc ===
 					definitions.find((entry) => entry.FriendlyName === 'Red Apples')!.ConsumableItemDesc
 			)
-		).toMatchObject({ ThumbnailImageName: '7rpdksfkh3fp7dc3nnkho1ft9.png' })
+		).toMatchObject({ ThumbnailImageName: 'store/consumable-previews/red-apples.png' })
 	})
 
 	test('POST /api/consumables/v1/consume reduces the count and deletes the row at zero', async () => {
@@ -2898,14 +2898,14 @@ describe('econ endpoints', () => {
 		)?.GiftDrop
 		expect(assortedDonuts).toMatchObject({
 			ConsumableItemId: 30,
-			ThumbnailImageName: 'dvtzzncutq8z5gcpx378mli8k.png',
+			ThumbnailImageName: 'store/consumable-previews/assorted-donuts.png',
 		})
 		const rootBeer = roomCatalog.StoreItems.find(
 			(item) => item.GiftDrop.FriendlyName === 'Root Beer'
 		)?.GiftDrop
 		expect(rootBeer).toMatchObject({
 			ConsumableItemId: 5,
-			ThumbnailImageName: 'dftf7822mxh6qptcetqjpetcs.png',
+			ThumbnailImageName: 'store/consumable-previews/root-beer-ko-cola.png',
 		})
 
 		const v3Res = await exports.default.fetch(
@@ -2929,7 +2929,7 @@ describe('econ endpoints', () => {
 			v3Catalog.StoreItems.find((item) => item.GiftDrop.FriendlyName === 'Assorted Donuts')?.GiftDrop
 		).toMatchObject({
 			ConsumableItemId: 30,
-			ThumbnailImageName: 'dvtzzncutq8z5gcpx378mli8k.png',
+			ThumbnailImageName: 'store/consumable-previews/assorted-donuts.png',
 		})
 	})
 	test('GET /api/storefronts/v4/room 404s for rooms with no storefront', async () => {
@@ -3158,10 +3158,14 @@ describe('econ endpoints', () => {
 				.ThumbnailImageName
 		expect(thumbnailFor('PaintballSet Shoes')).toBe('avatar/bkte1bx9xwngkf63cfbzj2wei.png')
 		expect(thumbnailFor('Creator Expo 2025 Hoodie')).toBe('avatar/b98w6cpkgsf9mcfyfq27jqxl4.png')
-		expect(thumbnailFor('Apple')).toBe('5h9ul7otj4auhcbdvtdl2velt.png')
-		expect(thumbnailFor('Root Beer')).toBe('dftf7822mxh6qptcetqjpetcs.png')
-		expect(thumbnailFor('Assorted Donuts')).toBe('dvtzzncutq8z5gcpx378mli8k.png')
-		expect(thumbnailFor('87 Flavor Cake')).toBe('evdt42n8s2y5vjf5s10ky2esv.png')
+		expect(thumbnailFor('Apple')).toBe('store/consumable-previews/red-apples.png')
+		expect(thumbnailFor('Root Beer')).toBe('store/consumable-previews/root-beer-ko-cola.png')
+		expect(thumbnailFor('Assorted Donuts')).toBe(
+			'store/consumable-previews/assorted-donuts.png'
+		)
+		expect(thumbnailFor('87 Flavor Cake')).toBe(
+			'store/consumable-previews/87-flavor-cake.png'
+		)
 		expect(thumbnailFor('Blue Pulse Potion')).toBe('2k971pdsgqer05tfq3cv3cmtl.png')
 		expect(thumbnailFor('Alien Blaster')).toBe('3se22q9g3ocaw8h7snlsf4bmr.png')
 		expect(thumbnailFor('Plaid Paintball Pistol Skin')).toBe('4gtpx2u7pldhk1e143mbxo5ro.png')
@@ -3289,7 +3293,7 @@ describe('econ endpoints', () => {
 		expect(appleGift).toMatchObject({
 			ConsumableItemId: 1616,
 			ConfigurationVersion: 2,
-			ThumbnailImageName: '5h9ul7otj4auhcbdvtdl2velt.png',
+			ThumbnailImageName: 'store/consumable-previews/red-apples.png',
 		})
 		expect(JSON.parse(appleGift!.ConfigurationData!).UnityAssetData.UnityAssetId).toBe(
 			'52106138-cc33-4bd1-86fa-91adf31aca95'
@@ -3304,7 +3308,7 @@ describe('econ endpoints', () => {
 			Id: appleGift!.Id,
 			ConsumableItemId: 1616,
 			ConfigurationVersion: 2,
-			ThumbnailImageName: '5h9ul7otj4auhcbdvtdl2velt.png',
+			ThumbnailImageName: 'store/consumable-previews/red-apples.png',
 		})
 		const pendingGiftsResponse = await exports.default.fetch(`${ORIGIN}/api/avatar/v2/gifts`, {
 			headers: await at('20250718.01'),
@@ -3328,7 +3332,7 @@ describe('econ endpoints', () => {
 			ConsumableItemId: 1616,
 			ConfigurationData: appleStoreItem.GiftDrop.ConfigurationData,
 			ConfigurationVersion: 2,
-			ThumbnailImageName: '5h9ul7otj4auhcbdvtdl2velt.png',
+			ThumbnailImageName: 'store/consumable-previews/red-apples.png',
 		})
 
 		const addedWearablePurchase = await exports.default.fetch(
@@ -3665,7 +3669,7 @@ describe('econ endpoints', () => {
 		// The 2025 reveal path needs the same model lookup values as the backpack listing.
 		expect(drop.ConsumableItemId).toBe(8)
 		expect(drop.ConfigurationVersion).toBe(0)
-		expect(drop.ThumbnailImageName).toBe('3jqgwifva9cr69n8v33taa8b3.png')
+		expect(drop.ThumbnailImageName).toBe('store/consumable-previews/supreme-pizza.png')
 		// A self-buy is attributed to the "Coach" system account (id 1).
 		expect(drop.FromPlayerId).toBe(1)
 		const giftId = drop.Id
@@ -3683,7 +3687,7 @@ describe('econ endpoints', () => {
 			Id: giftId,
 			ConsumableItemId: 8,
 			ConfigurationVersion: 0,
-			ThumbnailImageName: '3jqgwifva9cr69n8v33taa8b3.png',
+			ThumbnailImageName: 'store/consumable-previews/supreme-pizza.png',
 		})
 
 		// It's owned as an unlocked consumable — one instance, count 1.
@@ -3716,7 +3720,7 @@ describe('econ endpoints', () => {
 		expect(first[0].Count).toBe(1)
 		expect(first[0]).toMatchObject({
 			ConsumableItemId: 8,
-			ThumbnailImageName: '3jqgwifva9cr69n8v33taa8b3.png',
+			ThumbnailImageName: 'store/consumable-previews/supreme-pizza.png',
 		})
 		expect(first[0].InitialCount).toBe(1)
 		expect(first[0].Ids).toHaveLength(1)

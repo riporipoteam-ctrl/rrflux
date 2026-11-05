@@ -386,6 +386,7 @@ mod imp {
         Back, // v1.0.4: back from detail to library
         CarouselPrev,
         CarouselNext,
+        CarouselSelect(usize),
         DetailPlay, // PLAY button in detail view
         WelcomeLogin,
         WelcomeSignup,
@@ -1384,7 +1385,35 @@ mod imp {
         x >= r.left && x < r.right && y >= r.top && y < r.bottom
     }
 
-    fn hit_test(rects: &Rects, view: View, x: i32, y: i32) -> Hot {
+    fn carousel_thumbnail_rects(carousel: &RECT, count: usize) -> Vec<RECT> {
+        let thumb_count = count.min(6);
+        if thumb_count == 0 {
+            return Vec::new();
+        }
+
+        let thumb_gap = 8;
+        let width = (carousel.right - carousel.left).max(1);
+        let thumb_w = ((width - 32 - thumb_gap * (thumb_count as i32 - 1))
+            / thumb_count as i32)
+            .clamp(56, 124);
+        let thumb_h = thumb_w * 9 / 16;
+        let thumbs_w = thumb_count as i32 * (thumb_w + thumb_gap) - thumb_gap;
+        let thumb_x = carousel.left + (width - thumbs_w) / 2;
+
+        (0..thumb_count)
+            .map(|index| {
+                let left = thumb_x + index as i32 * (thumb_w + thumb_gap);
+                RECT {
+                    left,
+                    top: carousel.bottom + 19,
+                    right: left + thumb_w,
+                    bottom: carousel.bottom + 19 + thumb_h,
+                }
+            })
+            .collect()
+    }
+
+    fn hit_test(rects: &Rects, view: View, x: i32, y: i32, carousel_count: usize) -> Hot {
         if pt_in(&rects.close, x, y) {
             return Hot::Close;
         }
@@ -1458,6 +1487,13 @@ mod imp {
             View::Detail => {
                 if pt_in(&rects.back, x, y) {
                     return Hot::Back;
+                }
+                for (index, thumbnail) in
+                    carousel_thumbnail_rects(&rects.carousel, carousel_count).iter().enumerate()
+                {
+                    if pt_in(thumbnail, x, y) {
+                        return Hot::CarouselSelect(index);
+                    }
                 }
                 if pt_in(&rects.carousel_prev, x, y) {
                     return Hot::CarouselPrev;
@@ -3127,21 +3163,25 @@ mod imp {
             draw_text(hdc, label, r.left, r.top + 1, r.right - r.left, r.bottom - r.top, if st.hover == hot { COLORREF(0x00FFFFFF) } else { p.text }, 22, true, true)?;
         }
         let count = st.carousel_bitmaps.len();
-        let thumb_count = count.min(6);
-        let thumb_gap = 8;
-        let thumb_w = if thumb_count > 0 { ((car.right - car.left - 32 - thumb_gap * (thumb_count as i32 - 1)) / thumb_count as i32).clamp(56, 124) } else { 0 };
-        let thumb_h = thumb_w * 9 / 16;
-        let thumbs_w = thumb_count as i32 * (thumb_w + thumb_gap) - thumb_gap;
-        let thumb_x = car.left + ((car.right - car.left) - thumbs_w) / 2;
-        for i in 0..thumb_count {
-            let shot_index = i;
-            let thumb = RECT { left: thumb_x + i as i32 * (thumb_w + thumb_gap), top: car.bottom + 19, right: thumb_x + i as i32 * (thumb_w + thumb_gap) + thumb_w, bottom: car.bottom + 19 + thumb_h };
-            draw_gallery_image(hdc, st, shot_index, &thumb, p)?;
-            round_rect_outline(hdc, &thumb, 7, if i == idx { p.game_accent } else { p.border })?;
+        let thumbnails = carousel_thumbnail_rects(car, count);
+        let thumb_h = thumbnails
+            .first()
+            .map(|thumb| thumb.bottom - thumb.top)
+            .unwrap_or(0);
+        for (i, thumb) in thumbnails.iter().enumerate() {
+            draw_gallery_image(hdc, st, i, thumb, p)?;
+            let outline = if i == idx {
+                p.game_accent
+            } else if st.hover == Hot::CarouselSelect(i) {
+                p.accent
+            } else {
+                p.border
+            };
+            round_rect_outline(hdc, thumb, 7, outline)?;
         }
         let screenshot_name = SCREENSHOT_NAMES.get(idx).copied().unwrap_or("Game screenshot");
         let gallery_label = if count > 0 { format!("{}  ·  {} / {}", screenshot_name.to_uppercase(), idx + 1, count) } else { "GAME SCREENSHOTS".to_string() };
-        draw_text(hdc, "SCREENSHOTS", car.left, car.bottom + 19 + thumb_h + 8, 144, 18, p.game_accent, 9, true, false)?;
+        draw_text(hdc, "SCREENSHOTS  ·  SELECT A PREVIEW", car.left, car.bottom + 19 + thumb_h + 8, 260, 18, p.game_accent, 9, true, false)?;
         draw_text_ellipsis(hdc, &gallery_label, car.left + 146, car.bottom + 19 + thumb_h + 8, car.right - car.left - 146, 18, p.text_dim, 9)?;
 
         let info_top = car.bottom + 19 + thumb_h + 35;
@@ -3764,8 +3804,9 @@ mod imp {
                         // the old 5 fps progress animation.
                         repaint = true;
                     }
-                    // Auto-advance the carousel every ~4s (50ms timer * 80).
-                    if matches!(st.view, View::Library | View::Detail) && !st.carousel_bitmaps.is_empty() {
+                    // Auto-advance the Library feature image. Details stays on the
+                    // selected screenshot until the user changes it.
+                    if st.view == View::Library && !st.carousel_bitmaps.is_empty() {
                         st.anim_t = st.anim_t.wrapping_add(1);
                         st.carousel_tick += 1;
                         if st.carousel_tick >= 80 {
@@ -3820,7 +3861,7 @@ mod imp {
                     let x = (lparam.0 & 0xFFFF) as i16 as i32;
                     let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
                     let rects = compute_rects(st.win_w, st.win_h);
-                    let hot = hit_test(&rects, st.view, x, y);
+                    let hot = hit_test(&rects, st.view, x, y, st.carousel_bitmaps.len());
                     if hot != st.hover {
                         st.hover = hot;
                         let _ = InvalidateRect(hwnd, None, false);
@@ -3839,7 +3880,7 @@ mod imp {
                     let x = (lparam.0 & 0xFFFF) as i16 as i32;
                     let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
                     let rects = compute_rects(st.win_w, st.win_h);
-                    let hot = hit_test(&rects, st.view, x, y);
+                    let hot = hit_test(&rects, st.view, x, y, st.carousel_bitmaps.len());
                     handle_click(hwnd, st, hot, &rects);
                 }
                 LRESULT(0)
@@ -3980,6 +4021,13 @@ mod imp {
                 if matches!(st.view, View::Library | View::Detail) && !st.carousel_bitmaps.is_empty() {
                     let n = st.carousel_bitmaps.len();
                     st.carousel_idx = (st.carousel_idx + 1) % n;
+                    st.carousel_tick = 0;
+                    let _ = InvalidateRect(hwnd, None, false);
+                }
+            }
+            Hot::CarouselSelect(index) => {
+                if st.view == View::Detail && index < st.carousel_bitmaps.len() {
+                    st.carousel_idx = index;
                     st.carousel_tick = 0;
                     let _ = InvalidateRect(hwnd, None, false);
                 }

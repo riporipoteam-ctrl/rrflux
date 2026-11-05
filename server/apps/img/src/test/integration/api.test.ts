@@ -336,6 +336,20 @@ describe('img endpoints', () => {
 		}
 	})
 
+	it('serves the bundled 2026 consumable model previews as real PNGs', async () => {
+		for (const key of [
+			'store/consumable-previews/root-beer-ko-cola.png',
+			'store/consumable-previews/assorted-donuts.png',
+		]) {
+			const res = await SELF.fetch(`${ORIGIN}/${key}`)
+			expect(res.status, key).toBe(200)
+			expect(res.headers.get('content-type'), key).toMatch(/^image\/png/)
+			const bytes = new Uint8Array(await res.arrayBuffer())
+			expect(bytes.length, key).toBeGreaterThan(1000)
+			expect(bytes.slice(0, 8), key).toEqual(PNG_MAGIC)
+		}
+	})
+
 	it('returns 304 when If-None-Match matches the etag', async () => {
 		const first = await SELF.fetch(`${ORIGIN}/${BLOB_KEY}`)
 		const etag = first.headers.get('etag')
