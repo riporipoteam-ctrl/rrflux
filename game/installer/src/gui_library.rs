@@ -260,18 +260,21 @@ mod imp {
     // Window size.
     const WIN_W: i32 = 1440;
     const WIN_H: i32 = 880;
-    const SIDEBAR_W: i32 = 248;
-    const TITLE_H: i32 = 74;
+    // Epic/Steam-inspired application chrome: navigation lives in one compact
+    // command bar instead of consuming a quarter of the window with a rail.
+    // The game pages can now use the full canvas for artwork and library grids.
+    const SIDEBAR_W: i32 = 0;
+    const TITLE_H: i32 = 72;
     const CORNER: i32 = 22;
 
-    // Give the content area a little more room on compact laptop displays.
-    // The sidebar returns to its full width once the window has room for it.
-    fn sidebar_width(win_w: i32) -> i32 {
-        if win_w < 1180 { 220 } else { SIDEBAR_W }
+    // This shell uses a horizontal command bar, so no vertical rail consumes
+    // space from the game pages at any window size.
+    fn sidebar_width(_win_w: i32) -> i32 {
+        SIDEBAR_W
     }
 
     fn content_left(win_w: i32) -> i32 {
-        sidebar_width(win_w) + 28
+        sidebar_width(win_w) + 32
     }
 
     const SPLASH_W: i32 = 480;
@@ -307,47 +310,49 @@ mod imp {
     }
 
     const LIGHT: Palette = Palette {
-        bg: COLORREF(0x00F8F6F3),
-        bg_title: COLORREF(0x00FFFFFF),
-        bg_side: COLORREF(0x00F0EDE9),
+        bg: COLORREF(0x00F7F6F4),
+        // Light mode keeps the content bright while using a unified charcoal
+        // launcher frame like the current Epic launcher.
+        bg_title: COLORREF(0x00181716),
+        bg_side: COLORREF(0x00181716),
         bg_card: COLORREF(0x00FFFFFF),
-        bg_alt: COLORREF(0x00EEEAE5),
-        bg_hover: COLORREF(0x00F3E1D3),
-        text: COLORREF(0x002A2723),
-        text_dim: COLORREF(0x006D6964),
-        nav_text: COLORREF(0x002A2723),
-        nav_text_dim: COLORREF(0x006D6964),
-        nav_card: COLORREF(0x00E4DCD4),
-        accent: COLORREF(0x00D67825),
-        accent_dark: COLORREF(0x00AC5C18),
-        accent_soft: COLORREF(0x00F7EDE2),
+        bg_alt: COLORREF(0x00EEEDEB),
+        bg_hover: COLORREF(0x00E6E3DF),
+        text: COLORREF(0x00211F1D),
+        text_dim: COLORREF(0x006A6662),
+        nav_text: COLORREF(0x00FAFAFA),
+        nav_text_dim: COLORREF(0x00AAA7A4),
+        nav_card: COLORREF(0x00302E2C),
+        accent: COLORREF(0x00EE7A25),
+        accent_dark: COLORREF(0x00C95C12),
+        accent_soft: COLORREF(0x00F8E9DE),
         game_accent: COLORREF(0x00D67825),
         game_accent_soft: COLORREF(0x00F7EDE2),
         success: COLORREF(0x004A831E),
-        shadow: COLORREF(0x00D8D0C7),
-        track: COLORREF(0x00E1DCD6),
-        border: COLORREF(0x00E1D9D1),
+        shadow: COLORREF(0x00D8D5D2),
+        track: COLORREF(0x00E3E1DE),
+        border: COLORREF(0x00E2DFDC),
         banner_top: COLORREF(0x00388EF2),
         banner_bot: COLORREF(0x00286ED0),
     };
 
     const DARK: Palette = Palette {
-        bg: COLORREF(0x0012171D),
-        bg_title: COLORREF(0x00191F26),
-        bg_side: COLORREF(0x00140F0C),
-        bg_card: COLORREF(0x001F262E),
-        bg_alt: COLORREF(0x001B2229),
-        bg_hover: COLORREF(0x00282F38),
+        bg: COLORREF(0x00141414),
+        bg_title: COLORREF(0x000F0F0F),
+        bg_side: COLORREF(0x000F0F0F),
+        bg_card: COLORREF(0x001F1F1F),
+        bg_alt: COLORREF(0x00252525),
+        bg_hover: COLORREF(0x00302F2E),
         text: COLORREF(0x00FFFFFF),
         text_dim: COLORREF(0x00B7C3D3),
         nav_text: COLORREF(0x00F5F7FA),
         nav_text_dim: COLORREF(0x00AAB5C0),
-        nav_card: COLORREF(0x00232A32),
-        accent: COLORREF(0x00388EF2),
-        accent_dark: COLORREF(0x00286ED0),
-        accent_soft: COLORREF(0x00352A21),
-        game_accent: COLORREF(0x00296FE8),
-        game_accent_soft: COLORREF(0x00352A21),
+        nav_card: COLORREF(0x00282726),
+        accent: COLORREF(0x00EE7A25),
+        accent_dark: COLORREF(0x00C95C12),
+        accent_soft: COLORREF(0x0038271D),
+        game_accent: COLORREF(0x00EE7A25),
+        game_accent_soft: COLORREF(0x0038271D),
         success: COLORREF(0x006FCB93),
         shadow: COLORREF(0x00090C10),
         track: COLORREF(0x00313A44),
@@ -1221,11 +1226,11 @@ mod imp {
         let account_card_w = ((account_right - account_left - 24) / 2).max(240);
         let account_button_w = ((account_card_w - 48) / 2).clamp(112, 250);
         Rects {
-            nav_store: RECT { left: 14, top: TITLE_H + 48, right: side_w - 14, bottom: TITLE_H + 96 },
-            nav_library: RECT { left: 14, top: TITLE_H + 104, right: side_w - 14, bottom: TITLE_H + 152 },
-            nav_downloads: RECT { left: 14, top: TITLE_H + 184, right: side_w - 14, bottom: TITLE_H + 232 },
-            nav_settings: RECT { left: 14, top: TITLE_H + 240, right: side_w - 14, bottom: TITLE_H + 288 },
-            nav_account: RECT { left: 14, top: TITLE_H + 320, right: side_w - 14, bottom: TITLE_H + 368 },
+            nav_store: RECT { left: 214, top: 14, right: 306, bottom: 58 },
+            nav_library: RECT { left: 310, top: 14, right: 410, bottom: 58 },
+            nav_downloads: RECT { left: 414, top: 14, right: 538, bottom: 58 },
+            nav_account: RECT { left: 542, top: 14, right: 642, bottom: 58 },
+            nav_settings: RECT { left: 646, top: 14, right: 750, bottom: 58 },
             // Home hero.
             card: RECT {
                 left: content_x,
@@ -1561,7 +1566,6 @@ mod imp {
     unsafe fn on_paint(hwnd: HWND, st: &mut State) -> Silent {
         let p = pal(st.theme);
         let rects = compute_rects(st.win_w, st.win_h);
-        let side_w = sidebar_width(st.win_w);
 
         let mut ps = PAINTSTRUCT::default();
         let hdc = BeginPaint(hwnd, &mut ps);
@@ -1604,43 +1608,12 @@ mod imp {
             bottom: TITLE_H,
         };
         fill_rect(mem, &title_r, p.bg_title)?;
-        let sidebar = RECT {
-            left: 0,
-            top: TITLE_H,
-            right: side_w,
-            bottom: paint_h,
-        };
-        fill_rect(mem, &sidebar, p.bg_side)?;
-        let divider = RECT {
-            left: side_w - 1,
-            top: TITLE_H,
-            right: side_w,
-            bottom: paint_h,
-        };
-        fill_rect(mem, &divider, p.border)?;
         let title_rule = RECT { left: 0, top: TITLE_H - 2, right: paint_w, bottom: TITLE_H };
         fill_gradient(mem, &title_rule, p.accent, p.accent_dark)?;
-        draw_text(mem, "RIPO TEAM", 68, 11, 250, 27, p.text, 18, true, false)?;
-        draw_text(mem, "Games, updates and your library", 69, 39, 260, 17, p.text_dim, 9, false, false)?;
-        if draw_logo_bitmap(mem, st.team_logo_bitmap, 16, 9, 44).is_err() {
-            draw_text(mem, "RT", 20, 18, 38, 24, p.accent, 15, true, true)?;
+        draw_text(mem, "RIPO TEAM", 58, 22, 142, 25, p.nav_text, 15, true, false)?;
+        if draw_logo_bitmap(mem, st.team_logo_bitmap, 15, 15, 38).is_err() {
+            draw_text(mem, "RT", 18, 22, 32, 22, p.accent, 13, true, true)?;
         }
-        let section_label = match st.view {
-            View::Welcome => "WELCOME  /  YOUR NEXT GAME",
-            View::Onboarding => "GETTING STARTED  /  QUICK TOUR",
-            View::Store => "STORE  /  FEATURED GAME",
-            View::Library => "LIBRARY  /  YOUR GAMES",
-            View::Downloads => "DOWNLOADS  /  CURRENT ACTIVITY",
-            View::Detail => "FLUX REC  /  GAME DETAILS",
-            View::Account => "ACCOUNT  /  FLUX CONNECTION",
-            View::Settings => "SETTINGS  /  INSTALL & PREFERENCES",
-            View::Working => "FLUX REC  /  STARTUP",
-        };
-        fill_rect(mem, &RECT { left: 376, top: 18, right: 377, bottom: 56 }, p.border)?;
-        draw_text_ellipsis(mem, section_label, 400, 25, (paint_w - 760).max(180), 22, p.text_dim, 10)?;
-        draw_text(mem, "BROWSE", 24, TITLE_H + 20, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
-        draw_text(mem, "MANAGE", 24, TITLE_H + 158, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
-        draw_text(mem, "ACCOUNT", 24, TITLE_H + 294, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
         if !matches!(st.view, View::Welcome | View::Onboarding) {
             draw_nav(
                 mem,
@@ -1652,22 +1625,6 @@ mod imp {
             )?;
         }
 
-        let footer_y = paint_h - 104;
-        let footer = RECT {
-            left: 16,
-            top: footer_y,
-            right: side_w - 16,
-            bottom: paint_h - 18,
-        };
-        round_rect_path(mem, &footer, 14, p.nav_card)?;
-        round_rect_outline(mem, &footer, 14, p.border)?;
-        if draw_logo_bitmap(mem, st.logo_bitmap, footer.left + 12, footer.top + 14, 32).is_err() {
-            draw_logo(mem, footer.left + 12, footer.top + 14, 32, p.accent)?;
-        }
-        draw_text(mem, "FLUX REC", footer.left + 52, footer.top + 11, footer.right - footer.left - 60, 17, p.nav_text, 10, true, false)?;
-        let game_state = if st.install_required { "Not installed" } else if st.update_available { "Update available" } else if st.checking { "Checking status" } else { "Ready to play" };
-        draw_status_pulse(mem, footer.left + 19, footer.top + 55, st.anim_t, if st.update_available || st.install_required { p.accent } else { p.success })?;
-        draw_text_ellipsis(mem, game_state, footer.left + 32, footer.top + 46, footer.right - footer.left - 42, 18, p.nav_text_dim, 9)?;
         if !matches!(st.view, View::Welcome | View::Onboarding) {
             draw_nav(
                 mem,
@@ -1719,7 +1676,7 @@ mod imp {
             if close_hover {
                 COLORREF(0x00FFFFFF)
             } else {
-                p.text_dim
+                p.nav_text_dim
             },
             16,
             false,
@@ -1735,7 +1692,7 @@ mod imp {
             rects.minimize.top + 6,
             40,
             28,
-            p.text_dim,
+            p.nav_text_dim,
             16,
             false,
             true,
@@ -1753,31 +1710,35 @@ mod imp {
         } else {
             "Ready"
         };
-        let top_status = RECT {
-            left: paint_w - 310,
-            top: 15,
-            right: paint_w - 114,
-            bottom: 49,
-        };
-        round_rect_path(mem, &top_status, 16, p.bg_alt)?;
-        round_rect_outline(mem, &top_status, 16, p.border)?;
-        draw_status_pulse(mem, top_status.left + 17, top_status.top + 17, st.anim_t, if st.update_available || st.install_required { p.accent } else { p.success })?;
-        draw_text(
-            mem,
-            live_label,
-            top_status.left + 32,
-            top_status.top + 6,
-            top_status.right - top_status.left - 40,
-            20,
-            if st.update_available || st.install_required {
-                p.accent
-            } else {
-                p.text_dim
-            },
-            10,
-            true,
-            true,
-        )?;
+        // Keep the update chip clear of the command tabs on compact windows;
+        // the persistent bottom rail still shows the same install state.
+        if paint_w >= 1180 {
+            let top_status = RECT {
+                left: paint_w - 310,
+                top: 15,
+                right: paint_w - 114,
+                bottom: 49,
+            };
+            round_rect_path(mem, &top_status, 16, p.bg_alt)?;
+            round_rect_outline(mem, &top_status, 16, p.border)?;
+            draw_status_pulse(mem, top_status.left + 17, top_status.top + 17, st.anim_t, if st.update_available || st.install_required { p.accent } else { p.success })?;
+            draw_text(
+                mem,
+                live_label,
+                top_status.left + 32,
+                top_status.top + 6,
+                top_status.right - top_status.left - 40,
+                20,
+                if st.update_available || st.install_required {
+                    p.accent
+                } else {
+                    p.text_dim
+                },
+                10,
+                true,
+                true,
+            )?;
+        }
 
         // Content.
         match st.view {
@@ -1791,6 +1752,17 @@ mod imp {
             View::Settings => draw_settings_console(mem, st, &rects, p)?,
             View::Working => draw_working_view(mem, st, &rects, p)?,
         }
+
+        // Persistent activity rail mirrors modern game launchers: the current
+        // game and update state remain visible without stealing horizontal room.
+        let activity = RECT { left: 0, top: paint_h - 38, right: paint_w, bottom: paint_h };
+        fill_rect(mem, &activity, p.bg_title)?;
+        fill_rect(mem, &RECT { left: 0, top: activity.top, right: paint_w, bottom: activity.top + 1 }, p.nav_card)?;
+        let game_state = if st.install_required { "Flux Rec · not installed" } else if st.update_available { "Flux Rec · update ready" } else if st.checking { "Flux Rec · checking files" } else { "Flux Rec · ready to play" };
+        draw_status_pulse(mem, 24, activity.top + 19, st.anim_t, if st.update_available || st.install_required { p.accent } else { p.success })?;
+        draw_text(mem, game_state, 40, activity.top + 8, 300, 20, p.nav_text_dim, 10, false, false)?;
+        draw_text(mem, "Downloads", paint_w / 2 - 62, activity.top + 8, 124, 20, p.nav_text_dim, 10, false, true)?;
+        draw_text(mem, "Automatic updates enabled", paint_w - 270, activity.top + 8, 238, 20, p.nav_text_dim, 10, false, false)?;
 
         BitBlt(hdc, 0, 0, paint_w, paint_h, mem, 0, 0, SRCCOPY);
         SelectObject(mem, old_bmp);
@@ -1809,28 +1781,28 @@ mod imp {
         p: &Palette,
     ) -> Silent {
         if active || hover {
-            round_rect_path(hdc, r, 12, if active { p.nav_card } else { COLORREF(0x00302A25) })?;
+            round_rect_path(hdc, r, 10, if active { p.nav_card } else { COLORREF(0x00272422) })?;
         }
         if active {
             let marker = RECT {
-                left: r.left + 1,
-                top: r.top + 10,
-                right: r.left + 4,
-                bottom: r.bottom - 10,
+                left: r.left + 14,
+                top: r.bottom - 4,
+                right: r.right - 14,
+                bottom: r.bottom - 1,
             };
             round_rect_path(hdc, &marker, 3, p.accent)?;
         }
         let icon_color = if active { p.accent } else { p.nav_text_dim };
-        draw_nav_icon(hdc, label, r.left + 15, r.top + 15, icon_color)?;
+        draw_nav_icon(hdc, label, r.left + 10, r.top + 11, icon_color)?;
         draw_text(
             hdc,
             label,
-            r.left + 48,
-            r.top + 11,
-            r.right - r.left - 58,
+            r.left + 36,
+            r.top + 9,
+            r.right - r.left - 42,
             26,
             if active { p.nav_text } else { p.nav_text_dim },
-            14,
+            11,
             active,
             false,
         )?;
@@ -3845,6 +3817,7 @@ mod imp {
                     || pt_in(&rects.nav_store, pt.x, pt.y)
                     || pt_in(&rects.nav_library, pt.x, pt.y)
                     || pt_in(&rects.nav_downloads, pt.x, pt.y)
+                    || pt_in(&rects.nav_account, pt.x, pt.y)
                     || pt_in(&rects.nav_settings, pt.x, pt.y)
                 {
                     return LRESULT(HTCLIENT as isize);
