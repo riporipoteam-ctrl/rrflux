@@ -1213,8 +1213,8 @@ pub(crate) async fn apply_logo_bundle(
     if is_2026 && logo_2026.exists()
         && !file_ok(
             &logo_2026,
-            Some("75784e90aa16878424a2f5926a77dc69"),
-            Some(13_629_682),
+            Some("7149ec1df7156f5de25e7b65eb54102d"),
+            Some(13_487_463),
         )
     {
         let backup = logo_2026.with_extension("bundle.stock");
@@ -1230,8 +1230,8 @@ pub(crate) async fn apply_logo_bundle(
             drop(output);
             if !file_ok(
                 &staged,
-                Some("75784e90aa16878424a2f5926a77dc69"),
-                Some(13_629_682),
+                Some("7149ec1df7156f5de25e7b65eb54102d"),
+                Some(13_487_463),
             ) {
                 return Err("2026 logo asset failed verification".to_string());
             }
