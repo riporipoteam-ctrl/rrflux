@@ -260,14 +260,14 @@ mod imp {
     // Window size.
     const WIN_W: i32 = 1440;
     const WIN_H: i32 = 880;
-    const SIDEBAR_W: i32 = 224;
-    const TITLE_H: i32 = 66;
+    const SIDEBAR_W: i32 = 248;
+    const TITLE_H: i32 = 74;
     const CORNER: i32 = 22;
 
     // Give the content area a little more room on compact laptop displays.
     // The sidebar returns to its full width once the window has room for it.
     fn sidebar_width(win_w: i32) -> i32 {
-        if win_w < 1180 { 204 } else { SIDEBAR_W }
+        if win_w < 1180 { 220 } else { SIDEBAR_W }
     }
 
     fn content_left(win_w: i32) -> i32 {
@@ -307,22 +307,22 @@ mod imp {
     }
 
     const LIGHT: Palette = Palette {
-        bg: COLORREF(0x00F6F4F1),
+        bg: COLORREF(0x00F8F6F3),
         bg_title: COLORREF(0x00FFFFFF),
-        bg_side: COLORREF(0x00271F19),
+        bg_side: COLORREF(0x00F0EDE9),
         bg_card: COLORREF(0x00FFFFFF),
         bg_alt: COLORREF(0x00EEEAE5),
         bg_hover: COLORREF(0x00F3E1D3),
         text: COLORREF(0x002A2723),
         text_dim: COLORREF(0x006D6964),
-        nav_text: COLORREF(0x00F5F7FA),
-        nav_text_dim: COLORREF(0x00AAB5C0),
-        nav_card: COLORREF(0x003B2E24),
-        accent: COLORREF(0x00388EF2),
-        accent_dark: COLORREF(0x00286ED0),
-        accent_soft: COLORREF(0x00F6E9DC),
-        game_accent: COLORREF(0x00296FE8),
-        game_accent_soft: COLORREF(0x00F6E9DC),
+        nav_text: COLORREF(0x002A2723),
+        nav_text_dim: COLORREF(0x006D6964),
+        nav_card: COLORREF(0x00E4DCD4),
+        accent: COLORREF(0x00D67825),
+        accent_dark: COLORREF(0x00AC5C18),
+        accent_soft: COLORREF(0x00F7EDE2),
+        game_accent: COLORREF(0x00D67825),
+        game_accent_soft: COLORREF(0x00F7EDE2),
         success: COLORREF(0x004A831E),
         shadow: COLORREF(0x00D8D0C7),
         track: COLORREF(0x00E1DCD6),
@@ -1620,10 +1620,10 @@ mod imp {
         fill_rect(mem, &divider, p.border)?;
         let title_rule = RECT { left: 0, top: TITLE_H - 2, right: paint_w, bottom: TITLE_H };
         fill_gradient(mem, &title_rule, p.accent, p.accent_dark)?;
-        draw_text(mem, "RIPO TEAM LAUNCHER", 64, 9, 250, 25, p.text, 17, true, false)?;
-        draw_text(mem, "YOUR GAME LIBRARY", 65, 34, 210, 17, p.text_dim, 9, true, false)?;
-        if draw_logo_bitmap(mem, st.team_logo_bitmap, 14, 7, 42).is_err() {
-            draw_text(mem, "RT", 18, 16, 38, 24, p.accent, 15, true, true)?;
+        draw_text(mem, "RIPO TEAM", 68, 11, 250, 27, p.text, 18, true, false)?;
+        draw_text(mem, "Games, updates and your library", 69, 39, 260, 17, p.text_dim, 9, false, false)?;
+        if draw_logo_bitmap(mem, st.team_logo_bitmap, 16, 9, 44).is_err() {
+            draw_text(mem, "RT", 20, 18, 38, 24, p.accent, 15, true, true)?;
         }
         let section_label = match st.view {
             View::Welcome => "WELCOME  /  YOUR NEXT GAME",
@@ -1636,8 +1636,8 @@ mod imp {
             View::Settings => "SETTINGS  /  INSTALL & PREFERENCES",
             View::Working => "FLUX REC  /  STARTUP",
         };
-        fill_rect(mem, &RECT { left: 392, top: 16, right: 393, bottom: 50 }, p.border)?;
-        draw_text_ellipsis(mem, section_label, 414, 21, (paint_w - 760).max(180), 22, p.text_dim, 10)?;
+        fill_rect(mem, &RECT { left: 376, top: 18, right: 377, bottom: 56 }, p.border)?;
+        draw_text_ellipsis(mem, section_label, 400, 25, (paint_w - 760).max(180), 22, p.text_dim, 10)?;
         draw_text(mem, "BROWSE", 24, TITLE_H + 20, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
         draw_text(mem, "MANAGE", 24, TITLE_H + 158, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
         draw_text(mem, "ACCOUNT", 24, TITLE_H + 294, side_w - 48, 16, p.nav_text_dim, 9, true, false)?;
@@ -1660,7 +1660,7 @@ mod imp {
             bottom: paint_h - 18,
         };
         round_rect_path(mem, &footer, 14, p.nav_card)?;
-        round_rect_outline(mem, &footer, 14, COLORREF(0x00463A30))?;
+        round_rect_outline(mem, &footer, 14, p.border)?;
         if draw_logo_bitmap(mem, st.logo_bitmap, footer.left + 12, footer.top + 14, 32).is_err() {
             draw_logo(mem, footer.left + 12, footer.top + 14, 32, p.accent)?;
         }
@@ -2180,8 +2180,8 @@ mod imp {
         let content_x = hero.left;
         let content_w = hero.right - hero.left;
         draw_text(hdc, "DISCOVER", content_x, TITLE_H + 3, 320, 17, p.game_accent, 10, true, false)?;
-        draw_text(hdc, "Find your next favorite", content_x, TITLE_H + 24, 590, 38, p.text, 29, true, false)?;
-        draw_text(hdc, "Explore, play and create with the Flux Rec community.", content_x, TITLE_H + 62, 700, 22, p.text_dim, 12, false, false)?;
+        draw_text(hdc, "Featured this week", content_x, TITLE_H + 24, 590, 38, p.text, 29, true, false)?;
+        draw_text(hdc, "Install, update and jump back into Flux Rec.", content_x, TITLE_H + 62, 700, 22, p.text_dim, 12, false, false)?;
         let shadow = RECT { left: hero.left + 2, top: hero.top + 5, right: hero.right + 2, bottom: hero.bottom + 5 };
         round_rect_path(hdc, &shadow, 22, p.shadow)?;
         let panel_w = ((hero.right - hero.left) / 3).clamp(266, 320);
