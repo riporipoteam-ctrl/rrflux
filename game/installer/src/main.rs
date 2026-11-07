@@ -46,6 +46,8 @@ mod vcredist;
 const CLIENT_ZIP_MIRRORS: &[&str] = &[
     "https://archive.recagain.site/download/manifest/8867414017562658247",
 ];
+/// The newest client build verified against the bundled native patch and live services.
+pub(crate) const CLIENT_BUILD: &str = "20260323.14";
 const CLIENT_ZIP_SIZE: u64 = 4_543_084_133;
 const CLIENT_2026_FINGERPRINTS: &[(&str, &str)] = &[
     ("GameAssembly.dll", "a6d90770cdfda4043eadb278a16198ed0907c3ba2ac09bc37d06cd4dd22a1d84"),
@@ -128,7 +130,7 @@ fn client_download_cache_path() -> PathBuf {
     local_appdata
         .join("FluxRec")
         .join("downloads")
-        .join("client-20260323.14.zip")
+        .join(format!("client-{CLIENT_BUILD}.zip"))
 }
 
 /// Pure part of the above, kept separate so tests can point it at a scratch

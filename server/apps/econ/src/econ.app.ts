@@ -224,11 +224,13 @@ const consumableDefinitionsByDesc = new Map(
  * this keyed by the captured item id so unrelated items retain their own thumbnails.
  */
 const consumableModelPreviewById: Readonly<Record<number, string>> = {
+	4: 'store/consumable-previews/potion-ego.png',
 	5: 'store/consumable-previews/root-beer-ko-cola.png',
 	8: 'store/consumable-previews/supreme-pizza.png',
+	12: 'store/consumable-previews/cheese-pizza-tool.png',
 	14: 'store/consumable-previews/pepperoni-pizza.png',
 	29: 'store/consumable-previews/donut-glazed.png',
-	30: 'store/consumable-previews/assorted-donuts.png',
+	30: 'store/consumable-previews/assorted-donuts-box.png',
 	31: 'store/consumable-previews/donut-frosted.png',
 	55: 'store/consumable-previews/hawaiian-pizza.png',
 	57: 'store/consumable-previews/red-apples.png',
@@ -249,6 +251,8 @@ const consumableModelPreviewById: Readonly<Record<number, string>> = {
 	107: 'store/consumable-previews/root-beer-ko-cola.png',
 	117: 'store/consumable-previews/mochi.png',
 	1490: 'store/consumable-previews/turkey-legs.png',
+	1495: 'store/consumable-previews/roomie-soundboard-potion.png',
+	1516: 'store/consumable-previews/potion-goblin.png',
 	1578: 'store/consumable-previews/fruit-cake.png',
 	1616: 'store/consumable-previews/red-apples.png',
 }

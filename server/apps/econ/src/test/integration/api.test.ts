@@ -2541,7 +2541,10 @@ describe('econ endpoints', () => {
 		expect(
 			definitions.find((definition) => definition.FriendlyName === 'Assorted Donuts')
 				?.ThumbnailImageName
-		).toBe('store/consumable-previews/assorted-donuts.png')
+		).toBe('store/consumable-previews/assorted-donuts-box.png')
+		expect(
+			definitions.find((definition) => definition.FriendlyName === 'Cheese Pizza')?.ThumbnailImageName
+		).toBe('store/consumable-previews/cheese-pizza-tool.png')
 		expect(
 			definitions.find((definition) => definition.FriendlyName === 'Red Apples')?.ThumbnailImageName
 		).toBe('store/consumable-previews/red-apples.png')
@@ -2898,7 +2901,7 @@ describe('econ endpoints', () => {
 		)?.GiftDrop
 		expect(assortedDonuts).toMatchObject({
 			ConsumableItemId: 30,
-			ThumbnailImageName: 'store/consumable-previews/assorted-donuts.png',
+			ThumbnailImageName: 'store/consumable-previews/assorted-donuts-box.png',
 		})
 		const rootBeer = roomCatalog.StoreItems.find(
 			(item) => item.GiftDrop.FriendlyName === 'Root Beer'
@@ -2929,7 +2932,7 @@ describe('econ endpoints', () => {
 			v3Catalog.StoreItems.find((item) => item.GiftDrop.FriendlyName === 'Assorted Donuts')?.GiftDrop
 		).toMatchObject({
 			ConsumableItemId: 30,
-			ThumbnailImageName: 'store/consumable-previews/assorted-donuts.png',
+			ThumbnailImageName: 'store/consumable-previews/assorted-donuts-box.png',
 		})
 	})
 	test('GET /api/storefronts/v4/room 404s for rooms with no storefront', async () => {

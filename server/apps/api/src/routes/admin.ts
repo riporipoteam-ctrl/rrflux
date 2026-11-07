@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { describeRoute } from 'hono-openapi'
 import { z } from 'zod'
 
+import { putBlob } from '@repo/blob-store'
 import {
 	createGift,
 	deletePresence,
@@ -16,6 +17,7 @@ import {
 import { intVar, logger } from '@repo/hono-helpers'
 
 import {
+	type AnnouncementPayload,
 	KickReportCategory,
 	type ModerationKickPayload,
 } from '../../../notify/src/notification-payloads'
@@ -107,6 +109,7 @@ const OPERATOR_ACCOUNT_ID = 1
 
 /** Upper bound on a single token grant, against fat-finger accidents. */
 const MAX_TOKEN_GRANT = 1_000_000
+const MAX_ANNOUNCEMENT_IMAGE_BYTES = 4 * 1024 * 1024
 
 const HUB_INSTANCE = 'global'
 
@@ -1166,3 +1169,112 @@ export const adminRoutes = new Hono<App>({ strict: false })
 			})
 		}
 	)
+	// RipoBot's Owner/Co-Owner announcement command. Stores a durable item for
+	// /api/announcement/v1/get and pushes the same payload on the client's live
+	// AnnouncementUpdate channel so the Official announcements tab refreshes.
+	.post('/api/admin/v1/announcements/create', async (c) => {
+		const denied = requireAdminKey(c)
+		if (denied) return denied
+
+		let form: FormData
+		try {
+			form = await c.req.formData()
+		} catch {
+			return c.json({ success: false as const, error: 'multipart_form_required' }, 400)
+		}
+		const title = String(form.get('title') ?? '').trim()
+		const body = String(form.get('body') ?? '').trim()
+		if (title.length === 0 || title.length > 120 || body.length === 0 || body.length > 4000) {
+			return c.json({ success: false as const, error: 'title_or_body_invalid' }, 400)
+		}
+
+		const image = form.get('image')
+		let imageName = ''
+		if (image !== null) {
+			if (!(image instanceof File)) {
+				return c.json({ success: false as const, error: 'image_must_be_a_file' }, 400)
+			}
+			if (image.size === 0 || image.size > MAX_ANNOUNCEMENT_IMAGE_BYTES) {
+				return c.json({ success: false as const, error: 'image_size_invalid' }, 413)
+			}
+			const mime = image.type.toLowerCase()
+			const ext = mime === 'image/png' ? '.png' : mime === 'image/jpeg' ? '.jpg' : null
+			if (ext === null) {
+				return c.json({ success: false as const, error: 'image_must_be_png_or_jpeg' }, 415)
+			}
+			const imageBytes = await image.arrayBuffer()
+			const signature = new Uint8Array(imageBytes.slice(0, 8))
+			const isPng =
+				ext === '.png' &&
+				signature.length === 8 &&
+				[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every(
+					(byte, index) => signature[index] === byte
+				)
+			const isJpeg =
+				ext === '.jpg' &&
+				signature[0] === 0xff &&
+				signature[1] === 0xd8 &&
+				signature[2] === 0xff
+			if (!isPng && !isJpeg) {
+				return c.json({ success: false as const, error: 'image_content_invalid' }, 415)
+			}
+			imageName = `announcements/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}${ext}`
+			try {
+				await putBlob(c.env, 'IMAGES', imageName, imageBytes, { contentType: mime })
+			} catch (error) {
+				logger.error('failed to store RipoBot announcement image', {
+					error: error instanceof Error ? error.message : String(error),
+				})
+				return c.json({ success: false as const, error: 'image_storage_failed' }, 503)
+			}
+		}
+
+		// Keep IDs time-sortable while avoiding collisions with the player
+		// announcement route, which also runs on this worker.
+		const announcementId =
+			Date.now() * 1024 + (crypto.getRandomValues(new Uint16Array(1))[0]! % 1024)
+		const createdAt = new Date().toISOString()
+		try {
+			await c.env.DB.prepare(
+				`INSERT INTO announcement (announcement_id, title, body, image_name, created_by, created_at)
+				 VALUES (?1, ?2, ?3, ?4, ?5, ?6)`
+			)
+				.bind(announcementId, title, body, imageName || null, OPERATOR_ACCOUNT_ID, createdAt)
+				.run()
+		} catch (error) {
+			logger.error('failed to store RipoBot announcement', {
+				announcementId,
+				error: error instanceof Error ? error.message : String(error),
+			})
+			return c.json({ success: false as const, error: 'announcement_storage_failed' }, 503)
+		}
+
+		const payload: AnnouncementPayload = {
+			AnnouncementId: announcementId,
+			AnnouncementType: 1,
+			Title: title,
+			Body: body,
+			ImageName: imageName,
+			LinkType: 0,
+			LinkName: '',
+			LinkButtonLabel: '',
+			LinkUri: '',
+			Platform: 0,
+			CreatedAt: createdAt,
+		}
+		let delivered = 0
+		try {
+			const result = await c.env.RECFLARE_NOTIFICATIONS_HUB.getByName(HUB_INSTANCE).broadcast(
+				NotificationType.AnnouncementUpdate,
+				{ ...payload }
+			)
+			delivered = result.delivered
+		} catch (error) {
+			logger.error('failed to push RipoBot announcement update', {
+				announcementId,
+				error: error instanceof Error ? error.message : String(error),
+			})
+		}
+
+		return c.json({ success: true as const, ...payload, delivered })
+	})
