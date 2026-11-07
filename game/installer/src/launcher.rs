@@ -259,9 +259,10 @@ pub fn run_launcher(
         }
     }
 
-    // 2. Update check (fast + fail-soft by design).
+    // 2. Update check (fast + fail-soft by design). Reuse a recent successful
+    // no-update result so repeated game launches do not block on GitHub.
     let decision = match &rt {
-        Ok(r) => r.block_on(crate::updater::check_for_updates(dir, &progress)),
+        Ok(r) => r.block_on(crate::updater::check_for_updates_cached(dir, &progress)),
         Err(_) => UpdateDecision::CheckFailed,
     };
     match decision {

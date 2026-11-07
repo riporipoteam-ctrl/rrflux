@@ -8,10 +8,10 @@
 //! installs over the game dir and then launches the game itself.
 //!
 //! Design rules:
-//!   * The check runs on EVERY launch (no skip-cache): a release published
-//!     minutes after the last launch must be offered on the next one, and
-//!     the player was promised a visible check each time. A live check has
-//!     a 5s timeout so a dead network never stalls a launch.
+//!   * A normal game launch reuses a successful "up to date" result for up to
+//!     five minutes. This avoids making the game wait on GitHub every time the
+//!     player closes and reopens the launcher. Explicit update checks remain live.
+//!     Failed checks and available updates are never cached.
 //!   * FAIL-SOFT: network, parse, or local client setup errors -> `CheckFailed`;
 //!     the game launches anyway. An update check must never strand the player.
 //!   * No Win32 code: compiles and runs on Linux unchanged.
@@ -29,9 +29,10 @@ const RELEASE_TAG_PREFIX: &str = "ripo-team-launcher-v";
 const LEGACY_RELEASE_TAG_PREFIX: &str = "recflare-installer-v";
 /// Hard ceiling for the whole update check (keeps launches snappy).
 const CHECK_TIMEOUT_SECS: u64 = 5;
+/// Recheck GitHub at least this often during repeated game launches.
+const LAUNCH_CHECK_CACHE_SECS: u64 = 300;
 
-/// Diagnostic record of the last completed check. Written after every
-/// check; never read to skip one — every launch checks live.
+/// Version-specific record of a successful no-update result.
 fn cache_path(install_dir: &Path) -> std::path::PathBuf {
     install_dir.join(".fluxrec_last_update_check")
 }
@@ -43,10 +44,31 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Record when the last check completed (diagnostic only; never gates a
-/// future check).
+/// Whether the previous successful no-update result is still fresh for this build.
+fn launch_check_is_fresh(install_dir: &Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(cache_path(install_dir)) else {
+        return false;
+    };
+    let mut fields = contents.split_whitespace();
+    let Some(version) = fields.next().and_then(parse_version) else {
+        return false;
+    };
+    let Some(checked_at) = fields.next().and_then(|value| value.parse::<u64>().ok()) else {
+        return false;
+    };
+    let Some(age) = now_secs().checked_sub(checked_at) else {
+        return false;
+    };
+    version == current_version() && age < LAUNCH_CHECK_CACHE_SECS
+}
+
+/// Cache only a successful "up to date" result. A version change invalidates it.
 fn stamp_cache(install_dir: &Path) {
-    let _ = std::fs::write(cache_path(install_dir), now_secs().to_string());
+    let (major, minor, patch) = current_version();
+    let _ = std::fs::write(
+        cache_path(install_dir),
+        format!("{major}.{minor}.{patch} {}", now_secs()),
+    );
 }
 
 /// Parse "v0.1.7" / "0.1.7" / "ripo-team-launcher-v1.0.44" into a tuple.
@@ -89,14 +111,19 @@ pub enum UpdateDecision {
     CheckFailed,
 }
 
-/// Ask GitHub releases for a newer `FluxRec-Setup.exe`.
-///
-/// Shows "Checking for updates\u{2026}" on the progress handle. The check
-/// runs live on every call — there is deliberately no skip-cache: stamping
-/// "nothing new" (or a transient failure) must never hide a release that
-/// appears minutes later. Returns [`UpdateDecision::CheckFailed`] on network
-/// failure, [`UpdateDecision::UpToDate`] if the check succeeded and there's
-/// nothing newer.
+/// Ask GitHub releases for a newer `FluxRec-Setup.exe`, reusing a recent
+/// successful no-update result to keep repeated game launches responsive.
+pub async fn check_for_updates_cached(install_dir: &Path, progress: &Progress) -> UpdateDecision {
+    if launch_check_is_fresh(install_dir) {
+        progress.set_status("Update check is current", 5);
+        return UpdateDecision::UpToDate;
+    }
+    check_for_updates(install_dir, progress).await
+}
+
+/// Ask GitHub releases for a newer `FluxRec-Setup.exe` with a live request.
+/// Used by explicit update actions. Only a successful no-update response is
+/// cached; failures and available updates are checked again next time.
 pub async fn check_for_updates(install_dir: &Path, progress: &Progress) -> UpdateDecision {
     progress.set_status("Checking for updates\u{2026}", 5);
 
@@ -110,9 +137,9 @@ pub async fn check_for_updates(install_dir: &Path, progress: &Progress) -> Updat
     };
 
     let decision = check_inner(&client).await;
-    // Diagnostic record of the completed check. This is not a gate: the
-    // next launch checks live again regardless.
-    stamp_cache(install_dir);
+    if matches!(&decision, UpdateDecision::UpToDate) {
+        stamp_cache(install_dir);
+    }
     decision
 }
 
