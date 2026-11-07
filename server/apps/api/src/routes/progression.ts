@@ -276,6 +276,10 @@ export const progressionRoutes = new Hono<App>({ strict: false })
 		async (c) => {
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
+			// This response belongs to the authenticated player and changes as XP is
+			// granted. Prevent browser/CDN caches from holding the value until a room
+			// transition or a fresh login.
+			c.header('Cache-Control', 'private, no-store, max-age=0')
 			const total = await getXpEarnedToday(c.env.DB, id)
 			return c.json(total)
 		}
@@ -301,6 +305,7 @@ export const progressionRoutes = new Hono<App>({ strict: false })
 			// notification hub as NaN — D1/DO coerce NaN to NULL and the pending
 			// notification insert fails its NOT NULL constraint.
 			if (!Number.isSafeInteger(id)) return c.json({ error: 'invalid player id' }, 404)
+			c.header('Cache-Control', 'private, no-store, max-age=0')
 			const progression = await getProgression(c.env.DB, id)
 			await pushProgression(c, progression)
 			return c.json(progression)
@@ -527,7 +532,10 @@ export const progressionRoutes = new Hono<App>({ strict: false })
 			parameters: BULK_ID_QUERY,
 			responses: { 200: json(ProgressionDto.array(), 'One progression per requested id') },
 		}),
-		async (c) => c.json(await getProgressions(c.env.DB, queryIds(c)))
+		async (c) => {
+			c.header('Cache-Control', 'private, no-store, max-age=0')
+			return c.json(await getProgressions(c.env.DB, queryIds(c)))
+		}
 	)
 	.post(
 		'/api/v1/progression/bulk',

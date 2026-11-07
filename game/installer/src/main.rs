@@ -665,6 +665,39 @@ pub(crate) fn extract_zip(
     Ok(())
 }
 
+/// Check the archive directory before trusting a cached 4.5 GB client ZIP.
+/// The client archive is size-checked but has no published checksum; a broken
+/// cached ZIP can otherwise pass the size check and fail on every reinstall.
+fn validate_client_zip(path: &Path) -> Result<(), String> {
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let archive = zip::ZipArchive::new(file)
+        .map_err(|error| format!("invalid ZIP archive: {error}"))?;
+    if archive.len() == 0 {
+        return Err("ZIP archive contains no entries".to_string());
+    }
+    Ok(())
+}
+
+/// Remove unkeyed range chunks left by pre-fingerprint launcher versions.
+fn remove_legacy_client_segments(path: &Path) {
+    for index in 0..segmented::SEGMENTS {
+        let mut legacy = path.as_os_str().to_owned();
+        legacy.push(format!(".seg{index}"));
+        let _ = std::fs::remove_file(PathBuf::from(legacy));
+    }
+}
+
+fn clear_client_segment_cache(path: &Path) {
+    remove_legacy_client_segments(path);
+    // `fetch_single` stores its resumable stream at `with_extension("part")`.
+    // It must also be discarded after a complete archive fails ZIP validation.
+    let single_stream_part = path.with_extension("part");
+    let _ = std::fs::remove_file(single_stream_part);
+    for url in CLIENT_ZIP_MIRRORS {
+        segmented::clear_partial_cache(path, url, None, Some(CLIENT_ZIP_SIZE));
+    }
+}
+
 /// Ensure the Windows hosts file maps ns.rec.net to the backend IP.
 /// The 2023 client resolves ns.rec.net itself via System.Net.Dns, bypassing
 /// the plugin's HTTP-level redirect. On machines where that dead hostname
@@ -1645,6 +1678,17 @@ async fn build_full_install(
     // If setup is rate-limited, closed, or restarted, completed range files
     // survive and the next attempt resumes instead of returning to zero.
     let client_zip = client_download_cache_path();
+    if client_zip.is_file() && validate_client_zip(&client_zip).is_err() {
+        println!("[client] cached archive is invalid; clearing it before download.");
+        std::fs::remove_file(&client_zip).map_err(|error| {
+            format!(
+                "remove invalid cached client archive {}: {error}",
+                client_zip.display()
+            )
+        })?;
+        clear_client_segment_cache(&client_zip);
+    }
+    remove_legacy_client_segments(&client_zip);
     download_mirrored(
         client,
         CLIENT_ZIP_MIRRORS,
@@ -1655,6 +1699,48 @@ async fn build_full_install(
         Some((progress, "Downloading game files…")),
     )
     .await?;
+    if let Err(error) = validate_client_zip(&client_zip) {
+        let _ = std::fs::remove_file(&client_zip);
+        clear_client_segment_cache(&client_zip);
+        println!("[client] range download produced an invalid ZIP ({error}); retrying as one stream.");
+        let mut retry_error = Some(error);
+        for url in CLIENT_ZIP_MIRRORS {
+            // The stream cache is shared by mirror URLs. Never resume a failed
+            // attempt from one origin against another origin.
+            let _ = std::fs::remove_file(client_zip.with_extension("part"));
+            match segmented::download_single_stream(
+                client,
+                url,
+                &client_zip,
+                None,
+                Some(CLIENT_ZIP_SIZE),
+                "client single-stream retry",
+                Some((progress, "Downloading game files…")),
+            )
+            .await
+            {
+                Ok(()) => match validate_client_zip(&client_zip) {
+                    Ok(()) => {
+                        retry_error = None;
+                        break;
+                    }
+                    Err(error) => {
+                        let _ = std::fs::remove_file(&client_zip);
+                        retry_error = Some(format!("single-stream ZIP validation failed: {error}"));
+                    }
+                },
+                Err(error) => {
+                    retry_error = Some(format!("single-stream download failed: {error}"));
+                }
+            }
+        }
+        if let Some(error) = retry_error {
+            let _ = std::fs::remove_file(&client_zip);
+            return Err(format!(
+                "downloaded client archive was invalid ({error}); cache cleared for a clean retry"
+            ));
+        }
+    }
     // AV hardening (defender.rs): strip the Mark of the Web from the
     // archive before extracting it.
     defender::unblock_file(&client_zip);

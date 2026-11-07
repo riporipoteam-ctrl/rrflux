@@ -711,7 +711,17 @@ app.get(
 			}
 		} catch (e) {
 			if (e instanceof BlobStoreNotConfiguredError) return serveFallback()
-			if (e instanceof BlobReadTimeoutError) return serveFallback()
+			if (e instanceof BlobReadTimeoutError) {
+				// A timeout is transient, not proof that the image is missing. Returning
+				// the successful 1x1 placeholder caused clients/CDN caches to keep a black
+				// thumbnail after a brief blob-store stall. Let clients retry instead.
+				const headers = new Headers({
+					'cache-control': 'no-store',
+					'retry-after': '1',
+				})
+				applyStubSignature(headers, signing)
+				return new Response(null, { status: 503, headers })
+			}
 			throw e
 		}
 		if (!read) return serveFallback()

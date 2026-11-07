@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { describeRoute } from 'hono-openapi'
 import { z } from 'zod'
 
-import { putBlob } from '@repo/blob-store'
+import { deleteBlobs, putBlob } from '@repo/blob-store'
 import {
 	createGift,
 	deletePresence,
@@ -396,6 +396,120 @@ export const adminRoutes = new Hono<App>({ strict: false })
 		}
 	)
 
+	// ---- Global room loading screen ---------------------------------------
+	.post('/api/admin/v1/loading-screen/set', async (c) => {
+		const denied = requireAdminKey(c)
+		if (denied) return denied
+
+		let form: FormData
+		try {
+			form = await c.req.formData()
+		} catch {
+			return c.json({ success: false as const, error: 'multipart_form_required' }, 400)
+		}
+		const title = String(form.get('title') ?? '').trim()
+		const subtitle = String(form.get('subtitle') ?? '').trim()
+		if (title.length === 0 || title.length > 120 || subtitle.length === 0 || subtitle.length > 240) {
+			return c.json({ success: false as const, error: 'title_or_subtitle_invalid' }, 400)
+		}
+		const image = form.get('image')
+		if (!(image instanceof File)) {
+			return c.json({ success: false as const, error: 'image_must_be_a_file' }, 400)
+		}
+		if (image.size === 0 || image.size > MAX_ANNOUNCEMENT_IMAGE_BYTES) {
+			return c.json({ success: false as const, error: 'image_size_invalid' }, 413)
+		}
+		const mime = image.type.toLowerCase()
+		const ext = mime === 'image/png' ? '.png' : mime === 'image/jpeg' ? '.jpg' : null
+		if (ext === null) {
+			return c.json({ success: false as const, error: 'image_must_be_png_or_jpeg' }, 415)
+		}
+
+		const imageBytes = await image.arrayBuffer()
+		const signature = new Uint8Array(imageBytes.slice(0, 8))
+		const isPng =
+			ext === '.png' &&
+			signature.length === 8 &&
+			[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every(
+				(byte, index) => signature[index] === byte
+			)
+		const isJpeg =
+			ext === '.jpg' && signature[0] === 0xff && signature[1] === 0xd8 && signature[2] === 0xff
+		if (!isPng && !isJpeg) {
+			return c.json({ success: false as const, error: 'image_content_invalid' }, 415)
+		}
+
+		const previous = await c.env.DB.prepare(
+			'SELECT data FROM global_loading_screen WHERE id = 1'
+		).first<{ data: string }>()
+		const imageName = `loading-screens/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}${ext}`
+		try {
+			await putBlob(c.env, 'IMAGES', imageName, imageBytes, { contentType: mime })
+		} catch (error) {
+			logger.error('failed to store global loading screen image', {
+				error: error instanceof Error ? error.message : String(error),
+			})
+			return c.json({ success: false as const, error: 'image_storage_failed' }, 503)
+		}
+
+		const updatedAt = new Date().toISOString()
+		const data = JSON.stringify({
+			ImageName: imageName,
+			Title: title,
+			Subtitle: subtitle,
+			UpdatedAt: updatedAt,
+		})
+		try {
+			await c.env.DB.prepare(
+				`INSERT INTO global_loading_screen (id, data) VALUES (1, ?1)
+				 ON CONFLICT(id) DO UPDATE SET data = excluded.data`
+			)
+				.bind(data)
+				.run()
+		} catch (error) {
+			await deleteBlobs(c.env, 'IMAGES', imageName).catch(() => {})
+			logger.error('failed to save global loading screen', {
+				error: error instanceof Error ? error.message : String(error),
+			})
+			return c.json({ success: false as const, error: 'loading_screen_storage_failed' }, 503)
+		}
+
+		if (previous) {
+			try {
+				const oldName = (JSON.parse(previous.data) as { ImageName?: unknown }).ImageName
+				if (typeof oldName === 'string' && oldName.startsWith('loading-screens/')) {
+					await deleteBlobs(c.env, 'IMAGES', oldName)
+				}
+			} catch (error) {
+				logger.warn('failed to remove replaced global loading screen image', {
+					error: error instanceof Error ? error.message : String(error),
+				})
+			}
+		}
+		return c.json({ success: true as const, imageName, title, subtitle, updatedAt })
+	})
+	.post('/api/admin/v1/loading-screen/clear', async (c) => {
+		const denied = requireAdminKey(c)
+		if (denied) return denied
+
+		const previous = await c.env.DB.prepare(
+			'SELECT data FROM global_loading_screen WHERE id = 1'
+		).first<{ data: string }>()
+		await c.env.DB.prepare('DELETE FROM global_loading_screen WHERE id = 1').run()
+		if (previous) {
+			try {
+				const imageName = (JSON.parse(previous.data) as { ImageName?: unknown }).ImageName
+				if (typeof imageName === 'string' && imageName.startsWith('loading-screens/')) {
+					await deleteBlobs(c.env, 'IMAGES', imageName)
+				}
+			} catch (error) {
+				logger.warn('failed to remove cleared global loading screen image', {
+					error: error instanceof Error ? error.message : String(error),
+				})
+			}
+		}
+		return c.json({ success: true as const, cleared: true as const })
+	})
 	// ---- Flux Rec+ membership ---------------------------------------------
 	// hasPlus is what auth stamps into the token's `rn.plus` claim, and econ's
 	// UpdateAndGetSubscription reads that claim plus plusUntil for expiry — so the

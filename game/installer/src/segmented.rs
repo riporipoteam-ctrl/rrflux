@@ -22,7 +22,7 @@ use tokio::io::AsyncWriteExt;
 
 /// Number of parallel segments for large files.
 ///
-/// Keep eight segment files so interrupted downloads from older launcher builds
+/// Keep a stable eight-part layout so interrupted downloads from this build
 /// remain resumable. Limit active requests below the archive host's rate ceiling.
 pub const SEGMENTS: usize = 8;
 /// The archive host returned HTTP 429 for two of eight concurrent 1 MiB range
@@ -294,6 +294,42 @@ fn retry_delay_seconds(attempt: u32, retry_after: Option<u64>, segment_start: u6
     base + (segment_start / (1024 * 1024)) % 5
 }
 
+fn segment_cache_paths(
+    dest: &Path,
+    url: &str,
+    expected_md5: Option<&str>,
+    expected_size: Option<u64>,
+) -> Vec<PathBuf> {
+    let mut cache_fingerprint = md5::Context::new();
+    cache_fingerprint.consume(url.as_bytes());
+    cache_fingerprint.consume(expected_md5.unwrap_or("").as_bytes());
+    if let Some(size) = expected_size {
+        cache_fingerprint.consume(size.to_le_bytes());
+    }
+    cache_fingerprint.consume((SEGMENTS as u64).to_le_bytes());
+    let cache_fingerprint = format!("{:x}", cache_fingerprint.compute());
+    (0..SEGMENTS)
+        .map(|index| {
+            let mut path = dest.as_os_str().to_owned();
+            path.push(format!(".{cache_fingerprint}.seg{index}"));
+            PathBuf::from(path)
+        })
+        .collect()
+}
+
+/// Clear resumable ranges after the assembled file fails format validation.
+/// Otherwise a clean retry could concatenate the same bad cached chunks again.
+pub fn clear_partial_cache(
+    dest: &Path,
+    url: &str,
+    expected_md5: Option<&str>,
+    expected_size: Option<u64>,
+) {
+    for path in segment_cache_paths(dest, url, expected_md5, expected_size) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 /// Single-stream fallback with progress + verification.
 async fn fetch_single(
     client: &reqwest::Client,
@@ -344,6 +380,21 @@ async fn fetch_single(
         return Err(format!("[{label}] verification failed after download"));
     }
     Ok(())
+}
+
+/// Retry a large download as one stream when its range-assembled archive fails
+/// format validation. This is intentionally a recovery path; normal downloads
+/// continue using the faster segmented path.
+pub async fn download_single_stream(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    expected_md5: Option<&str>,
+    expected_size: Option<u64>,
+    label: &str,
+    progress: Option<(&crate::progress::Progress, &'static str)>,
+) -> Result<(), String> {
+    fetch_single(client, url, dest, expected_md5, expected_size, label, progress).await
 }
 
 fn fmt_eta(secs: u64) -> String {
@@ -424,13 +475,11 @@ pub async fn download_segmented(
 
     println!("[{label}] segmented download: {SEGMENTS} parallel ranges ({total} bytes).");
     let ranges = segment_ranges(total, SEGMENTS);
-    let seg_paths: Vec<PathBuf> = (0..ranges.len())
-        .map(|i| {
-            let mut p = dest.as_os_str().to_owned();
-            p.push(format!(".seg{i}"));
-            PathBuf::from(p)
-        })
-        .collect();
+    // Resume only chunks downloaded from the same immutable source and with
+    // the same expected file identity. Older builds stored chunks as `.seg0`,
+    // etc.; those unkeyed files could be mixed into a later download and yield
+    // a same-size but invalid ZIP archive.
+    let seg_paths = segment_cache_paths(dest, url, expected_md5, expected_size);
     // v1.0.14: Ensure parent dir exists (os error 3 fix). The dest's parent
     // should exist, but be explicit — a missing dir gives the cryptic
     // "system cannot find the path specified" error.

@@ -830,6 +830,31 @@ function roomEnvelope(c: Context<App>, value: unknown, error = '') {
 	return c.json({ success: error === '', error, value })
 }
 
+/** Apply the operator's optional global loading screen without changing room saves. */
+async function withGlobalLoadingScreen<T extends object>(db: D1Database, room: T): Promise<T> {
+	const row = await db
+		.prepare('SELECT data FROM global_loading_screen WHERE id = 1')
+		.first<{ data: string }>()
+	if (!row) return room
+
+	try {
+		const screen = JSON.parse(row.data) as Record<string, unknown>
+		if (typeof screen.ImageName !== 'string' || screen.ImageName.trim() === '') return room
+		return {
+			...room,
+			LoadScreens: [
+				{
+					ImageName: screen.ImageName,
+					Title: typeof screen.Title === 'string' ? screen.Title : '',
+					Subtitle: typeof screen.Subtitle === 'string' ? screen.Subtitle : '',
+				},
+			],
+		} as T
+	} catch {
+		return room
+	}
+}
+
 /**
  * The same envelope for the ban write, whose `value` is the BAN rather than the room —
  * a ban isn't part of the room the client renders, so there is no updated room to send.
@@ -867,17 +892,12 @@ async function ownedRoomsExcludingDorm(c: Context<App>) {
 const DEFAULT_SUGGESTION_COUNT = 10
 
 /**
- * The XP settings every room reports (`GET /rooms/{roomId}/experience`). Constants because
- * nothing stores them per room and nothing enforces them: the `api` worker's progression
- * grants XP without a room-scoped daily cap, so these are what the client is told, not a
- * limit this server applies.
- *
- * Disabled, which is the honest answer here — no room awards XP. `DailyLimit` is kept at
- * the reference's number rather than zeroed: it is the cap that WOULD apply, and the client
- * reads both keys whatever `Enabled` says.
+ * Match the live 2026 room-experience contract. The room worker reports these client-facing
+ * settings; XP balances are still persisted by the econ worker and pushed through the
+ * progression notification hub.
  */
-const ROOM_XP_ENABLED = false
-const ROOM_XP_DAILY_LIMIT = 1000
+const ROOM_XP_ENABLED = true
+const ROOM_XP_DAILY_LIMIT = 10000
 
 const app = new Hono<App>()
 	.use(
@@ -913,8 +933,9 @@ const app = new Hono<App>()
 		(c) => c.json({ service: 'rooms', status: 'ok' })
 	)
 
-	// Room lookup by `id` (first match wins) or `name`. 400s when neither is
-	// supplied and returns `{}` when nothing matches.
+	// Room lookup by `id` (first match wins) or `name`. A staff-managed global
+	// loading screen overrides the room's saved screen only in this response;
+	// clearing it reveals the untouched room value again.
 	.get(
 		'/rooms',
 		describeRoute({
@@ -943,10 +964,10 @@ const app = new Hono<App>()
 			if (idParam) {
 				const id = firstId(idParam)
 				const room = id === undefined ? null : await getRoomById(c.env.DB, id)
-				return c.json(room ?? {})
+				return c.json(room ? await withGlobalLoadingScreen(c.env.DB, room) : {})
 			}
 			const room = await getRoomByName(c.env.DB, nameParam ?? '')
-			return c.json(room ?? {})
+			return c.json(room ? await withGlobalLoadingScreen(c.env.DB, room) : {})
 		}
 	)
 
@@ -1650,10 +1671,19 @@ const app = new Hono<App>()
 			summary: 'Available Room Boost consumables',
 			description: 'The number of unspent Room Boost consumables owned by the player in the path.',
 			parameters: [roomIdParam, playerIdParam],
-			responses: { 200: json(RoomBoostCount, 'The boost count') },
+			security: AUTHED,
+			responses: {
+				200: json(RoomBoostCount, 'The boost count'),
+				401: UNAUTHORIZED_RESPONSE,
+				403: FORBIDDEN_RESPONSE,
+			},
 		}),
 		async (c) => {
+			const accountId = await authedAccountId(c)
+			if (accountId === null) return unauthorized(c)
 			const playerId = Number.parseInt(c.req.param('playerId'), 10)
+			if (!Number.isSafeInteger(playerId) || playerId !== accountId) return c.body(null, 403)
+			c.header('Cache-Control', 'private, no-store, max-age=0')
 			const row = await c.env.DB.prepare(
 				`SELECT COALESCE(SUM(count), 0) AS total
 				 FROM consumable
