@@ -114,23 +114,32 @@ export async function consumeConsumable(
 	id: number,
 	deltaCount: number
 ): Promise<ConsumeResult | null> {
-	const row = await db
-		.prepare(
-			'SELECT consumable_item_desc, count, created_at FROM consumable WHERE id = ?1 AND account_id = ?2'
-		)
-		.bind(id, accountId)
-		.first<{ consumable_item_desc: string; count: number; created_at: string }>()
-	if (row === null) return null
-
-	const remaining = row.count - deltaCount
-	if (remaining > 0) {
-		await db.prepare('UPDATE consumable SET count = ?2 WHERE id = ?1').bind(id, remaining).run()
-	} else {
-		await db
-			.prepare('DELETE FROM consumable WHERE id = ?1 AND account_id = ?2')
+	// Keep the read, decrement, zero-row cleanup, and read-back in one D1 batch.
+	// Separate calls let two rapid uses read the same count and both report a
+	// successful consumption, leaving the client inventory out of sync.
+	const select = () =>
+		db
+			.prepare(
+				'SELECT consumable_item_desc, count, created_at FROM consumable WHERE id = ?1 AND account_id = ?2'
+			)
 			.bind(id, accountId)
-			.run()
-	}
+	const [before, , , after] = await db.batch<{
+		consumable_item_desc: string
+		count: number
+		created_at: string
+	}>([
+		select(),
+		db
+			.prepare('UPDATE consumable SET count = count - ?3 WHERE id = ?1 AND account_id = ?2')
+			.bind(id, accountId, deltaCount),
+		db
+			.prepare('DELETE FROM consumable WHERE id = ?1 AND account_id = ?2 AND count <= 0')
+			.bind(id, accountId),
+		select(),
+	])
+	const row = before.results[0]
+	if (row === undefined) return null
+	const remaining = after.results[0]?.count ?? 0
 	return {
 		id,
 		consumableItemDesc: row.consumable_item_desc,
