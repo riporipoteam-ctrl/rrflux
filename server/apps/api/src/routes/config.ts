@@ -7,6 +7,7 @@ import { validateAndGetVersion } from '@repo/jwt'
 import apiConfigV2 from '../../static/api-config-v2.json'
 import gameConfigsV1All2025 from '../../static/gameconfigs-v1-all-2025.json'
 import gameConfigsV1All from '../../static/gameconfigs-v1-all.json'
+import gameConfigsV1All2026Overrides from '../../static/gameconfigs-v1-2026-overrides.json'
 import installerVersion from '../../static/installer-version.json'
 import {
 	AmplitudeConfig,
@@ -21,6 +22,14 @@ import {
 } from '../openapi'
 
 import type { App } from '../context'
+
+const gameConfigsV1All2026 = gameConfigsV1All2025.map((entry) => ({
+	...entry,
+	Value:
+		gameConfigsV1All2026Overrides[
+			entry.Key as keyof typeof gameConfigsV1All2026Overrides
+		] ?? entry.Value,
+}))
 
 // ---- Config / version ------------------------------------------------------
 export const configRoutes = new Hono<App>({ strict: false })
@@ -166,7 +175,13 @@ export const configRoutes = new Hono<App>({ strict: false })
 		async (c) => {
 			const version = await validateAndGetVersion(c.req.raw, await c.env.JWT_SECRET.get())
 			const newerThanTarget = version !== null && version > GAME_VERSION
-			return c.json(newerThanTarget ? gameConfigsV1All2025 : gameConfigsV1All)
+			return c.json(
+				version?.startsWith('20260323.')
+					? gameConfigsV1All2026
+					: newerThanTarget
+						? gameConfigsV1All2025
+						: gameConfigsV1All
+			)
 		}
 	)
 
