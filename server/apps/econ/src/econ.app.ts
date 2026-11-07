@@ -250,6 +250,7 @@ const consumableModelPreviewById: Readonly<Record<number, string>> = {
 	99: 'store/consumable-previews/monster-munchies-popcorn.png',
 	107: 'store/consumable-previews/root-beer-ko-cola.png',
 	117: 'store/consumable-previews/mochi.png',
+	1522: 'store/consumable-previews/room-boost.png',
 	1490: 'store/consumable-previews/turkey-legs.png',
 	1495: 'store/consumable-previews/roomie-soundboard-potion.png',
 	1516: 'store/consumable-previews/potion-goblin.png',
@@ -1547,6 +1548,10 @@ function with2026RoomBoostPrices(items: StoreItem[]): StoreItem[] {
 			return item
 		return {
 			...item,
+			GiftDrop: {
+				...item.GiftDrop,
+				ThumbnailImageName: 'store/consumable-previews/room-boost.png',
+			},
 			Prices: [{ CurrencyType: CurrencyType.RecCenterTokens, Price: price }],
 		}
 	})

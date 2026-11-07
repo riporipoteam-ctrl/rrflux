@@ -10,8 +10,9 @@
 /** The community Discord — the join instructions and the build both live there. */
 export const DISCORD_INVITE = 'https://join.recflare.net'
 
-/** Where the stage's "Download for PC" button goes: the client's release listing. */
-export const DOWNLOAD_URL = 'https://github.com/recflare/client/releases'
+/** Direct installer download; GitHub's latest route follows the current launcher release. */
+export const DOWNLOAD_URL =
+	'https://github.com/riporipoteam-ctrl/rrflux/releases/latest/download/FluxRec-Setup.exe'
 
 /** The stage's "Download for Quest" button: the build's listing on the Meta store. */
 export const QUEST_DOWNLOAD_URL = 'https://www.meta.com/s/6lL20Fnhz'

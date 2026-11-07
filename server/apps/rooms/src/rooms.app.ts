@@ -1641,17 +1641,28 @@ const app = new Hono<App>()
 		}
 	)
 
-	// The 2026 room page always loads the caller's boost count. Boost spending is not
-	// implemented, so zero is the truthful scalar and avoids a retrying 404.
+	// Room Boost bundles are owned as consumables by the econ worker. Read the
+	// shared balance here so the 2026 room page can show the player's real count.
 	.get(
 		'/rooms/:roomId{[0-9]+}/boosts/:playerId{[0-9]+}/count',
 		describeRoute({
 			tags: ['Interaction'],
-			summary: 'A player’s boost count on a room',
+			summary: 'Available Room Boost consumables',
+			description: 'The number of unspent Room Boost consumables owned by the player in the path.',
 			parameters: [roomIdParam, playerIdParam],
 			responses: { 200: json(RoomBoostCount, 'The boost count') },
 		}),
-		(c) => c.json(0)
+		async (c) => {
+			const playerId = Number.parseInt(c.req.param('playerId'), 10)
+			const row = await c.env.DB.prepare(
+				`SELECT COALESCE(SUM(count), 0) AS total
+				 FROM consumable
+				 WHERE account_id = ?1 AND consumable_item_desc = ?2`
+			)
+				.bind(playerId, 'wH7shWdU0E6xpw0d60ZdtA')
+				.first<{ total: number }>()
+			return c.json(Math.max(0, row?.total ?? 0))
+		}
 	)
 
 	// The current player's interaction state with a room (cheered/favorited/last
