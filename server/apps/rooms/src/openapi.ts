@@ -315,7 +315,7 @@ export const RoomDto = z.object({
 	Stats: RoomStatsDto,
 	BoostCount: z
 		.int()
-		.describe('Boosts on the room. Nothing grants boosts here, so always 0 — but present'),
+		.describe('Number of boosts applied to this room'),
 	CurrentSnapshotId: z
 		.int()
 		.nullable()

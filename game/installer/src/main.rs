@@ -534,20 +534,27 @@ pub(crate) fn extract_zip(
     // the metadata then process in parallel)
     let mut entries = Vec::new();
     for i in 0..n {
-        if let Ok(file) = archive.by_index(i) {
-            let name = file.name().to_string();
-            let is_dir = file.is_dir();
-            entries.push((i, name, is_dir));
-        }
+        let file = archive
+            .by_index(i)
+            .map_err(|e| format!("{label}: reading ZIP entry {i}: {e}"))?;
+        let name = file.name().to_string();
+        let relative_path = file
+            .enclosed_name()
+            .ok_or_else(|| format!("{label}: ZIP entry uses an unsafe path: {name}"))?
+            .to_path_buf();
+        entries.push((i, name, relative_path, file.is_dir()));
     }
     drop(archive);
+    if entries.is_empty() {
+        return Err(format!("{label}: ZIP archive contains no entries"));
+    }
 
     // Extract in parallel using rayon-like thread pool (std only)
     let num_threads = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
         .min(8);
-    let chunk_size = (entries.len() + num_threads - 1) / num_threads;
+    let chunk_size = ((entries.len() + num_threads - 1) / num_threads).max(1);
 
     std::thread::scope(|s| {
         for chunk in entries.chunks(chunk_size) {
@@ -576,29 +583,55 @@ pub(crate) fn extract_zip(
                         return;
                     }
                 };
-                for (i, name, is_dir) in chunk {
+                for (i, name, relative_path, is_dir) in chunk {
+                    let out_path = dest_dir.join(relative_path);
                     if is_dir {
-                        let _ = std::fs::create_dir_all(dest_dir.join(&name));
+                        if let Err(e) = std::fs::create_dir_all(&out_path) {
+                            errors.lock().unwrap().push(format!(
+                                "create directory {}: {e}",
+                                out_path.display()
+                            ));
+                        }
                     } else {
                         match archive.by_index(i) {
                             Ok(mut file) => {
-                                let out_path = dest_dir.join(&name);
-                                if let Some(parent) = out_path.parent() {
-                                    let _ = std::fs::create_dir_all(parent);
-                                }
-                                match std::fs::File::create(&out_path) {
-                                    Ok(mut out) => {
-                                        if std::io::copy(&mut file, &mut out).is_err() {
-                                            errors.lock().unwrap().push(format!("copy failed: {}", name));
+                                let parent_ready = match out_path.parent() {
+                                    Some(parent) => match std::fs::create_dir_all(parent) {
+                                        Ok(()) => true,
+                                        Err(e) => {
+                                            errors.lock().unwrap().push(format!(
+                                                "create directory {} for {name}: {e}",
+                                                parent.display()
+                                            ));
+                                            false
                                         }
-                                    }
-                                    Err(e) => {
-                                        errors.lock().unwrap().push(format!("create {}: {}", name, e));
+                                    },
+                                    None => true,
+                                };
+                                if parent_ready {
+                                    match std::fs::File::create(&out_path) {
+                                        Ok(mut out) => {
+                                            if let Err(e) = std::io::copy(&mut file, &mut out) {
+                                                let _ = std::fs::remove_file(&out_path);
+                                                errors.lock().unwrap().push(format!(
+                                                    "extract {name} to {}: {e}",
+                                                    out_path.display()
+                                                ));
+                                            }
+                                        }
+                                        Err(e) => {
+                                            errors.lock().unwrap().push(format!(
+                                                "create {}: {e}",
+                                                out_path.display()
+                                            ));
+                                        }
                                     }
                                 }
                             }
                             Err(e) => {
-                                errors.lock().unwrap().push(format!("entry {}: {}", name, e));
+                                errors.lock().unwrap().push(format!(
+                                    "open ZIP entry {name} (index {i}): {e}"
+                                ));
                             }
                         }
                     }

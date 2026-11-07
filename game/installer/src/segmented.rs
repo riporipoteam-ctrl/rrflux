@@ -118,19 +118,24 @@ async fn fetch_segment(
     let mut attempt = 0u32;
     loop {
         attempt += 1;
-        let have = std::fs::metadata(dest)
+        let existing = std::fs::metadata(dest)
             .map(|m| m.len())
-            .unwrap_or(0)
-            .min(want);
+            .unwrap_or(0);
+        // A previous launcher may have written this segment using a different
+        // partition size. Never concatenate bytes past this segment's range.
+        let have = if existing > want {
+            let _ = std::fs::remove_file(dest);
+            done.fetch_sub(existing, Ordering::Relaxed);
+            0
+        } else {
+            existing
+        };
         if have == want {
             return Ok(()); // already complete from an earlier attempt/run
         }
         let resuming = have > 0;
-        let range_hdr = if resuming {
-            format!("bytes={}-{}", start + have, end)
-        } else {
-            format!("bytes={start}-{end}")
-        };
+        let requested_start = start + have;
+        let range_hdr = format!("bytes={requested_start}-{end}");
         let response = tokio::time::timeout(
             Duration::from_secs(FIRST_BYTE_TIMEOUT_SECS),
             client.get(url).header("Range", range_hdr).send(),
@@ -187,6 +192,39 @@ async fn fetch_segment(
             tokio::time::sleep(Duration::from_secs(wait)).await;
             continue;
         }
+        let content_range = resp
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        let expected_range = format!("bytes {requested_start}-{end}/");
+        if !content_range.starts_with(&expected_range) {
+            let msg = format!(
+                "segment {start}-{end}: server returned Content-Range `{content_range}` for bytes {requested_start}-{end}"
+            );
+            if attempt >= SEGMENT_ATTEMPTS {
+                return Err(format!("[{label}] {msg}"));
+            }
+            let wait = retry_delay_seconds(attempt, None, start);
+            println!("[{label}] {msg}; retrying in {wait}s.");
+            tokio::time::sleep(Duration::from_secs(wait)).await;
+            continue;
+        }
+        let expected_response_bytes = end - requested_start + 1;
+        if let Some(content_length) = resp.content_length() {
+            if content_length != expected_response_bytes {
+                let msg = format!(
+                    "segment {start}-{end}: server declared {content_length} bytes, expected {expected_response_bytes}"
+                );
+                if attempt >= SEGMENT_ATTEMPTS {
+                    return Err(format!("[{label}] {msg}"));
+                }
+                let wait = retry_delay_seconds(attempt, None, start);
+                println!("[{label}] {msg}; retrying in {wait}s.");
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+                continue;
+            }
+        }
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -212,6 +250,12 @@ async fn fetch_segment(
                     break;
                 }
                 Ok(Some(Ok(bytes))) => {
+                    if bytes.len() as u64 > expected_response_bytes.saturating_sub(written) {
+                        failed = Some(format!(
+                            "segment {start}-{end}: server sent more than {expected_response_bytes} bytes"
+                        ));
+                        break;
+                    }
                     if let Err(e) = file.write_all(&bytes).await {
                         failed = Some(e.to_string());
                         break;
@@ -222,6 +266,7 @@ async fn fetch_segment(
             }
         }
         let _ = file.flush().await;
+        let _ = file.sync_all().await;
         drop(file);
         // Partial file is KEPT: the next attempt resumes from have + written.
         // The shared counter already includes those bytes, so no rewind.
