@@ -596,10 +596,8 @@ const app = new Hono<App>()
 		}
 	)
 
-// Development signaling endpoint: publishes one microphone track to the SFU.
-// Audio processing and the client redirect require separate integration.
+// Signed, short-lived Roomie credentials gate the SFU bridge in every environment.
 app.get('/roomieai/sfu/audio', async (c) => {
-	if (c.env.ENVIRONMENT !== 'development' && c.env.ENVIRONMENT !== 'VITEST') return c.body(null, 404)
 	const token = c.req.query('token') || ''
 	const claims = await verifyRoomieClientSecret(await c.env.JWT_SECRET.get(), token)
 	if (!claims) return c.body(null, 401)
@@ -611,7 +609,6 @@ app.get('/roomieai/sfu/audio', async (c) => {
 })
 
 async function roomieSfuOffer(c: Context<App>, rawAnswer: boolean) {
-	if (c.env.ENVIRONMENT !== 'development' && c.env.ENVIRONMENT !== 'VITEST') return c.body(null, 404)
 	const authorization = /^Bearer\s+(\S+)$/i.exec(c.req.header('authorization') || '')?.[1]
 	const contentType = c.req.header('content-type') || ''
 	const rawBody = await c.req.text()
@@ -657,7 +654,6 @@ app.post('/v1/realtime/calls', c => roomieSfuOffer(c, true))
 
 // Called after the player has applied the initial SDP answer and connected.
 app.post('/roomieai/sfu/:step{ready|answer}', async (c) => {
-	if (c.env.ENVIRONMENT !== 'development' && c.env.ENVIRONMENT !== 'VITEST') return c.body(null, 404)
 	const match = /^Bearer\s+(\S+)$/i.exec(c.req.header('authorization') || '')
 	const claims = match ? await verifyRoomieClientSecret(await c.env.JWT_SECRET.get(), match[1]) : null
 	if (!match || !claims) return c.body(null, 401)

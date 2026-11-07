@@ -132,6 +132,17 @@ export function randomizedLevelReward(accountId: number, level: number): LevelRe
 /** The last level the ladder defines. At the top XP still accrues, but nothing levels. */
 export const MAX_LEVEL = LEVEL_REQUIRED_XP.length - 1
 
+/** Keep database rows and outbound progression frames inside the shipped ladder. */
+function normalizeLevel(level: number): number {
+	if (!Number.isFinite(level)) return 1
+	return Math.max(1, Math.min(MAX_LEVEL, Math.trunc(level)))
+}
+
+function normalizeXp(xp: number): number {
+	if (!Number.isFinite(xp) || xp <= 0) return 0
+	return Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(xp))
+}
+
 /**
  * Spend XP on levels: while the current level's cost is met, subtract it and step up. The
  * remainder stays as progress into the next level, and a big enough grant can cross several
@@ -142,8 +153,8 @@ export const MAX_LEVEL = LEVEL_REQUIRED_XP.length - 1
  * and a future config could zero one by mistake.
  */
 export function applyLevelUps(level: number, xp: number): { level: number; xp: number } {
-	let currentLevel = level
-	let remaining = xp
+	let currentLevel = normalizeLevel(level)
+	let remaining = normalizeXp(xp)
 	while (currentLevel < MAX_LEVEL) {
 		const cost = LEVEL_REQUIRED_XP[currentLevel] ?? 0
 		if (cost <= 0 || remaining < cost) break
@@ -187,46 +198,65 @@ export function levelsReached(grant: XpGrant): number[] {
  * with the levels gained, which is what a caller announces ("you reached level 3") and what
  * a future level-up reward would hang off.
  *
- * The XP add is one statement, so two rewards landing together can't both read the same
- * stale total and write it back — the client fires reward requests off right after a match.
- * The level-up is a second write on the row the first one returned: the ladder is a pure
- * function of that row, so a concurrent grant either lands before it (and is included) or
- * after it (and levels up itself). Neither loses XP; the worst case is a level-up announced
- * one grant late.
+ * XP is added atomically, then the level conversion uses compare-and-swap retries so a
+ * concurrent grant cannot overwrite the newer XP or level. A single winner converts each
+ * threshold crossing, keeping reward counts from being duplicated by concurrent requests.
  *
  * Non-positive amounts are dropped rather than written: nothing takes XP away, and a 0 XP
  * grant would otherwise create a row that says the same as no row at all.
  */
 export async function addXp(db: D1Database, accountId: number, xp: number): Promise<XpGrant> {
-	if (xp <= 0) return { progression: await getProgression(db, accountId), levelsGained: 0 }
+	const grant = normalizeXp(xp)
+	if (grant <= 0) return { progression: await getProgression(db, accountId), levelsGained: 0 }
 	const row = await db
 		.prepare(
 			`INSERT INTO progression (account_id, level, xp) VALUES (?1, 1, ?2)
 			 ON CONFLICT (account_id) DO UPDATE SET xp = progression.xp + excluded.xp
 			 RETURNING level, xp`
 		)
-		.bind(accountId, xp)
+		.bind(accountId, grant)
 		.first<{ level: number; xp: number }>()
 	if (row === null) return { progression: defaultProgression(accountId), levelsGained: 0 }
 
 	// Log the grant so xpEarnedToday can be computed from real data.
 	await db
 		.prepare('INSERT INTO xp_history (account_id, xp_delta) VALUES (?1, ?2)')
-		.bind(accountId, xp)
+		.bind(accountId, grant)
 		.run()
 
-	const leveled = applyLevelUps(row.level, row.xp)
-	const levelsGained = leveled.level - row.level
-	if (levelsGained > 0) {
-		await db
-			.prepare('UPDATE progression SET level = ?2, xp = ?3 WHERE account_id = ?1')
-			.bind(accountId, leveled.level, leveled.xp)
-			.run()
+	// The XP upsert above is atomic, but leveling is a second write. Use compare-and-swap
+	// so concurrent grants cannot overwrite one another's level or remaining XP. A failed
+	// CAS means another grant changed the row; reload and compute from that latest state.
+	let current: { level: number; xp: number } | null = row
+	for (let attempt = 0; attempt < 32; attempt++) {
+		if (current === null) break
+		const leveled = applyLevelUps(current.level, current.xp)
+		const currentLevel = normalizeLevel(current.level)
+		if (leveled.level === current.level && leveled.xp === current.xp) {
+			return {
+				progression: { PlayerId: accountId, Level: leveled.level, XP: leveled.xp },
+				levelsGained: 0,
+			}
+		}
+		const updated = await db
+			.prepare(
+				'UPDATE progression SET level = ?2, xp = ?3 WHERE account_id = ?1 AND level = ?4 AND xp = ?5 RETURNING level, xp'
+			)
+			.bind(accountId, leveled.level, leveled.xp, current.level, current.xp)
+			.first<{ level: number; xp: number }>()
+		if (updated !== null) {
+			return {
+				progression: { PlayerId: accountId, Level: updated.level, XP: updated.xp },
+				levelsGained: Math.max(0, updated.level - currentLevel),
+			}
+		}
+		current = await db
+			.prepare('SELECT level, xp FROM progression WHERE account_id = ?1')
+			.bind(accountId)
+			.first<{ level: number; xp: number }>()
 	}
-	return {
-		progression: { PlayerId: accountId, Level: leveled.level, XP: leveled.xp },
-		levelsGained,
-	}
+	// XP is already safely banked by the upsert. A later grant can finish level conversion.
+	throw new Error(`progression update contention for account ${accountId}`)
 }
 
 /** XP earned today (UTC) from the real grant history. 0 when nothing was earned. */
@@ -247,7 +277,7 @@ export async function getProgression(db: D1Database, accountId: number): Promise
 		.bind(accountId)
 		.first<{ level: number; xp: number }>()
 	if (row === null) return defaultProgression(accountId)
-	return { PlayerId: accountId, Level: row.level, XP: row.xp }
+	return { PlayerId: accountId, Level: normalizeLevel(row.level), XP: normalizeXp(row.xp) }
 }
 
 /**
@@ -277,6 +307,6 @@ export async function getProgressions(
 		const row = stored.get(id)
 		return row === undefined
 			? defaultProgression(id)
-			: { PlayerId: id, Level: row.level, XP: row.xp }
+			: { PlayerId: id, Level: normalizeLevel(row.level), XP: normalizeXp(row.xp) }
 	})
 }
