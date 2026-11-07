@@ -5760,6 +5760,9 @@ const app = new Hono<App>({ strict: false })
 		async (c) => {
 			const id = await authedId(c)
 			if (id === null) return unauthorized(c)
+			// Consumable mappings change immediately after purchases and use. Do not let an
+			// authenticated client or intermediary reuse an older inventory snapshot.
+			c.header('Cache-Control', 'private, no-store, max-age=0')
 			const unlocked = await getConsumables(c.env.DB, id)
 			const build = await storefrontBuild(c)
 			if (build === null || build <= LEGACY_CLIENT_BUILD) return c.json(unlocked)
