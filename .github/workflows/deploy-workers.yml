@@ -88,6 +88,9 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             changed_files="$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")"
             workers="$(printf '%s\n' "$changed_files" | sed -nE 's#^server/apps/(accounts|ai|api|auth|cdn|clubs|commerce|discovery|econ|img|lists|match|ns|rooms)/.*#\1#p' | sort -u | paste -sd, -)"
+            if printf '%s\n' "$changed_files" | grep -Fxq 'server/apps/econ/static/db/2025-1-cai.json'; then
+              echo "cai_load=true" >> "$GITHUB_OUTPUT"
+            fi
             if printf '%s\n' "$changed_files" | grep -Eq '^server/packages/'; then
               workers='auth,accounts,rooms,econ,api,lists,discovery,clubs,cdn,img,match,commerce,ai,ns'
             fi
@@ -101,7 +104,7 @@ jobs:
           echo "Selected workers: ${workers:-none}"
 
       - name: Load first-party custom avatar items
-        if: contains(steps.selected-workers.outputs.workers, 'api')
+        if: steps.selected-workers.outputs.cai_load == 'true'
         run: bun runx admin cai-load --remote
 
       - name: Deploy workers in order
