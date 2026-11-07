@@ -2965,9 +2965,9 @@ describe('econ endpoints', () => {
 			).length
 		const oldItems = await fetchItems('20250718.01')
 		const newItems = await fetchItems('20260323.14')
-		expect(countBad(oldItems)).toBe(52)
+		expect(countBad(oldItems)).toBe(incompatible.size)
 		expect(countBad(newItems)).toBe(0)
-		expect(newItems.length).toBe(oldItems.length - 52)
+		expect(newItems.length).toBe(oldItems.length - incompatible.size)
 	})
 
 	test('quest shop resolves the Suspicious Goblin Shirt to a real avatar descriptor', async () => {
