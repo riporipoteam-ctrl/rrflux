@@ -3164,7 +3164,7 @@ describe('econ endpoints', () => {
 		expect(thumbnailFor('Apple')).toBe('store/consumable-previews/red-apples.png')
 		expect(thumbnailFor('Root Beer')).toBe('store/consumable-previews/root-beer-ko-cola.png')
 		expect(thumbnailFor('Assorted Donuts')).toBe(
-			'store/consumable-previews/assorted-donuts.png'
+			'store/consumable-previews/assorted-donuts-box.png'
 		)
 		expect(thumbnailFor('87 Flavor Cake')).toBe(
 			'store/consumable-previews/87-flavor-cake.png'
