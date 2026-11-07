@@ -143,7 +143,7 @@ pub fn mark_network_check(dir: &Path) {
     let _ = std::fs::write(&p, now.to_string());
 }
 
-/// Load the saved theme; new installations use the requested light palette.
+/// Load the saved theme; new installations open in the launcher dark palette.
 pub fn load_theme() -> gui_library::Theme {
     let p = state_dir().join("theme.txt");
     theme_from_setting(&std::fs::read_to_string(&p).unwrap_or_default())
@@ -151,8 +151,8 @@ pub fn load_theme() -> gui_library::Theme {
 
 fn theme_from_setting(setting: &str) -> gui_library::Theme {
     match setting.trim() {
-        "dark" => gui_library::Theme::Dark,
-        _ => gui_library::Theme::Light,
+        "light" => gui_library::Theme::Light,
+        _ => gui_library::Theme::Dark,
     }
 }
 
@@ -162,9 +162,9 @@ mod theme_tests {
     use crate::gui_library::Theme;
 
     #[test]
-    fn fresh_or_invalid_setting_uses_light_theme() {
-        assert_eq!(theme_from_setting(""), Theme::Light);
-        assert_eq!(theme_from_setting("unknown"), Theme::Light);
+    fn fresh_or_invalid_setting_uses_dark_theme() {
+        assert_eq!(theme_from_setting(""), Theme::Dark);
+        assert_eq!(theme_from_setting("unknown"), Theme::Dark);
     }
 
     #[test]
