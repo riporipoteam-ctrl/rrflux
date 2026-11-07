@@ -9,7 +9,7 @@
 		"check:lint": "run-oxlint",
 		"check:types": "run-tsc",
 		"check:workers-types": "run-wrangler-types --check",
-		"deploy": "run-wrangler-deploy",
+		"deploy": "pnpm run migrate && run-wrangler-deploy",
 		"dev": "run-wrangler-dev",
 		"fix:workers-types": "run-wrangler-types",
 		"migrate": "run-wrangler-migrate",

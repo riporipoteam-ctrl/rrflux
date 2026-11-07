@@ -13,6 +13,7 @@ import {
 import { withCleanSpec, withNotFound, withOnError } from '@repo/hono-helpers'
 
 import { imageBytes, json, ServiceStatus } from './openapi'
+import bundledRoomImages from '../static/room-image-assets.json'
 
 import type { BlobBinding, BlobRead } from '@repo/blob-store'
 import type { Context } from 'hono'
@@ -24,6 +25,7 @@ const SIGNATURE_KEY_ID = 'KEY:RSA:p1.rec.net'
 /** Prefix extensionless keys resolve under in the shared `recflare-cdn` bucket. */
 const CDN_IMAGE_PREFIX = 'image/'
 const CANONICAL_IMAGE_ORIGIN = 'https://img.recflare.net'
+const BUNDLED_ROOM_IMAGES = bundledRoomImages as Record<string, { path: string; contentType: string }>
 
 /** Recover first-party avatar images and item thumbnails on a local blob-store miss. */
 async function fetchCanonicalImage(c: Context<App>, key: string): Promise<Response | null> {
@@ -597,6 +599,26 @@ app.get(
 			c.req.query('height'),
 			c.req.query('cropSquare')
 		)
+
+		// Room catalog thumbnails are immutable upstream assets. Keep the small
+		// recovered catalog set local so newly restored templates do not render as
+		// transparent 1x1 placeholders when the shared image blob store lacks them.
+		const bundledRoomImage = BUNDLED_ROOM_IMAGES[key]
+		if (bundledRoomImage) {
+			const staticAsset = await c.env.ASSETS.fetch(
+				new URL(`/${bundledRoomImage.path}`, c.req.url)
+			)
+			if (staticAsset.ok) {
+				const headers = new Headers(staticAsset.headers)
+				headers.set('content-type', bundledRoomImage.contentType)
+				return serveStaticAsset(
+					c.env,
+					new Response(staticAsset.body, { headers }),
+					transform,
+					signing
+				)
+			}
+		}
 
 		// Prefer a bundled static asset when one exists for this key, before hitting
 		// the blob store. This lets us ship canonical images (e.g. room thumbnails in
