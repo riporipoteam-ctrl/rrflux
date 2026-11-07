@@ -18,6 +18,8 @@ export type Env = SharedHonoEnv & {
 	ROOMIE_SFU_APP_SECRET?: string
 	ROOMIE_SFU_SOCKET_ORIGIN?: string
 	ROOMIE_SFU_BRIDGE?: DurableObjectNamespace
+	/** Base domain supplied by the shared Worker deploy script (workers.dev or custom domain). */
+	DOMAIN?: string
 }
 
 /** Variables can be extended */
