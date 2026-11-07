@@ -1100,8 +1100,8 @@ fn create_shortcuts(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Install the logo bundle from a local .gz file: gunzip into a temp file,
-/// verify the uncompressed bytes, back up the stock bundle once (never
+/// Install a verified Unity bundle from a local .gz file: gunzip into a temp
+/// file, verify the uncompressed bytes, back up the stock bundle once (never
 /// overwriting an existing backup), then atomically replace the target.
 /// The stock/current bundle is preserved on every failure path.
 fn install_logo_bundle(
@@ -1150,7 +1150,7 @@ fn install_logo_bundle(
         }
         return Err(e.to_string());
     }
-    println!("[logo] Flux Rec logo bundle applied.");
+    println!("[asset] verified Unity bundle applied.");
     Ok(())
 }
 
@@ -1282,6 +1282,35 @@ pub(crate) async fn apply_logo_bundle(
         }
         result?;
         println!("[logo] Applied 2026 Flux Rec sign-in/loading artwork.");
+        changed = true;
+    }
+    // The 2026 settings page includes an Export tab that is not supported by
+    // Flux Rec. Patch the exact Watch settings prefab in its Addressables bundle.
+    // Keep the stock bundle alongside it so the installer can restore it safely.
+    let watch_settings_2026 = aa_dir.join("96a9ca784433befa5280ecb885211558.bundle");
+    if is_2026
+        && watch_settings_2026.exists()
+        && !file_ok(
+            &watch_settings_2026,
+            Some("3e3272a879fef56c9c022c548b48f2c8"),
+            Some(1_313_180),
+        )
+    {
+        let patch_gzip = dir.join("2026-watch-settings-no-export.bundle.gz");
+        std::fs::write(
+            &patch_gzip,
+            include_bytes!("../assets/2026-watch-settings-no-export.bundle.gz"),
+        )
+        .map_err(|e| e.to_string())?;
+        let applied = install_logo_bundle(
+            &patch_gzip,
+            &watch_settings_2026,
+            "3e3272a879fef56c9c022c548b48f2c8",
+            1_313_180,
+        );
+        let _ = std::fs::remove_file(&patch_gzip);
+        applied?;
+        println!("[watch] Removed the unsupported Export settings tab.");
         changed = true;
     }
     if is_2026 {

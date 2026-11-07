@@ -17,6 +17,7 @@ import {
 } from '@repo/hono-helpers'
 
 import loadingScreenTipData from '../static/loading-screen-tip-data.json'
+import bundledRoomAssets from '../static/bundled-room-assets.json'
 import {
 	assetResponses,
 	CONDITIONAL_HEADERS,
@@ -31,6 +32,52 @@ import type { Context } from 'hono'
 import type { App } from './context'
 
 const CANONICAL_CDN_ORIGIN = 'https://cdn.recflare.net'
+const BUNDLED_ROOM_ASSETS = bundledRoomAssets as Record<
+	string,
+	{ path: string; size: number; sha256: string }
+>
+
+/**
+ * Serve a verified room save shipped with this worker. These few public base-room
+ * bundles are recovered from the upstream catalog; ordinary player saves continue
+ * to use the shared blob store. The manifest is an allowlist, so this cannot turn
+ * the static asset binding into a general file server.
+ */
+async function serveBundledRoomAsset(c: Context<App>, key: string): Promise<Response | null> {
+	if (!key.startsWith('room/')) return null
+	const bundled = BUNDLED_ROOM_ASSETS[key.slice('room/'.length)]
+	if (!bundled) return null
+
+	const asset = await c.env.ASSETS.fetch(new Request(new URL(`/${bundled.path}`, c.req.url)))
+	if (!asset.ok) return null
+	const bytes = new Uint8Array(await asset.arrayBuffer())
+	if (bytes.byteLength !== bundled.size) return null
+
+	const etag = `"${bundled.sha256}"`
+	const headers = new Headers({
+		'etag': etag,
+		'content-type': 'application/octet-stream',
+		'accept-ranges': 'bytes',
+		'cache-control': CACHE_CONTROL,
+	})
+	const ifNoneMatch = c.req.header('if-none-match')
+	if (
+		ifNoneMatch?.split(',').some((candidate) => {
+			const normalized = candidate.trim().replace(/^W\//, '')
+			return normalized === '*' || normalized === etag
+		})
+	) {
+		return new Response(null, { status: 304, headers })
+	}
+
+	const range = parseRangeHeader(c.req.header('range'), bundled.size)
+	if (!range) return new Response(bytes, { headers })
+
+	const end = range.offset + range.length - 1
+	headers.set('content-length', String(range.length))
+	headers.set('content-range', `bytes ${range.offset}-${end}/${bundled.size}`)
+	return new Response(bytes.slice(range.offset, end + 1), { status: 206, headers })
+}
 
 /**
  * The workers.dev account does not contain every original avatar bundle. The
@@ -90,6 +137,8 @@ async function serveAsset(c: Context<App>, key: string) {
 		// The blob store has no credentials configured — a deployment problem,
 		// not a client one.
 		if (e instanceof BlobStoreNotConfiguredError) {
+			const bundled = await serveBundledRoomAsset(c, key)
+			if (bundled) return bundled
 			const recovered = await fetchCanonicalAvatarAsset(c, key)
 			if (recovered) return recovered
 			return c.json({ error: 'blob storage is not configured' }, 503)
@@ -97,6 +146,8 @@ async function serveAsset(c: Context<App>, key: string) {
 		throw e
 	}
 	if (!meta) {
+		const bundled = await serveBundledRoomAsset(c, key)
+		if (bundled) return bundled
 		const recovered = await fetchCanonicalAvatarAsset(c, key)
 		return recovered ?? c.notFound()
 	}
@@ -134,6 +185,8 @@ async function serveAsset(c: Context<App>, key: string) {
 		parsedRange ? { range: parsedRange } : undefined
 	)
 	if (!read) {
+		const bundled = await serveBundledRoomAsset(c, key)
+		if (bundled) return bundled
 		const recovered = await fetchCanonicalAvatarAsset(c, key)
 		return recovered ?? c.notFound()
 	}
