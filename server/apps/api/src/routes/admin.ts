@@ -10,7 +10,9 @@ import {
 	getAccountsByIds,
 	getGift,
 	getPresence,
+	getProgression,
 	getRoomById,
+	MAX_LEVEL,
 	searchAccounts,
 	updateAccount,
 } from '@repo/domain'
@@ -250,6 +252,86 @@ export const adminRoutes = new Hono<App>({ strict: false })
 				isModerator: updated.isModerator === true,
 				isDeveloper: updated.isDeveloper === true,
 				note: 'Takes effect on the player’s next login (roles are stamped into the token at sign-in).',
+			})
+		}
+	)
+	// ---- Progression -----------------------------------------------------
+	.post(
+		'/api/admin/v1/progression/set',
+		describeRoute({
+			tags: ['Admin'],
+			summary: 'Set a player’s Flux Rec level',
+			description:
+				'Sets an existing player to a level from 1 through the configured progression cap, resets XP within that level to zero, and pushes the updated progression to the player. Does not mint or open a level reward box. Admin-key only.',
+			requestBody: jsonBody(
+				UsernameBody.extend({
+					level: z.number().int().min(1).max(MAX_LEVEL),
+				}),
+				'Player username and target level'
+			),
+			responses: {
+				200: json(
+					z.object({
+						success: z.literal(true),
+						username: z.string(),
+						accountId: z.number(),
+						previousLevel: z.number(),
+						level: z.number(),
+					}),
+					'The level now stored for the player'
+				),
+				400: json(AdminError, 'Bad username or level'),
+				401: json(AdminError, 'Missing or wrong admin key'),
+				404: json(AdminError, 'No account with that username'),
+			},
+		}),
+		async (c) => {
+			const denied = requireAdminKey(c)
+			if (denied) return denied
+			const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+			const username = typeof body.username === 'string' ? body.username.trim() : ''
+			const level = body.level
+			if (username === '') {
+				return c.json({ success: false as const, error: 'username is required' }, 400)
+			}
+			if (typeof level !== 'number' || !Number.isInteger(level) || level < 1 || level > MAX_LEVEL) {
+				return c.json({ success: false as const, error: `level must be an integer from 1 to ${MAX_LEVEL}` }, 400)
+			}
+			const account = await getAccountByUsername(c.env.DB, username)
+			if (!account) {
+				return c.json({ success: false as const, error: 'no such player' }, 404)
+			}
+			const before = await getProgression(c.env.DB, account.accountId)
+			await c.env.DB
+				.prepare(
+					`INSERT INTO progression (account_id, level, xp) VALUES (?1, ?2, 0)
+					 ON CONFLICT (account_id) DO UPDATE SET level = excluded.level, xp = 0`
+				)
+				.bind(account.accountId, level)
+				.run()
+			try {
+				await c.env.RECFLARE_NOTIFICATIONS_HUB.getByName(HUB_INSTANCE).notifyPlayer(
+					account.accountId,
+					NotificationType.PlayerProgressionLevelUpdate,
+					{ PlayerId: account.accountId, Level: level, XP: 0 }
+				)
+			} catch (error) {
+				logger.error('failed to push admin progression update', {
+					accountId: account.accountId,
+					error: error instanceof Error ? error.message : String(error),
+				})
+			}
+			logger.info('admin progression level set', {
+				targetAccountId: account.accountId,
+				previousLevel: before.Level,
+				level,
+			})
+			return c.json({
+				success: true as const,
+				username: account.username,
+				accountId: account.accountId,
+				previousLevel: before.Level,
+				level,
 			})
 		}
 	)
