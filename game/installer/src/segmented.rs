@@ -1,6 +1,6 @@
 //! Parallel segmented downloading for large files.
 //!
-//! Splits a download into ~16 parallel HTTP Range segments, then concatenates
+//! Splits a download into parallel HTTP Range segments, then concatenates
 //! them. Falls back to a plain single-stream download when the server does
 //! not honor Range requests. Same verification contract as `download()` in
 //! the crate root (size + MD5), so it is a drop-in accelerator.
@@ -22,10 +22,12 @@ use tokio::io::AsyncWriteExt;
 
 /// Number of parallel segments for large files.
 ///
-/// Eight connections keep the archive host below its request-rate ceiling
-/// while still using its per-connection bandwidth in parallel. The old value
-/// of 64 reliably triggered HTTP 429 during the 2026 client download.
+/// Keep eight segment files so interrupted downloads from older launcher builds
+/// remain resumable. Limit active requests below the archive host's rate ceiling.
 pub const SEGMENTS: usize = 8;
+/// The archive host returned HTTP 429 for two of eight concurrent 1 MiB range
+/// requests in a live probe, while four concurrent requests all returned 206.
+const CONCURRENT_REQUESTS: usize = 4;
 /// Files smaller than this just use a single stream (segments add nothing).
 pub const SEGMENT_MIN_SIZE: u64 = 8 * 1024 * 1024;
 /// Per-segment attempts before the whole download fails.
@@ -85,13 +87,18 @@ fn file_ok(path: &Path, expected_md5: Option<&str>, expected_size: Option<u64>) 
     true
 }
 
-async fn probe_range(client: &reqwest::Client, url: &str) -> bool {
+async fn probe_range(client: &reqwest::Client, url: &str) -> Result<bool, String> {
     let r = tokio::time::timeout(
         Duration::from_secs(FIRST_BYTE_TIMEOUT_SECS),
         client.get(url).header("Range", "bytes=0-0").send(),
     )
-    .await;
-    matches!(r, Ok(Ok(resp)) if resp.status() == reqwest::StatusCode::PARTIAL_CONTENT)
+    .await
+    .map_err(|_| "range probe timed out waiting for response".to_string())?
+    .map_err(|e| format!("range probe failed: {e}"))?;
+    if matches!(r.status(), reqwest::StatusCode::TOO_MANY_REQUESTS | reqwest::StatusCode::SERVICE_UNAVAILABLE) {
+        return Err(format!("range probe rate limited: HTTP {}", r.status()));
+    }
+    Ok(r.status() == reqwest::StatusCode::PARTIAL_CONTENT)
 }
 
 /// Download one byte range into `dest`, with retries and resume.
@@ -124,14 +131,19 @@ async fn fetch_segment(
         } else {
             format!("bytes={start}-{end}")
         };
-        let response = client
-            .get(url)
-            .header("Range", range_hdr)
-            .send()
-            .await;
+        let response = tokio::time::timeout(
+            Duration::from_secs(FIRST_BYTE_TIMEOUT_SECS),
+            client.get(url).header("Range", range_hdr).send(),
+        )
+        .await;
         let resp = match response {
-            Ok(response) => response,
-            Err(error) => {
+            Ok(Ok(response)) => response,
+            result => {
+                let error = match result {
+                    Ok(Err(error)) => error.to_string(),
+                    Err(_) => format!("timed out waiting for response after {FIRST_BYTE_TIMEOUT_SECS}s"),
+                    Ok(Ok(_)) => unreachable!(),
+                };
                 if attempt >= SEGMENT_ATTEMPTS {
                     return Err(format!("[{label}] segment {start}-{end}: {error}"));
                 }
@@ -298,7 +310,7 @@ fn fmt_eta(secs: u64) -> String {
 }
 
 /// Segmented download with the same contract as `crate::download`.
-/// Uses ~16 parallel Range segments when the server honors them and the
+/// Uses parallel Range segments when the server honors them and the
 /// file is large enough; otherwise a single stream.
 pub async fn download_segmented(
     client: &reqwest::Client,
@@ -330,7 +342,7 @@ pub async fn download_segmented(
     }
 
     let big_enough = expected_size.map(|s| s >= SEGMENT_MIN_SIZE).unwrap_or(true);
-    if !big_enough || !probe_range(client, url).await {
+    if !big_enough || !probe_range(client, url).await? {
         if big_enough {
             println!("[{label}] host does not honor Range — single stream.");
         }
@@ -433,6 +445,7 @@ pub async fn download_segmented(
         }
     });
 
+    let limiter = Arc::new(tokio::sync::Semaphore::new(CONCURRENT_REQUESTS));
     let mut tasks = Vec::with_capacity(ranges.len());
     for (i, (start, end)) in ranges.into_iter().enumerate() {
         let c = client.clone();
@@ -440,7 +453,9 @@ pub async fn download_segmented(
         let d = seg_paths[i].clone();
         let done_c = done.clone();
         let label_s = label.to_string();
+        let limiter_c = limiter.clone();
         tasks.push(tokio::spawn(async move {
+            let _permit = limiter_c.acquire_owned().await.map_err(|e| e.to_string())?;
             fetch_segment(&c, &u, start, end, &d, &done_c, &label_s).await
         }));
     }
