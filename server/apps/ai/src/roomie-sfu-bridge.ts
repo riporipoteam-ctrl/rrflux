@@ -29,7 +29,13 @@ export class RoomieSfuBridge {
 		if (request.method === 'POST' && path === '/ready') {
 			const body = await request.json() as { token?: string }
 			const sessionId = this.sessionId || await this.state.storage.get<string>('sfuSessionId')
-			const { ROOMIE_SFU_APP_ID: appId, ROOMIE_SFU_APP_SECRET: secret, ROOMIE_SFU_SOCKET_ORIGIN: origin } = this.env
+			const { ROOMIE_SFU_APP_ID: appId, ROOMIE_SFU_APP_SECRET: secret } = this.env
+			// ROOMIE_SFU_SOCKET_ORIGIN is an optional override. The production worker
+			// did not have that binding, which made every /ready handshake return 503
+			// after the client had already spawned Roomie. NAME and DOMAIN are injected
+			// by run-wrangler-deploy and resolve to the actual public Worker origin.
+			const origin = this.env.ROOMIE_SFU_SOCKET_ORIGIN ||
+				`https://${this.env.NAME}.${this.env.DOMAIN || 'ripo-ripoteam.workers.dev'}`
 			if (!sessionId || !appId || !secret || !origin || !body.token) return new Response(null, { status: 503 })
 			if (!this.setup) this.setup = (async () => {
 				let lastError: unknown
