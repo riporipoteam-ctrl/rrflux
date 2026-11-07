@@ -374,6 +374,28 @@ describe('public endpoints', () => {
 		}
 	})
 
+	test('2026 progression reward images use existing local assets', async () => {
+		const fetchConfig = async (version: string) => {
+			const res = await exports.default.fetch(`${ORIGIN}/api/gameconfigs/v1/all`, {
+				headers: await bearer('42', undefined, version),
+			})
+			expect(res.status).toBe(200)
+			return new Map(((await res.json()) as Array<{ Key: string; Value: string }>).map(
+				(entry) => [entry.Key, entry.Value]
+			))
+		}
+		const current = await fetchConfig('20260323.14')
+		const older = await fetchConfig('20250718.01')
+		const key = 'Lifecycle.PSF.Progression.RewardMap'
+		const rewards = JSON.parse(current.get(key) ?? '{}') as Record<string, string>
+		expect(Object.keys(rewards).length).toBeGreaterThan(20)
+		expect(rewards['33392']).toBe('store/backpack/unique-box-5.png')
+		expect(current.get('Lifecycle.PSF.Progression.UnknownRewardImage')).toBe(
+			'store/backpack/gift-box.png'
+		)
+		expect(older.get(key)).not.toBe(current.get(key))
+	})
+
 	test('Store categories all select their populated Lists feeds in both catalogs', async () => {
 		const expected = [
 			'(StoreClothing)/HatsItems',
