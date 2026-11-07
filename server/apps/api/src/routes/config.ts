@@ -23,13 +23,26 @@ import {
 
 import type { App } from '../context'
 
-const gameConfigsV1All2026 = gameConfigsV1All2025.map((entry) => ({
-	...entry,
-	Value:
-		gameConfigsV1All2026Overrides[
-			entry.Key as keyof typeof gameConfigsV1All2026Overrides
-		] ?? entry.Value,
-}))
+const PROGRESSION_REWARD_MAP_KEY = 'Lifecycle.PSF.Progression.RewardMap'
+
+const gameConfigsV1All2026 = gameConfigsV1All2025.map((entry) => {
+	const override = gameConfigsV1All2026Overrides[
+		entry.Key as keyof typeof gameConfigsV1All2026Overrides
+	]
+	if (override === undefined) return entry
+
+	// The client expects RewardMap to contain both older earned rewards and the
+	// current 2026 box previews. Replacing the string wholesale hid five rewards
+	// still present in the base config; let build-specific entries win only when
+	// they intentionally replace the same item key.
+	if (entry.Key === PROGRESSION_REWARD_MAP_KEY) {
+		const baseRewardMap = JSON.parse(entry.Value) as Record<string, string>
+		const currentRewardMap = JSON.parse(override) as Record<string, string>
+		return { ...entry, Value: JSON.stringify({ ...baseRewardMap, ...currentRewardMap }) }
+	}
+
+	return { ...entry, Value: override }
+})
 
 // ---- Config / version ------------------------------------------------------
 export const configRoutes = new Hono<App>({ strict: false })

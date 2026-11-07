@@ -278,7 +278,8 @@ export const gameplayRoutes = new Hono<App>({ strict: false })
 				const rows = await db
 					.prepare(
 						`SELECT announcement_id as AnnouncementId, 1 as AnnouncementType, body as Body,
-							created_at as CreatedAt, image_name as ImageName, link_label as LinkButtonLabel,
+							created_at as CreatedAt, COALESCE(image_name, '') as ImageName,
+							link_label as LinkButtonLabel,
 							'' as LinkName, 0 as LinkType, link_uri as LinkUri, 0 as Platform, title as Title
 						FROM announcement
 						WHERE expires_at IS NULL OR expires_at > datetime('now')

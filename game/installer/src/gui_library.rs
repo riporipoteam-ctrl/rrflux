@@ -146,6 +146,7 @@ mod imp {
         display_update_version, premultiply_channel, LibraryConfig, Theme, View, FLUXREC_LOGO_PNG,
         SCREENSHOTS, SCREENSHOT_NAMES, RIPO_TEAM_LOGO_PNG,
     };
+    use crate::CLIENT_BUILD;
     use crate::library::{LibCmd, LibMsg};
     use std::ffi::c_void;
     use std::{cell::RefCell, collections::HashMap};
@@ -479,6 +480,7 @@ mod imp {
         carousel: RECT,
         carousel_prev: RECT,
         carousel_next: RECT,
+        detail_info: RECT,
         detail_play: RECT,
         welcome_login: RECT,
         welcome_signup: RECT,
@@ -1196,9 +1198,51 @@ mod imp {
         let library_action_y = library_bottom - 62;
         let settings_tools_y = TITLE_H + 282;
         let carousel_left = content_x;
-        let carousel_width = content_w;
-        let carousel_height = ((win_h - TITLE_H - 200) * 55 / 100).clamp(270, 370);
+        // The game page uses a media + details split on wide windows and a
+        // stacked layout on smaller ones. This keeps the install state and Play
+        // action visible without putting text over the game art.
+        let detail_panel_w = if content_w >= 860 {
+            ((content_w * 29) / 100).clamp(286, 336)
+        } else {
+            0
+        };
+        let carousel_width = if detail_panel_w > 0 {
+            content_w - detail_panel_w - 18
+        } else {
+            content_w
+        };
+        let carousel_height = if detail_panel_w > 0 {
+            ((win_h - TITLE_H - 200) * 55 / 100).clamp(270, 370)
+        } else {
+            ((win_h - TITLE_H - 370) * 40 / 100).clamp(190, 260)
+        };
         let carousel_top = TITLE_H + 62;
+        let carousel_bottom = carousel_top + carousel_height;
+        let thumbs = carousel_thumbnail_rects(
+            &RECT {
+                left: carousel_left,
+                top: carousel_top,
+                right: carousel_left + carousel_width,
+                bottom: carousel_bottom,
+            },
+            SCREENSHOTS.len(),
+        );
+        let thumb_bottom = thumbs.last().map(|r| r.bottom).unwrap_or(carousel_bottom);
+        let detail_info = if detail_panel_w > 0 {
+            RECT {
+                left: carousel_left + carousel_width + 18,
+                top: carousel_top,
+                right: content_right,
+                bottom: win_h - 54,
+            }
+        } else {
+            RECT {
+                left: carousel_left,
+                top: thumb_bottom + 42,
+                right: content_right,
+                bottom: win_h - 54,
+            }
+        };
         let downloads_top = TITLE_H + 86;
         let downloads_bottom = win_h - 82;
         let settings_left = content_x + 24;
@@ -1350,7 +1394,7 @@ mod imp {
                 left: carousel_left,
                 top: carousel_top,
                 right: carousel_left + carousel_width,
-                bottom: carousel_top + carousel_height,
+                bottom: carousel_bottom,
             },
             carousel_prev: RECT {
                 left: carousel_left + 12,
@@ -1364,11 +1408,12 @@ mod imp {
                 right: carousel_left + carousel_width - 12,
                 bottom: carousel_top + carousel_height / 2 + 20,
             },
+            detail_info,
             detail_play: RECT {
-                left: content_right - 226,
-                top: win_h - 108,
-                right: content_right,
-                bottom: win_h - 56,
+                left: detail_info.right - 212,
+                top: detail_info.bottom - 70,
+                right: detail_info.right - 18,
+                bottom: detail_info.bottom - 18,
             },
             welcome_login: RECT { left: welcome_panel_left + welcome_pad, top: welcome_top + 196, right: welcome_panel_left + welcome_pad + (welcome_button_w - 12) / 2, bottom: welcome_top + 248 },
             welcome_signup: RECT { left: welcome_panel_left + welcome_pad + (welcome_button_w + 12) / 2, top: welcome_top + 196, right: welcome_panel_left + welcome_pad + welcome_button_w, bottom: welcome_top + 248 },
@@ -1616,7 +1661,7 @@ mod imp {
             draw_text(mem, "RT", 18, 22, 32, 22, p.accent, 13, true, true)?;
         }
         let page_title = match st.view {
-            View::Store | View::Detail => "Discover",
+			View::Store | View::Detail => "Store",
             View::Library => "Library",
             View::Downloads => "Downloads",
             View::Account => "Account",
@@ -3133,12 +3178,18 @@ mod imp {
         Ok(())
     }
 
-    /// v1.0.4: game detail view with screenshot carousel.
+    /// Game page: media on the left, clear install/play status on the right.
     unsafe fn draw_detail_view(hdc: HDC, st: &mut State, rects: &Rects, p: &Palette) -> Silent {
         draw_action_button(hdc, &rects.back, "‹  Store", st.hover == Hot::Back, false, p)?;
-        draw_text(hdc, "FLUX REC  /  GAME PAGE", rects.carousel.left + 132, TITLE_H + 15, 340, 17, p.game_accent, 9, true, false)?;
         let car = &rects.carousel;
-        let media_shadow = RECT { left: car.left + 2, top: car.top + 4, right: car.right + 2, bottom: car.bottom + 4 };
+        let info = &rects.detail_info;
+        let split_layout = info.left > car.left;
+        let media_shadow = RECT {
+            left: car.left + 2,
+            top: car.top + 4,
+            right: car.right + 2,
+            bottom: car.bottom + 4,
+        };
         round_rect_path(hdc, &media_shadow, 14, p.shadow)?;
         let idx = if st.carousel_bitmaps.is_empty() { 0 } else { st.carousel_idx % st.carousel_bitmaps.len() };
         draw_gallery_image(hdc, st, idx, car, p)?;
@@ -3163,6 +3214,10 @@ mod imp {
             .first()
             .map(|thumb| thumb.bottom - thumb.top)
             .unwrap_or(0);
+        let thumb_bottom = thumbnails
+            .last()
+            .map(|thumb| thumb.bottom)
+            .unwrap_or(car.bottom + 19);
         for (i, thumb) in thumbnails.iter().enumerate() {
             draw_gallery_image(hdc, st, i, thumb, p)?;
             let outline = if i == idx {
@@ -3175,43 +3230,105 @@ mod imp {
             round_rect_outline(hdc, thumb, 7, outline)?;
         }
         let screenshot_name = SCREENSHOT_NAMES.get(idx).copied().unwrap_or("Game screenshot");
-        let gallery_label = if count > 0 { format!("{}  ·  {} / {}", screenshot_name.to_uppercase(), idx + 1, count) } else { "GAME SCREENSHOTS".to_string() };
-        draw_text(hdc, "SCREENSHOTS  ·  SELECT A PREVIEW", car.left, car.bottom + 19 + thumb_h + 8, 260, 18, p.game_accent, 9, true, false)?;
-        draw_text_ellipsis(hdc, &gallery_label, car.left + 146, car.bottom + 19 + thumb_h + 8, car.right - car.left - 146, 18, p.text_dim, 9)?;
-
-        let info_top = car.bottom + 19 + thumb_h + 35;
-        let info_left = car.left + 2;
-        if draw_logo_bitmap(hdc, st.logo_bitmap, info_left, info_top + 2, 48).is_err() {
-            draw_logo(hdc, info_left, info_top + 2, 48, p.accent)?;
-        }
-        draw_text(hdc, "Flux Rec", info_left + 62, info_top, 520, 34, p.text, 25, true, false)?;
-        draw_text(hdc, "RIPO TEAM  ·  WINDOWS PC  ·  FREE TO PLAY", info_left + 64, info_top + 34, 520, 18, p.game_accent, 9, true, false)?;
-        draw_text(hdc, "Explore rooms, meet people, play together and create your own spaces.", info_left + 2, info_top + 62, 690, 38, p.text_dim, 11, false, false)?;
+        let gallery_y = thumb_bottom + 11;
+        let gallery_label = if count > 0 {
+            format!("{}  ·  {} / {}", screenshot_name.to_uppercase(), idx + 1, count)
+        } else {
+            "NO SCREENSHOTS AVAILABLE".to_string()
+        };
+        draw_text(hdc, "SCREENSHOTS", car.left, gallery_y, 118, 18, p.game_accent, 9, true, false)?;
+        draw_text_ellipsis(
+            hdc,
+            &gallery_label,
+            car.left + 126,
+            gallery_y,
+            (car.right - car.left - 126).max(1),
+            18,
+            p.text_dim,
+            9,
+        )?;
 
         let players = match (st.players, st.player_count_pending) {
             (Some(count), _) => format!("{count} players online"),
             (None, true) => "Checking online players".to_string(),
-            (None, false) => "Player count unavailable".to_string(),
+            (None, false) => "Online count unavailable".to_string(),
         };
-        let dp = &rects.detail_play;
-        let status_x = car.left + ((car.right - car.left) * 62 / 100);
-        let status_w = (dp.left - status_x - 18).max(144);
-        draw_people_icon(hdc, status_x, info_top + 4, p.accent)?;
-        draw_text_ellipsis(hdc, &players, status_x + 32, info_top + 6, status_w - 32, 24, p.text_dim, 10)?;
-        let state = if st.install_required { "Free to install" } else if st.update_available { "Update available" } else if st.checking { "Checking version" } else if !st.check_error.is_empty() { "Will retry update check" } else { "Up to date" };
-        let status_tint = if st.update_available || st.install_required { p.game_accent } else { p.success };
-        draw_status_pulse(hdc, status_x + 5, info_top + 44, st.anim_t, status_tint)?;
-        draw_text_ellipsis(hdc, state, status_x + 20, info_top + 32, status_w - 20, 24, p.text, 11)?;
-        let version = if st.update_available {
-            format!("Version {} is ready", display_update_version(&st.update_version))
+        let state = if st.checking {
+            "Checking for updates"
+        } else if st.install_required {
+            "Ready to install"
+        } else if st.update_available {
+            "Update available"
+        } else if !st.check_error.is_empty() {
+            "Update check will retry"
         } else {
-            "Updates are checked before every launch".to_string()
+            "Ready to play"
         };
-        draw_text_ellipsis(hdc, &version, status_x, info_top + 58, status_w, 22, p.text_dim, 9)?;
+        let status_tint = if st.update_available || st.install_required {
+            p.game_accent
+        } else if st.check_error.is_empty() {
+            p.success
+        } else {
+            p.text_dim
+        };
+        let action = if st.install_required {
+            "Install Flux Rec"
+        } else if st.update_available {
+            "Update & play"
+        } else {
+            "Play now"
+        };
 
-        let label = if st.install_required { "Install" } else if st.update_available { "Update & play" } else { "Play now" };
-        draw_action_button(hdc, dp, label, st.hover == Hot::DetailPlay, true, p)?;
-        draw_text(hdc, "Updates are checked before launch.", dp.left - 240, dp.top + 16, 224, 22, p.text_dim, 9, false, true)?;
+        draw_surface(hdc, info, p, 16)?;
+        if split_layout {
+            let left = info.left + 22;
+            let right = info.right - 22;
+            let width = right - left;
+            draw_text(hdc, "GAME PAGE  /  WINDOWS PC", left, info.top + 18, width, 17, p.game_accent, 9, true, false)?;
+            if draw_logo_bitmap(hdc, st.logo_bitmap, left, info.top + 48, 58).is_err() {
+                draw_logo(hdc, left, info.top + 48, 58, p.accent)?;
+            }
+            draw_text(hdc, "Flux Rec", left + 72, info.top + 48, width - 72, 35, p.text, 25, true, false)?;
+            draw_text_ellipsis(hdc, "Explore rooms, meet people and create together.", left + 73, info.top + 84, width - 75, 30, p.text_dim, 10)?;
+
+            let status = RECT { left, top: info.top + 128, right, bottom: info.top + 158 };
+            draw_pill(hdc, &status, state.to_uppercase().as_str(), if st.update_available || st.install_required { p.game_accent_soft } else { p.bg_alt }, status_tint)?;
+            draw_people_icon(hdc, left + 1, info.top + 178, p.accent)?;
+            draw_text_ellipsis(hdc, &players, left + 31, info.top + 177, width - 31, 22, p.text, 10)?;
+
+            let rule_y = info.top + 218;
+            fill_rect(hdc, &RECT { left, top: rule_y, right, bottom: rule_y + 1 }, p.border)?;
+            draw_text(hdc, "SUPPORTED CLIENT BUILD", left, rule_y + 18, width, 16, p.text_dim, 8, true, false)?;
+            draw_text(hdc, CLIENT_BUILD, left, rule_y + 39, width, 24, p.text, 16, true, false)?;
+            draw_text_ellipsis(hdc, "Verified with the current Flux Rec patch.", left, rule_y + 66, width, 18, p.text_dim, 9)?;
+
+            let update_note = if st.update_available {
+                format!("Launcher update {} is ready.", display_update_version(&st.update_version))
+            } else if st.check_error.is_empty() {
+                "Game files are checked before launch.".to_string()
+            } else {
+                "The update check will retry before launch.".to_string()
+            };
+            draw_text(hdc, "UPDATE STATUS", left, rule_y + 104, width, 16, p.text_dim, 8, true, false)?;
+            draw_text_ellipsis(hdc, &update_note, left, rule_y + 124, width, 30, p.text, 9)?;
+
+            draw_text_ellipsis(hdc, &st.install_dir, left, info.bottom - 111, width, 25, p.text_dim, 8)?;
+            draw_text(hdc, "INSTALL LOCATION", left, info.bottom - 132, width, 15, p.text_dim, 8, true, false)?;
+        } else {
+            // Compact responsive card: artwork stays full-width, with the title,
+            // live status and primary action aligned in one clean row beneath it.
+            let logo_x = info.left + 16;
+            let logo_y = info.top + 16;
+            if draw_logo_bitmap(hdc, st.logo_bitmap, logo_x, logo_y, 42).is_err() {
+                draw_logo(hdc, logo_x, logo_y, 42, p.accent)?;
+            }
+            let title_x = logo_x + 54;
+            draw_text(hdc, "Flux Rec", title_x, logo_y - 1, (rects.detail_play.left - title_x - 10).max(1), 25, p.text, 18, true, false)?;
+            let status_text = format!("{state}  ·  Build {CLIENT_BUILD}");
+            draw_text_ellipsis(hdc, &status_text, title_x + 1, logo_y + 24, (rects.detail_play.left - title_x - 10).max(1), 18, status_tint, 8)?;
+        }
+
+        draw_action_button(hdc, &rects.detail_play, action, st.hover == Hot::DetailPlay, true, p)?;
         Ok(())
     }
 
