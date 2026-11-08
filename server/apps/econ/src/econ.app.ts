@@ -6012,6 +6012,23 @@ app.post(
 			}
 		}
 
+		// Room shop displays use the original activity storefront ids, whereas
+		// the Watch catalog can assign new ids to copies of those same items.
+		const lookup = byGiftDropId ? itemsByGiftDropId : itemsByPurchasableId
+		if (requestedIds.some(id => !lookup.has(id))) {
+			const roomCatalogs = await Promise.all(
+				[2, 100, 101, 102, 103, 300, 400, 401, 402, 403, 404, 405, 406, 500, 600, 2000, 2001, 2002, 2003, 2004]
+					.map(id => loadStorefront(c, id))
+			)
+			for (const roomCatalog of roomCatalogs) {
+				for (const item of roomCatalog?.StoreItems ?? []) {
+					if (!itemsByPurchasableId.has(item.PurchasableItemId)) itemsByPurchasableId.set(item.PurchasableItemId, item)
+					const giftId = item.GiftDrop.GiftDropId
+					if (typeof giftId === 'number' && !itemsByGiftDropId.has(giftId)) itemsByGiftDropId.set(giftId, item)
+				}
+			}
+		}
+
 		return c.json(
 			requestedIds.map((id) => {
 				const item = (byGiftDropId ? itemsByGiftDropId : itemsByPurchasableId).get(id)
