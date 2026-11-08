@@ -1688,7 +1688,49 @@ const PUBLIC_WHERE = 'is_dorm IS NOT 1 AND accessibility = 1'
  * Defaulted rather than assigned, so a stored value wins if any is ever really written
  * (a blob keeps whatever `serializeRoom` last put in it).
  */
+// Older upstream room captures encode boolean DTO fields as JSON numbers (0/1).
+// Utf8Json in the 2026 client rejects those values instead of coercing them, which
+// makes an entire room-list response fail to parse. Normalize only the known DTO
+// booleans on reads so imported records remain compatible without rewriting D1.
+const ROOM_BOOLEAN_FIELDS = [
+	'SupportsLevelVoting',
+	'IsRRO',
+	'IsRecRoomApproved',
+	'ExcludeFromLists',
+	'ExcludeFromSearch',
+	'SupportsScreens',
+	'SupportsWalkVR',
+	'SupportsTeleportVR',
+	'SupportsVRLow',
+	'SupportsQuest2',
+	'SupportsMobile',
+	'SupportsJuniors',
+	'IsDorm',
+	'IsPlacePlay',
+	'CloningAllowed',
+	'DisableMicAutoMute',
+	'DisableRoomComments',
+	'EncryptVoiceChat',
+	'ToxmodEnabled',
+	'LoadScreenLocked',
+	'AutoLocalizeRoom',
+	'IsDeveloperOwned',
+	'IsJuniorCreated',
+] as const
+
+const SUBROOM_BOOLEAN_FIELDS = ['IsSandbox', 'ShouldAutoStageSaves'] as const
+
+function normalizeLegacyBooleanFields(
+	dto: Record<string, unknown>,
+	fields: readonly string[]
+): void {
+	for (const field of fields) {
+		if (dto[field] === 0 || dto[field] === 1) dto[field] = dto[field] === 1
+	}
+}
+
 function attachRoomDtoDefaults(room: Room): void {
+	normalizeLegacyBooleanFields(room, ROOM_BOOLEAN_FIELDS)
 	room.BoostCount ??= 0
 	room.CurrentSnapshotId ??= null
 	room.CCU ??= null
@@ -1758,14 +1800,18 @@ const SUBROOM_COLUMNS = 'sub_room_id, room_id, data, current_save_id, staged_sav
  * go through the helpers below so the key is never missing: the client reads the scene
  * blob from `CurrentSave` and nowhere else, so a subroom without one loads nothing.
  */
-const parseSubRoomRow = (row: SubRoomRow): SubRoom => ({
-	...(JSON.parse(row.data) as SubRoom),
-	SubRoomId: row.sub_room_id,
-	RoomId: row.room_id,
-	// Served from the column, not the blob — the creator's unpublished save (unused for
-	// now, but the client expects the key present).
-	StagedSubRoomDataSaveId: row.staged_save_id,
-})
+const parseSubRoomRow = (row: SubRoomRow): SubRoom => {
+	const subRoom: SubRoom = {
+		...(JSON.parse(row.data) as SubRoom),
+		SubRoomId: row.sub_room_id,
+		RoomId: row.room_id,
+		// Served from the column, not the blob — the creator's unpublished save (unused for
+		// now, but the client expects the key present).
+		StagedSubRoomDataSaveId: row.staged_save_id,
+	}
+	normalizeLegacyBooleanFields(subRoom, SUBROOM_BOOLEAN_FIELDS)
+	return subRoom
+}
 
 /**
  * Serialize a subroom for storage — drop the id/room columns and the save fields that
