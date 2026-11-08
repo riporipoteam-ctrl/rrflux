@@ -1,4 +1,4 @@
-//! Tachyon background server (v1.0.79).
+//! Tachyon background server (v1.0.80).
 //!
 //! The 2026 client's room/voice transport is a Tachyon session server
 //! (Unity Netcode/LiteNetLib under the historical "Photon" label — see
@@ -18,17 +18,31 @@
 //! out-of-band, or by release builds themselves on the owner's
 //! machine (see `provision_host_secret`).
 //!
+//! Startup ordering (v1.0.80): the server lifecycle — sync, spawn,
+//! wait-until-listening — runs through the synchronous readiness gate
+//! `ensure_server_ready` on the play path, NOT on a detached thread.
+//! A client handed `127.0.0.1:7777` before anything listens there
+//! does not fall back to solo play; it retries the voice/room
+//! connection and the load hangs (v1.0.78 shipped exactly that race:
+//! the gate is the fix). Only the playit agent duties — none of which
+//! may gate the game — stay on the detached `kick_off` thread.
+//!
 //! Everything here is fail-soft by design:
 //! - a failed sidecar fetch keeps the installed exe untouched;
 //! - a failed download never replaces a working exe (temp file, hash
 //!   verified, then renamed into place);
 //! - a busy UDP 7777 means a server is already running — nothing to do;
-//! - no error in this module may block or fail the game launch. All the
-//!   work runs on a detached thread (see `kick_off`); the launch path
-//!   only pays for one thread spawn.
+//! - no error in this module may block or fail the game launch. The
+//!   readiness gate is bounded (see `READY_BUDGET`); on any failure
+//!   it logs and the game launches unarmed.
+//! - the gate's outcome lines are also appended to
+//!   `<game dir>/tachyon-server/tachyon.log` (see `gate_log`): the
+//!   launcher's stdout is invisible after the fact on Windows, and
+//!   that file is the artifact support can ask for.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// HF mirror directory holding the server binary and its sha256 sidecar
 /// (same dataset the launcher's other assets sync from).
@@ -38,6 +52,18 @@ const SERVER_EXE_NAME: &str = "TachyonServer.exe";
 /// UDP port the bundled server listens on (loopback endpoint handed out
 /// by matchmaking for local sessions).
 pub(crate) const SERVER_PORT: u16 = 7777;
+
+/// Hard total budget for the synchronous readiness gate: the mirror
+/// sync, the spawn and the listen wait together may hold the game
+/// launch for at most this long. A 67 MB first-run download on a slow
+/// connection fits comfortably; anything slower launches unarmed
+/// rather than freezing the launcher.
+const READY_BUDGET: Duration = Duration::from_secs(180);
+/// How long the gate waits, after the spawn step, for the server to
+/// actually bind UDP 7777 (further bounded by the remaining budget).
+const LISTEN_WAIT: Duration = Duration::from_secs(10);
+/// Poll interval while waiting for the port to be taken.
+const LISTEN_POLL: Duration = Duration::from_millis(250);
 
 /// playit.gg tunnel agent (daemon build), kept next to the server
 /// under the local name `playit.exe`. Pinned to upstream's v2.0.0
@@ -72,33 +98,61 @@ fn agent_secret_file(game_dir: &Path) -> PathBuf {
     server_dir(game_dir).join(AGENT_SECRET_NAME)
 }
 
-/// Play-path entry point, called from `main()`'s `--play` /
-/// `--launch-game` dispatch. Spawns the detached worker thread and
-/// returns immediately — the mirror sync and the server spawn happen
-/// off the launch path, so a slow network can never delay the game.
+/// Detached play-path worker, called from `main()`'s `--play` /
+/// `--launch-game` dispatch right after `ensure_server_ready`.
+///
+/// Since v1.0.80 this thread owns ONLY the playit agent duties —
+/// agent binary sync, owner-host provisioning, agent start — none of
+/// which may gate the game, so all of it stays off the launch path.
+/// The server lifecycle (sync, spawn, listen wait) deliberately does
+/// NOT live here anymore: it moved to the synchronous
+/// `ensure_server_ready` gate, because a detached thread cannot
+/// promise the server is listening before the game starts (the
+/// v1.0.78 18%-hang race). Do not re-add server work here; the gate
+/// is its single owner on the play path.
 pub(crate) fn kick_off(game_dir: &Path) {
     let game_dir = game_dir.to_path_buf();
     let _ = std::thread::Builder::new()
-        .name("tachyon-server".to_string())
+        .name("tachyon-agent".to_string())
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build();
             if let Ok(runtime) = runtime {
                 runtime.block_on(async {
-                    ensure_server(&game_dir).await;
                     ensure_agent(&game_dir).await;
                 });
             }
-            ensure_running(&game_dir);
             // Owner-host provisioning: on the owner's machine only,
             // materialise the agent's secret file from the secret
             // baked into release builds (fail-closed, fail-soft).
             provision_host_secret(&game_dir);
-            // The tunnel agent comes up only after the server it
-            // exposes is running.
+            // The tunnel agent exposes the server the readiness gate
+            // started just before this thread was spawned.
             ensure_agent_running(&game_dir);
         });
+}
+
+/// What the mirror sync should do, decided from the local and
+/// mirror hashes alone — pure, so the decision matrix is unit-tested
+/// without any network.
+#[derive(Debug, PartialEq, Eq)]
+enum SyncDecision {
+    /// Local exe already matches the mirror hash: nothing to do.
+    UpToDate,
+    /// Local exe missing or stale: download and install.
+    Download,
+    /// The mirror hash could not be fetched (offline, mirror
+    /// hiccup): keep whatever is installed, stale or not.
+    KeepInstalledNoMirror,
+}
+
+fn sync_decision(local_hash: Option<&str>, expected_hash: Option<&str>) -> SyncDecision {
+    match expected_hash {
+        None => SyncDecision::KeepInstalledNoMirror,
+        Some(expected) if local_hash == Some(expected) => SyncDecision::UpToDate,
+        Some(_) => SyncDecision::Download,
+    }
 }
 
 /// Keep the bundled `TachyonServer.exe` in sync with the HF mirror:
@@ -127,9 +181,15 @@ pub(crate) async fn ensure_server(game_dir: &Path) {
     };
 
     let sidecar_url = format!("{MIRROR_BASE}{SERVER_EXE_NAME}.sha256");
-    let expected = match fetch_expected_hash(&client, &sidecar_url).await {
-        Some(hash) => hash,
-        None => {
+    let fetched = fetch_expected_hash(&client, &sidecar_url).await;
+    let local = if exe.is_file() {
+        sha256_file(&exe)
+    } else {
+        None
+    };
+    let expected = match sync_decision(local.as_deref(), fetched.as_deref()) {
+        SyncDecision::UpToDate => return, // already in sync
+        SyncDecision::KeepInstalledNoMirror => {
             if exe.is_file() {
                 println!("[tachyon] mirror unreachable — keeping installed server.");
             } else {
@@ -137,14 +197,17 @@ pub(crate) async fn ensure_server(game_dir: &Path) {
             }
             return;
         }
+        SyncDecision::Download => match fetched {
+            Some(hash) => hash,
+            // sync_decision only picks Download when a hash was
+            // fetched; this arm is unreachable in practice.
+            None => return,
+        },
     };
-
-    if exe.is_file() && sha256_file(&exe).as_deref() == Some(expected.as_str()) {
-        return; // already in sync
-    }
 
     // Download to a temp name, verify the hash, then move into place:
     // a partial or corrupt download never replaces a working exe.
+    println!("[tachyon] Downloading Tachyon server…");
     let temp = dir.join(format!("{SERVER_EXE_NAME}.download"));
     let url = format!("{MIRROR_BASE}{SERVER_EXE_NAME}");
     if let Err(error) = download_verified(&client, &url, &temp, &expected).await {
@@ -164,6 +227,184 @@ pub(crate) async fn ensure_server(game_dir: &Path) {
         return;
     }
     println!("[tachyon] Tachyon server synced from mirror.");
+}
+
+/// Pure budget math for the readiness gate: how much of `budget` is
+/// left after `elapsed` (saturates at zero once the budget is spent).
+fn budget_remaining(budget: Duration, elapsed: Duration) -> Duration {
+    budget.saturating_sub(elapsed)
+}
+
+/// How long the gate may wait for the port after the spawn step: the
+/// listen-wait cap, further bounded by the launch budget left over.
+fn listen_wait_allowance(budget: Duration, elapsed: Duration) -> Duration {
+    LISTEN_WAIT.min(budget_remaining(budget, elapsed))
+}
+
+/// Poll `is_listening` every `poll` until it reports true or
+/// `max_wait` has elapsed. Probe and sleep are injected so tests can
+/// drive the loop without real ports or real time passing.
+fn wait_until_listening_with(
+    mut is_listening: impl FnMut() -> bool,
+    max_wait: Duration,
+    poll: Duration,
+    mut sleep: impl FnMut(Duration),
+) -> bool {
+    let mut waited = Duration::ZERO;
+    loop {
+        if is_listening() {
+            return true;
+        }
+        if waited >= max_wait {
+            return false;
+        }
+        let step = poll.min(max_wait - waited);
+        sleep(step);
+        waited += step;
+    }
+}
+
+/// `wait_until_listening_with` against the real server port.
+fn wait_until_listening(max_wait: Duration) -> bool {
+    wait_until_listening_with(
+        || !udp_port_free(SERVER_PORT),
+        max_wait,
+        LISTEN_POLL,
+        std::thread::sleep,
+    )
+}
+
+/// The readiness gate's own log file, next to the server binary.
+///
+/// The crate's `Diagnostics/` folder holds the *game's* `Player.log`
+/// — a file the game itself writes via its `-logFile` argument (the
+/// path helper is private to `launcher.rs`, and it locates the game's
+/// log, not a launcher log). There is no launcher file-log sink to
+/// reuse, and mixing launcher lines into the game's log would
+/// corrupt the very artifact the owner gate reads — so the gate
+/// keeps its own file here instead.
+fn tachyon_log_path(game_dir: &Path) -> PathBuf {
+    server_dir(game_dir).join("tachyon.log")
+}
+
+/// Emit one readiness-gate outcome line: to stdout, like every
+/// launcher log line, AND appended to `tachyon.log` — on Windows the
+/// stdout is gone once the launcher exits, while the file is the
+/// artifact support can ask for when a launch misbehaves. Strictly
+/// best-effort: a failed file write never affects the gate.
+fn gate_log(game_dir: &Path, line: &str) {
+    println!("{line}");
+    if std::fs::create_dir_all(server_dir(game_dir)).is_ok() {
+        let appended = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(tachyon_log_path(game_dir))
+            .and_then(|mut file| writeln!(file, "{line}"));
+        let _ = appended;
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+/// Synchronous readiness gate for the play path (v1.0.80) — the fix
+/// for the v1.0.78 startup-ordering flaw. `main()` calls this BEFORE
+/// starting the game, and the invariant it restores is:
+///
+/// **the game process is never started until UDP 127.0.0.1:7777 is
+/// confirmed listening, or the bounded budget (`READY_BUDGET`)
+/// expires and the gate logs and lets the launch proceed unarmed.**
+///
+/// In order: (a) sync `TachyonServer.exe` with the mirror,
+/// synchronously — a first run may spend a while on the 67 MB
+/// download, with progress lines, instead of the game freezing at
+/// 18% against a dead endpoint; (b) spawn the server hidden and
+/// detached if the port is free (the existing `ensure_running`);
+/// (c) poll until the port is actually taken. A server left over
+/// from an earlier session (it is detached and outlives the
+/// launcher) short-circuits the whole gate: it is already listening,
+/// and its binary cannot be replaced while it runs anyway.
+///
+/// Returns true when a server is listening. Every failure path
+/// returns false and NEVER propagates an error: worst case the
+/// launch behaves exactly like the pre-Tachyon launcher.
+pub(crate) fn ensure_server_ready(game_dir: &Path) -> bool {
+    // Fast path: already listening (see above).
+    if !udp_port_free(SERVER_PORT) {
+        gate_log(
+            game_dir,
+            "[tachyon] readiness gate: server already listening on udp/7777",
+        );
+        return true;
+    }
+    let started = Instant::now();
+    gate_log(game_dir, "[tachyon] readiness gate: syncing background server…");
+
+    // (a) Sync the binary, synchronously, inside the launch budget.
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("[tachyon] readiness gate: could not start async runtime: {error}");
+            return false;
+        }
+    };
+    let sync_budget = budget_remaining(READY_BUDGET, started.elapsed());
+    let synced = runtime.block_on(async {
+        tokio::time::timeout(sync_budget, ensure_server(game_dir))
+            .await
+            .is_ok()
+    });
+    if !synced {
+        // The dropped sync may leave a partial `.download` temp file;
+        // the next launch's download truncates and rewrites it.
+        gate_log(
+            game_dir,
+            "[tachyon] readiness gate: sync exceeded the launch budget — launching unarmed",
+        );
+        return false;
+    }
+    gate_log(
+        game_dir,
+        &format!(
+            "[tachyon] readiness gate: sync done (server binary present: {})",
+            yes_no(server_exe(game_dir).is_file())
+        ),
+    );
+
+    // (b) Spawn hidden/detached if the port is (still) free.
+    ensure_running(game_dir);
+    gate_log(
+        game_dir,
+        &format!(
+            "[tachyon] readiness gate: spawn step done (port taken: {})",
+            yes_no(!udp_port_free(SERVER_PORT))
+        ),
+    );
+
+    // (c) Wait until the port is actually taken — a spawned process
+    // is not a listening server until it binds.
+    let allowance = listen_wait_allowance(READY_BUDGET, started.elapsed());
+    if wait_until_listening(allowance) {
+        gate_log(
+            game_dir,
+            "[tachyon] readiness gate: udp/7777 listening — server ready",
+        );
+        true
+    } else {
+        gate_log(
+            game_dir,
+            "[tachyon] readiness gate: udp/7777 not listening in time — launching unarmed",
+        );
+        false
+    }
 }
 
 /// Keep the pinned playit agent binary present next to the server.
@@ -625,8 +866,13 @@ fn spawn_agent(_exe: &Path, _secret: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_sidecar_hash, server_exe, sha256_file, udp_port_free};
+    use super::{
+        budget_remaining, gate_log, listen_wait_allowance, parse_sidecar_hash, server_exe,
+        sha256_file, sync_decision, tachyon_log_path, udp_port_free, wait_until_listening_with,
+        SyncDecision,
+    };
     use std::path::Path;
+    use std::time::Duration;
 
     #[test]
     fn parses_sha256sum_sidecar() {
@@ -837,6 +1083,159 @@ mod tests {
         // Player.log location (launcher::diagnostic_log_path).
         assert_eq!(super::player_log_candidates(&game_dir)[0], log);
         assert_eq!(super::most_recent_player_log(&game_dir), Some(log));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sync_decision_matrix() {
+        let hash = "9947d9ffd222d4eb10d180f947277dd3a3af3e46be31c8a29cf96823251cbde0";
+        let other = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        // Mirror hash fetched, local matches -> nothing to do.
+        assert_eq!(sync_decision(Some(hash), Some(hash)), SyncDecision::UpToDate);
+        // Mirror hash fetched, local missing or stale -> download.
+        assert_eq!(sync_decision(None, Some(hash)), SyncDecision::Download);
+        assert_eq!(
+            sync_decision(Some(other), Some(hash)),
+            SyncDecision::Download
+        );
+        // No mirror hash (offline) -> keep whatever is installed.
+        assert_eq!(
+            sync_decision(Some(hash), None),
+            SyncDecision::KeepInstalledNoMirror
+        );
+        assert_eq!(
+            sync_decision(None, None),
+            SyncDecision::KeepInstalledNoMirror
+        );
+    }
+
+    #[test]
+    fn budget_math_saturates_and_caps() {
+        let budget = Duration::from_secs(180);
+        assert_eq!(
+            budget_remaining(budget, Duration::from_secs(30)),
+            Duration::from_secs(150)
+        );
+        assert_eq!(
+            budget_remaining(budget, Duration::from_secs(180)),
+            Duration::ZERO
+        );
+        // Elapsed beyond the budget saturates at zero, never wraps.
+        assert_eq!(
+            budget_remaining(budget, Duration::from_secs(999)),
+            Duration::ZERO
+        );
+        // The listen wait is capped by its own limit while budget lasts…
+        assert_eq!(
+            listen_wait_allowance(budget, Duration::from_secs(30)),
+            super::LISTEN_WAIT
+        );
+        // …and by whatever budget remains once that runs lower.
+        assert_eq!(
+            listen_wait_allowance(budget, Duration::from_secs(175)),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            listen_wait_allowance(budget, Duration::from_secs(999)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn wait_loop_polls_until_listening() {
+        let mut probes = 0_u32;
+        let mut sleeps: Vec<Duration> = Vec::new();
+        let ready = wait_until_listening_with(
+            || {
+                probes += 1;
+                probes >= 3 // listening on the third probe
+            },
+            Duration::from_secs(10),
+            Duration::from_millis(250),
+            |step| sleeps.push(step),
+        );
+        assert!(ready);
+        assert_eq!(probes, 3);
+        // Slept exactly once between probes, never past the wait.
+        assert_eq!(
+            sleeps,
+            vec![Duration::from_millis(250), Duration::from_millis(250)]
+        );
+    }
+
+    #[test]
+    fn wait_loop_gives_up_at_max_wait() {
+        let mut probes = 0_u32;
+        let mut sleeps: Vec<Duration> = Vec::new();
+        let ready = wait_until_listening_with(
+            || {
+                probes += 1;
+                false // never listens
+            },
+            Duration::from_millis(1000),
+            Duration::from_millis(300),
+            |step| sleeps.push(step),
+        );
+        assert!(!ready);
+        assert_eq!(probes, 5);
+        // The last step is clamped so the total wait is exactly the
+        // allowance — the gate never overshoots its budget here.
+        assert_eq!(
+            sleeps,
+            vec![
+                Duration::from_millis(300),
+                Duration::from_millis(300),
+                Duration::from_millis(300),
+                Duration::from_millis(100),
+            ]
+        );
+        assert_eq!(
+            sleeps.iter().sum::<Duration>(),
+            Duration::from_millis(1000)
+        );
+    }
+
+    #[test]
+    fn wait_loop_immediate_listening_never_sleeps() {
+        let mut sleeps: Vec<Duration> = Vec::new();
+        let ready = wait_until_listening_with(
+            || true,
+            Duration::from_secs(10),
+            Duration::from_millis(250),
+            |step| sleeps.push(step),
+        );
+        assert!(ready);
+        assert!(sleeps.is_empty());
+        // Zero allowance + not listening: one probe, no sleep, give up.
+        let ready = wait_until_listening_with(
+            || false,
+            Duration::ZERO,
+            Duration::from_millis(250),
+            |step| sleeps.push(step),
+        );
+        assert!(!ready);
+        assert!(sleeps.is_empty());
+    }
+
+    #[test]
+    fn gate_log_appends_lines_to_tachyon_log() {
+        let dir = std::env::temp_dir().join(format!(
+            "fluxrec-tachyon-gatelog-{}",
+            std::process::id()
+        ));
+        let game_dir = dir.join("game");
+        // The log lives next to where the server binary would live.
+        assert_eq!(
+            tachyon_log_path(&game_dir),
+            game_dir.join("tachyon-server").join("tachyon.log")
+        );
+        gate_log(&game_dir, "[tachyon] readiness gate: first");
+        gate_log(&game_dir, "[tachyon] readiness gate: second");
+        let written = std::fs::read_to_string(tachyon_log_path(&game_dir)).unwrap();
+        assert_eq!(
+            written,
+            "[tachyon] readiness gate: first\n[tachyon] readiness gate: second\n"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
