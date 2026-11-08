@@ -1031,7 +1031,14 @@ const app = new Hono<App>()
 					await setPasswordHash(c.env.DB, account.accountId, await hashPassword(password))
 				}
 				// Place the new player in Orientation (they don't explicitly matchmake into it).
-				await placeNewPlayerInOrientation(c.env, account.accountId, deviceClass)
+				try {
+					await placeNewPlayerInOrientation(c.env, account.accountId, deviceClass)
+				} catch (err) {
+					logger.error('failed to seed new account in Orientation', {
+						accountId: account.accountId,
+						error: err instanceof Error ? err.message : String(err),
+					})
+				}
 			} else if (grantType === 'refresh_token') {
 				const presented = typeof body.refresh_token === 'string' ? body.refresh_token : ''
 				const refreshed = presented ? await consumeRefreshToken(c.env.DB, presented) : null

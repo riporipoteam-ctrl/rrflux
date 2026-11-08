@@ -278,9 +278,9 @@ export const LocalizationContextDto = z.object({
 })
 
 /**
- * A room, exactly as stored: each room is a single JSON blob in D1 and every read
- * serves it verbatim (PascalCase, the client-facing shape), with `SubRooms` re-attached
- * from the subroom table. The seed data comes from `static/ImportRooms.json`.
+ * The PascalCase room DTO reconstructed from D1: booleans from older numeric captures
+ * are normalized on read, derived defaults are added, and `SubRooms` are re-attached
+ * from their table. Seed data comes from `static/ImportRooms.json`.
  */
 export const RoomDto = z.object({
 	RoomId: z.int(),

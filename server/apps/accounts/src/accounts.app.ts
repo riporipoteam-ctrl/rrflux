@@ -5,10 +5,15 @@ import { useWorkersLogger } from 'workers-tagged-logger'
 import {
 	createAccount,
 	defaultAccount,
+	GAME_VERSION,
 	getAccount,
 	getAccountByUsername,
 	getAccountsByIds,
+	getRoomById,
+	RoomInstanceType,
 	searchAccounts,
+	setPresence,
+	subRoomDataBlob,
 	updateAccount,
 } from '@repo/domain'
 import {
@@ -192,6 +197,51 @@ async function formFields(c: Context<App>, name: string): Promise<string[]> {
 	const value = body[name]
 	const values = Array.isArray(value) ? value : [value]
 	return values.filter((v): v is string => typeof v === 'string')
+}
+
+/** The 2026 client enters Orientation immediately after its unauthenticated account-create call. */
+async function seedNewAccountInOrientation(
+	db: D1Database,
+	accountId: number,
+	platform: number,
+	deviceClass: number,
+	appVersion: string
+): Promise<void> {
+	const room = await getRoomById(db, 13)
+	if (!room || !Array.isArray(room.SubRooms) || room.SubRooms.length === 0) return
+	const subRoom = room.SubRooms[0] as Record<string, unknown>
+	const text = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback)
+	const numeric = (value: unknown, fallback: number) =>
+		typeof value === 'number' ? value : fallback
+
+	await setPresence(db, {
+		accountId,
+		roomInstance: {
+			roomInstanceId: -2,
+			roomId: 13,
+			subRoomId: numeric(subRoom.SubRoomId, 1),
+			roomInstanceType: RoomInstanceType.Public,
+			location: text(subRoom.UnitySceneId),
+			dataBlob: subRoomDataBlob(subRoom),
+			eventId: 0,
+			clubId: 0,
+			roomCode: '',
+			photonRegion: 'us',
+			photonRegionId: 'us',
+			photonRoomId: 'rec.13',
+			name: `^${text(room.Name, 'Orientation')}`,
+			maxCapacity: numeric(subRoom.MaxPlayers, 4),
+			isFull: false,
+			isPrivate: false,
+			isInProgress: false,
+			EncryptVoiceChat: false,
+		},
+		statusVisibility: 0,
+		deviceClass,
+		vrMovementMode: 1,
+		platform,
+		appVersion: appVersion || GAME_VERSION,
+	})
 }
 
 /**
@@ -514,23 +564,46 @@ const app = new Hono<App>()
 			summary: 'Create an account',
 			description: [
 				'Mints a new account with an auto-assigned random username (players don’t choose',
-				'one initially). Not auth-gated. `platformId` is parsed but not yet persisted.',
+				'one initially). Not auth-gated. `platformId` is parsed but not yet persisted. Seeds',
+				'the player in Orientation with their device class and client version before the first',
+				'matchmake.',
 			].join(' '),
 			requestBody: form(CreateAccountRequest, 'Platform fields'),
 			responses: { 200: json(CreateAccountResult, 'The created account, in a result envelope') },
 		}),
 		async (c) => {
-			// Parsed for fidelity; unused until there's a DB to persist CachedLogins.
+			// The platform id is parsed for fidelity but is not yet stored here.
 			const platform = await formField(c, 'platform')
 			await formField(c, 'platformId')
+			const deviceClassText =
+				(await formField(c, 'deviceClass')) || (await formField(c, 'device_class'))
+			const version = await formField(c, 'ver')
 
 			// Persist a new account with an auto-assigned random username (players
 			// don't choose one initially).
 			const platforms = Number.parseInt(platform, 10)
+			const parsedDeviceClass = Number.parseInt(deviceClassText, 10)
+			const deviceClass =
+				Number.isSafeInteger(parsedDeviceClass) && parsedDeviceClass >= 0 ? parsedDeviceClass : 0
 			const account = await createAccount(c.env.DB, {
 				platforms: Number.isNaN(platforms) ? 0 : platforms,
 			})
-			// TODO: also create a dorm Room/SubRoom for the new account.
+			// The game loads Orientation locally after account creation and expects the
+			// match heartbeat to see the same sentinel instance it was given at signup.
+			try {
+				await seedNewAccountInOrientation(
+					c.env.DB,
+					account.accountId,
+					Number.isNaN(platforms) ? 0 : platforms,
+					deviceClass,
+					version
+				)
+			} catch (err) {
+				logger.error('failed to seed new account in Orientation', {
+					accountId: account.accountId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
 			return c.json({ success: true, value: toAccountDto(account) })
 		}
 	)

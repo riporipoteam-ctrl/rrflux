@@ -175,10 +175,25 @@ export const HealthResponse = z.object({ service: z.literal('accounts'), status:
 
 // ---- Request bodies --------------------------------------------------------
 
-/** `POST /account/create` form body. Both fields are parsed but not yet persisted. */
+/**
+ * `POST /account/create` form body. Platform/device/version values seed the new player's
+ * presence in Orientation.
+ */
 export const CreateAccountRequest = z.object({
 	platform: z.string().optional().describe('PlatformType integer string; defaults to 0'),
 	platformId: z.string().optional().describe('Parsed for fidelity; currently unused'),
+	deviceClass: z
+		.string()
+		.optional()
+		.describe('Device class integer string; defaults to 0'),
+	device_class: z
+		.string()
+		.optional()
+		.describe('Snake-case alias accepted by the 2026 authentication flow'),
+	ver: z
+		.string()
+		.optional()
+		.describe('Client build recorded in the initial presence; defaults to the server build'),
 })
 
 /**
