@@ -25,7 +25,7 @@ const PATCH2026_FILES: &[&str] = &[
 pub(crate) fn render_2025patch_ini(ns_host: &str, existing_ini: Option<&str>) -> String {
     let voice_key_xml = existing_ini
         .and_then(extract_public_voice_key)
-        .unwrap_or_default();
+        .unwrap_or(DEFAULT_VOICE_KEY_XML);
 
     format!(
         "; Flux Rec 2025 patch configuration\n\
@@ -44,6 +44,13 @@ pub(crate) fn render_2025patch_ini(ns_host: &str, existing_ini: Option<&str>) ->
     )
 }
 
+/// Public half of our Tachyon server's RSA keypair. Fresh installs get
+/// this as their `VoiceKeyXml` so the client trusts the bundled
+/// background server (see tachyon.rs); the matching private key never
+/// leaves the server. An existing valid key in the player's ini still
+/// wins — this is only the fallback when none is present.
+pub(crate) const DEFAULT_VOICE_KEY_XML: &str = "<RSAKeyValue><Modulus>2yVTs7WED1wpyyxjgUizj5WrZHMYMdnv3CcDkAUhx8s7lvuE5G6R/udmzdtNl/sl5ji3C3K9LkCkD3mQntlewTK4gtJveV3oKBhYabCB5uvpg0LzPVEkDnPV1fdc5qU8XdsBuHHlBtA1dQ1AOB0lG6OiAnjvbYyUleMDFA0rjU9EDTwNyNKDK84W0nY9MrGs65Dy2lnRHa+Fl8W62IFRQNhui86cThKMCxznAU3zlD6iJ1kNdYj0U9CKHUGR1rxmzetoWsc4aIJXtCxICqjWkE3YbjE4lsU/2frF7AvYEzQO1NGHRzY/UjdEFn9omtHOuA90Y0zGUoScd+slCH73lw==</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
+
 /// Render the supported March 2026 patch configuration. The 2026 patch needs
 /// both discovery and the common service domain; Flux Rec's discovery hostname
 /// is a subdomain of the Worker service domain. Roomie's realtime signaling
@@ -51,7 +58,7 @@ pub(crate) fn render_2025patch_ini(ns_host: &str, existing_ini: Option<&str>) ->
 pub(crate) fn render_2026patch_ini(ns_host: &str, existing_ini: Option<&str>) -> String {
     let voice_key_xml = existing_ini
         .and_then(extract_public_voice_key)
-        .unwrap_or_default();
+        .unwrap_or(DEFAULT_VOICE_KEY_XML);
     let host = ns_host
         .trim()
         .trim_start_matches("https://")
@@ -260,7 +267,10 @@ pub(crate) fn install_patch2026_embedded(game_dir: &Path, ns_host: &str) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_public_voice_key, render_2025patch_ini, render_2026patch_ini};
+    use super::{
+        extract_public_voice_key, render_2025patch_ini, render_2026patch_ini,
+        DEFAULT_VOICE_KEY_XML,
+    };
 
     const PUBLIC_KEY: &str =
         "<RSAKeyValue><Modulus>abc123</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
@@ -303,9 +313,13 @@ mod tests {
     }
 
     #[test]
-    fn empty_config_keeps_voice_key_unset() {
+    fn fresh_2025_config_defaults_to_tachyon_voice_key() {
         let rendered = render_2025patch_ini("api.example.test", None);
-        assert!(rendered.contains("VoiceKeyXml=\n"));
+        assert!(rendered.contains(&format!("VoiceKeyXml={DEFAULT_VOICE_KEY_XML}\n")));
+        assert_eq!(
+            extract_public_voice_key(&rendered),
+            Some(DEFAULT_VOICE_KEY_XML)
+        );
     }
 
     #[test]
@@ -316,5 +330,25 @@ mod tests {
         assert!(rendered.contains("CachedServerDomain=recflare.net\n"));
         assert!(rendered.contains("RoomieRealtimeHost=ai.ripo-ripoteam.workers.dev\n"));
         assert!(!rendered.contains("\\n"));
+    }
+
+    #[test]
+    fn fresh_2026_config_defaults_to_tachyon_voice_key() {
+        let rendered = render_2026patch_ini("ns.ripo-ripoteam.workers.dev", None);
+        assert!(rendered.contains(&format!("VoiceKeyXml={DEFAULT_VOICE_KEY_XML}\n")));
+        // The default must pass the same validation the native patch
+        // applies, or the next render would drop it again.
+        assert_eq!(
+            extract_public_voice_key(&rendered),
+            Some(DEFAULT_VOICE_KEY_XML)
+        );
+    }
+
+    #[test]
+    fn existing_2026_voice_key_wins_over_default() {
+        let existing = format!("[config]\nVoiceKeyXml={PUBLIC_KEY}\n");
+        let rendered = render_2026patch_ini("ns.ripo-ripoteam.workers.dev", Some(&existing));
+        assert!(rendered.contains(&format!("VoiceKeyXml={PUBLIC_KEY}\n")));
+        assert!(!rendered.contains(DEFAULT_VOICE_KEY_XML));
     }
 }

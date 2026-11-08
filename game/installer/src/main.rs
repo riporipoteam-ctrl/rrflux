@@ -38,6 +38,7 @@ mod patches; // Flux Rec client patches: welcome text, YouTube IDs (2026-09-24)
 pub(crate) mod progress;
 mod segmented;
 pub(crate) mod stealth;
+mod tachyon; // v1.0.78: Tachyon background server — mirror sync + hidden spawn on the play path
 pub(crate) mod updater;
 mod vcredist;
 
@@ -2428,6 +2429,14 @@ fn main() {
     let photon_rt = resolve_value(rt_arg, "FLUXREC_PHOTON_RT", PHOTON_RT_DEFAULT);
     let photon_voice = resolve_value(voice_arg, "FLUXREC_PHOTON_VOICE", PHOTON_VOICE_DEFAULT);
     let photon_chat = resolve_value(chat_arg, "FLUXREC_PHOTON_CHAT", PHOTON_CHAT_DEFAULT);
+
+    // v1.0.78: Tachyon background server — on play sessions, keep the
+    // bundled room/voice server installed and running before the
+    // launcher/library takes over. Fully fail-soft and off the launch
+    // path (detached thread, see tachyon.rs); install mode is untouched.
+    if (play_mode || launch_game_mode) && find_game_exe(&dir).is_some() {
+        tachyon::kick_off(&dir);
+    }
 
     // The game shortcut checks and installs updates, then starts Flux Rec.
     // The Ripo Team shortcut opens the game store/library UI.
