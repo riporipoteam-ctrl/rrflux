@@ -2,8 +2,18 @@
 //!
 //! Primary method: the Goldberg emulator (gbe_fork) — proven on cloud
 //! Windows runners to boot the 2025 client with no Steam client installed.
-//! Fallback: a minimal Flux Rec stub `steam_api64.dll` (plain C, MinGW-built,
-//! zero VC++ runtime dependency) whose `SteamAPI_Init` returns true.
+//! Fallback: our own full Steam emulator `steam_api64.dll` (clean-room,
+//! built from `game/bootstrap/steam_emu` for the MinGW target — zero VC++
+//! runtime dependency), exporting the complete 995-function surface of
+//! the stock DLL, `SteamInternal_CreateInterface` included. Proven on a
+//! real Windows laptop to boot the 2026 client (2026-11-08).
+//!
+//! History: the previous fallback was a minimal C stub with ~6 flat
+//! exports. It could never boot the 2026 client — BootSequence resolves
+//! `SteamInternal_CreateInterface` first and died with
+//! EntryPointNotFoundException — yet `verify` below rubber-stamped it as
+//! OK, so broken installs never healed. `verify` now rejects any DLL
+//! that lacks the boot export, so those installs repair themselves.
 //!
 //! The bypass is verified — not just installed — and the same verify/repair
 //! path runs from the installer AND from the launcher (`--play`), so a
@@ -12,9 +22,11 @@
 
 use std::path::Path;
 
-/// Minimal stub DLL, embedded at compile time. Built from
-/// `stub_src/steam_api64_stub.c` with MinGW (`x86_64-w64-mingw32-gcc
-/// -shared`); links only against kernel32/msvcrt — never the VC++ runtime.
+/// Fallback emulator DLL, embedded at compile time. Built from
+/// `game/bootstrap/steam_emu` (`cargo build --release --target
+/// x86_64-pc-windows-gnu`); links only against kernel32/msvcrt — never
+/// the VC++ runtime. Despite the legacy file name this is NOT the old
+/// 6-export C stub: it exports the full stock surface (995 functions).
 pub static STUB_DLL_BYTES: &[u8] = include_bytes!("../assets/steam_api64_stub.dll");
 
 /// Which bypass is (or should be) in place.
@@ -22,7 +34,7 @@ pub static STUB_DLL_BYTES: &[u8] = include_bytes!("../assets/steam_api64_stub.dl
 pub enum BypassMethod {
     /// Goldberg emulator — the proven primary method.
     Goldberg,
-    /// Minimal Flux Rec stub — automatic fallback, zero VC++ dependency.
+    /// Flux Rec Steam emulator — automatic fallback, zero VC++ dependency.
     Stub,
 }
 
@@ -56,6 +68,18 @@ fn plug_dir(dir: &Path) -> std::path::PathBuf {
     dir.join("Recroom_Release_Data").join("Plugins").join("x86_64")
 }
 
+/// The export the client's BootSequence resolves before anything else
+/// (`Steamworks.CSteamAPIContext.Init` P/Invokes it). The name sits in
+/// plain ASCII in the PE export directory of every capable DLL — the
+/// stock Valve DLL, the Goldberg emulator and our own emulator all carry
+/// it; the retired minimal C stub does not.
+const BOOT_EXPORT: &[u8] = b"SteamInternal_CreateInterface";
+
+/// True when the DLL bytes contain the boot export's name.
+fn dll_has_boot_export(bytes: &[u8]) -> bool {
+    bytes.windows(BOOT_EXPORT.len()).any(|w| w == BOOT_EXPORT)
+}
+
 /// Inspect the install dir and report the bypass state. Pure filesystem
 /// checks — safe to run on every `--play`.
 pub fn verify(dir: &Path) -> BypassState {
@@ -68,18 +92,34 @@ pub fn verify(dir: &Path) -> BypassState {
     if !dll.exists() {
         return BypassState::Broken("steam_api64.dll is missing".to_string());
     }
+    let cur = match std::fs::read(&dll) {
+        Ok(b) => b,
+        Err(_) => return BypassState::Broken("steam_api64.dll is unreadable".to_string()),
+    };
     // Detect a reverted bypass: if the stock DLL backup we made exists and
     // the live DLL is byte-identical to stock, something (re-extract,
     // "verify files", AV quarantine+restore) undid the swap.
     let backup = plug.join("steam_api64.dll.fluxrec-stock");
     if backup.exists() {
-        if let (Ok(cur), Ok(stock)) = (std::fs::read(&dll), std::fs::read(&backup)) {
+        if let Ok(stock) = std::fs::read(&backup) {
             if cur == stock {
                 return BypassState::Broken(
                     "the stock steam_api64.dll is back — the bypass was reverted".to_string(),
                 );
             }
         }
+    }
+    // A DLL without the boot export can never start the client: the
+    // BootSequence P/Invokes SteamInternal_CreateInterface before
+    // anything else and dies with EntryPointNotFoundException. The
+    // retired minimal C stub (~6 exports, the fallback up to v1.0.76) is
+    // exactly such a DLL — report it broken so the repair path replaces
+    // it instead of rubber-stamping it as OK.
+    if !dll_has_boot_export(&cur) {
+        return BypassState::Broken(
+            "steam_api64.dll lacks SteamInternal_CreateInterface — an outdated stub is installed"
+                .to_string(),
+        );
     }
     match std::fs::read_to_string(&appid) {
         Ok(s) if s.trim() == crate::STEAM_APP_ID => {}
@@ -94,9 +134,10 @@ pub fn verify(dir: &Path) -> BypassState {
             "steam_settings/steam_interfaces.txt is missing".to_string(),
         );
     }
-    let method = match std::fs::read(&dll) {
-        Ok(cur) if cur == STUB_DLL_BYTES => BypassMethod::Stub,
-        _ => BypassMethod::Goldberg,
+    let method = if cur == STUB_DLL_BYTES {
+        BypassMethod::Stub
+    } else {
+        BypassMethod::Goldberg
     };
     BypassState::Ok(method)
 }
@@ -115,8 +156,8 @@ fn write_steam_settings(plug: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Install the minimal stub bypass: back up stock once, swap in the stub,
-/// write settings, remove the legacy root `steam_appid.txt`.
+/// Install the fallback emulator bypass: back up stock once, swap in the
+/// emulator, write settings, remove the legacy root `steam_appid.txt`.
 pub fn install_stub(dir: &Path) -> Result<(), String> {
     let plug = plug_dir(dir);
     let dll = plug.join("steam_api64.dll");
@@ -133,7 +174,7 @@ pub fn install_stub(dir: &Path) -> Result<(), String> {
     std::fs::write(&dll, STUB_DLL_BYTES).map_err(|e| format!("stub dll install failed: {e}"))?;
     write_steam_settings(&plug)?;
     let _ = std::fs::remove_file(dir.join("steam_appid.txt"));
-    println!("[steam] stub steam_api64.dll installed (fallback, no VC++ runtime needed).");
+    println!("[steam] Flux Rec steam emulator installed (fallback, no VC++ runtime needed).");
     Ok(())
 }
 
@@ -265,11 +306,35 @@ mod tests {
         std::fs::write(s.join("steam_appid.txt"), "471710").unwrap();
         std::fs::write(s.join("steam_interfaces.txt"), "x").unwrap();
 
-        std::fs::write(p.join("steam_api64.dll"), b"emulator-bytes").unwrap();
+        std::fs::write(
+            p.join("steam_api64.dll"),
+            b"emulator-bytes\x00SteamInternal_CreateInterface\x00",
+        )
+        .unwrap();
         assert_eq!(verify(&d), BypassState::Ok(BypassMethod::Goldberg));
 
         std::fs::write(p.join("steam_api64.dll"), STUB_DLL_BYTES).unwrap();
         assert_eq!(verify(&d), BypassState::Ok(BypassMethod::Stub));
+    }
+
+    #[test]
+    fn verify_detects_outdated_stub_without_boot_export() {
+        // Regression (v1.0.76): the minimal C stub satisfied every old
+        // check — file present, settings correct — yet can never boot
+        // the client. It must read as Broken so --play repairs it.
+        let d = tmp("outdated-stub");
+        let p = fake_plug(&d);
+        std::fs::write(p.join("steam_api64.dll"), b"minimal-stub-bytes").unwrap();
+        let s = p.join("steam_settings");
+        std::fs::create_dir_all(&s).unwrap();
+        std::fs::write(s.join("steam_appid.txt"), "471710").unwrap();
+        std::fs::write(s.join("steam_interfaces.txt"), "x").unwrap();
+        match verify(&d) {
+            BypassState::Broken(reason) => {
+                assert!(reason.contains("SteamInternal_CreateInterface"))
+            }
+            other => panic!("expected Broken(boot export), got {other:?}"),
+        }
     }
 
     #[test]

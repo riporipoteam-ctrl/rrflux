@@ -41,7 +41,7 @@ unsafe impl Send for IfaceObj {}
 
 // Deterministic fake identity, stable across process runs.
 const FAKE_STEAM_ID: u64 = 76561197960265728 + 0x465558; // 7656119 xxxx (universe 1, account type individual)
-const FAKE_APP_ID: u32 = 223750; // Rec Room's real app id
+const FAKE_APP_ID: u32 = 471710; // Rec Room's real app id
 const BUILD_ID: u32 = 8475386;   // Nov 2022 era build id marker
 
 static CALL_ID: AtomicU64 = AtomicU64::new(0x46554C58_0000_0001);

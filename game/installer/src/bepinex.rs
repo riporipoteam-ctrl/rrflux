@@ -260,7 +260,7 @@ pub(crate) fn install_patch2026_embedded(game_dir: &Path, ns_host: &str) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_public_voice_key, render_2025patch_ini};
+    use super::{extract_public_voice_key, render_2025patch_ini, render_2026patch_ini};
 
     const PUBLIC_KEY: &str =
         "<RSAKeyValue><Modulus>abc123</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
