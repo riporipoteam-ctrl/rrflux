@@ -27,8 +27,8 @@ const RELEASES_URL: &str =
 const SETUP_ASSET_NAME: &str = "FluxRec-Setup.exe";
 const RELEASE_TAG_PREFIX: &str = "ripo-team-launcher-v";
 const LEGACY_RELEASE_TAG_PREFIX: &str = "recflare-installer-v";
-/// Hard ceiling for the whole update check (keeps launches snappy).
-const CHECK_TIMEOUT_SECS: u64 = 5;
+/// Per-request deadline, allowing slower connections to finish receiving metadata.
+const CHECK_TIMEOUT_SECS: u64 = 15;
 /// Recheck GitHub at least this often during repeated game launches.
 const LAUNCH_CHECK_CACHE_SECS: u64 = 300;
 
@@ -129,6 +129,7 @@ pub async fn check_for_updates(install_dir: &Path, progress: &Progress) -> Updat
 
     let client = match reqwest::Client::builder()
         .user_agent("FluxRec-Launcher")
+        .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(CHECK_TIMEOUT_SECS))
         .build()
     {
@@ -192,6 +193,10 @@ async fn check_via_html(client: &reqwest::Client) -> UpdateDecision {
         Ok(t) => t,
         Err(_) => return UpdateDecision::CheckFailed,
     };
+    decision_from_html(&html, current_version())
+}
+
+fn decision_from_html(html: &str, current: (u64, u64, u64)) -> UpdateDecision {
     let mut best: Option<((u64, u64, u64), String)> = None;
     // Read the current product tag plus the legacy tag so installed v1.0.43 and older
     // launchers can cross the branding migration without losing automatic updates.
@@ -212,7 +217,6 @@ async fn check_via_html(client: &reqwest::Client) -> UpdateDecision {
             }
         }
     }
-    let current = current_version();
     if let Some((ver, tag)) = best {
         if ver > current {
             let download_url = format!(
@@ -228,9 +232,9 @@ async fn check_via_html(client: &reqwest::Client) -> UpdateDecision {
                 download_url,
             };
         }
+        return UpdateDecision::UpToDate;
     }
-    // No newer version found via HTML — but we can't be sure the check
-    // succeeded, so return CheckFailed to be honest.
+    // A response without any recognized product tag is not a valid check.
     UpdateDecision::CheckFailed
 }
 
@@ -369,6 +373,13 @@ mod tests {
             None => serde_json::json!([]),
         };
         serde_json::json!({ "tag_name": tag, "assets": assets })
+    }
+
+    #[test]
+    fn html_fallback_accepts_current_release_but_rejects_unrecognized_pages() {
+        assert!(matches!(decision_from_html("/releases/tag/ripo-team-launcher-v1.0.73", (1, 0, 73)), UpdateDecision::UpToDate));
+        assert!(matches!(decision_from_html("/releases/tag/ripo-team-launcher-v1.0.74", (1, 0, 73)), UpdateDecision::Available { .. }));
+        assert!(matches!(decision_from_html("Service temporarily unavailable", (1, 0, 73)), UpdateDecision::CheckFailed));
     }
 
     #[test]
