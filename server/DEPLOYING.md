@@ -212,6 +212,7 @@ edit the value, then re-deploy the worker that reads them.
 | `RECFLARE_STARTING_TOKENS`              | `econ`    | `10000`    | RecCenterTokens a new player is granted.                       |
 | `RECFLARE_MAX_UPLOAD_BYTES`             | `storage` | `67108864` | Maximum binary upload size; larger files receive HTTP 413.     |
 | `RECFLARE_ROOM_REDIRECTS`               | `match`   | unset      | Rooms to switch out on matchmake, e.g. `2=MyHub`.              |
+| `RECFLARE_TACHYON_HOST_PORT`            | `match`   | empty      | Public UDP tunnel address for the 2026 room server, `host:port`. |
 | `RECFLARE_PHOTON_REALTIME_APP_ID`       | `match`   | empty      | Your Photon Realtime app id. No app ships with recflare.       |
 | `RECFLARE_PHOTON_VOICE_APP_ID`          | `match`   | empty      | Your Photon Voice app id.                                      |
 | `RECFLARE_PHOTON_CHAT_APP_ID`           | `match`   | empty      | Your Photon Chat app id.                                       |
@@ -220,7 +221,7 @@ edit the value, then re-deploy the worker that reads them.
 Then deploy just the worker that reads it:
 
 ```bash
-just deploy -F auth
+just deploy -F match
 ```
 
 A line you leave out of `.env` keeps its default, so only copy over what you actually want

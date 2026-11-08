@@ -1,4 +1,4 @@
-//! Tachyon background server (v1.0.80).
+//! Tachyon background server (v1.0.81).
 //!
 //! The 2026 client's room/voice transport is a Tachyon session server
 //! (Unity Netcode/LiteNetLib under the historical "Photon" label — see
@@ -115,6 +115,9 @@ pub(crate) fn kick_off(game_dir: &Path) {
     let _ = std::thread::Builder::new()
         .name("tachyon-agent".to_string())
         .spawn(move || {
+            // Unity keeps appending to Player.log, so the owner's identity line
+            // can be far from the end. Provision before mirror work can delay it.
+            provision_host_secret(&game_dir);
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build();
@@ -123,10 +126,6 @@ pub(crate) fn kick_off(game_dir: &Path) {
                     ensure_agent(&game_dir).await;
                 });
             }
-            // Owner-host provisioning: on the owner's machine only,
-            // materialise the agent's secret file from the secret
-            // baked into release builds (fail-closed, fail-soft).
-            provision_host_secret(&game_dir);
             // The tunnel agent exposes the server the readiness gate
             // started just before this thread was spawned.
             ensure_agent_running(&game_dir);
@@ -600,6 +599,8 @@ fn spawn_server(exe: &Path) {
     let dir = exe.parent().unwrap_or_else(|| Path::new("."));
     match std::process::Command::new(exe)
         .current_dir(dir)
+        .arg("--log-path")
+        .arg(dir.join("playit.log"))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -725,6 +726,34 @@ fn read_log_tail(path: &Path, max_bytes: u64) -> Option<String> {
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// Scan the full game log for the owner's marker with bounded memory.
+/// Unity keeps appending to Player.log, so the identity line can be
+/// hundreds of kilobytes before the end and disappear from the short
+/// tail used for the common case.
+fn log_file_shows_owner(path: &Path) -> Option<bool> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let marker = OWNER_LOG_MARKER.as_bytes();
+    let mut chunk = vec![0_u8; 64 * 1024];
+    let mut overlap = Vec::with_capacity(marker.len().saturating_sub(1));
+    loop {
+        let count = file.read(&mut chunk).ok()?;
+        if count == 0 {
+            return Some(false);
+        }
+        let mut window = Vec::with_capacity(overlap.len() + count);
+        window.extend_from_slice(&overlap);
+        window.extend_from_slice(&chunk[..count]);
+        if window.windows(marker.len()).any(|bytes| bytes == marker) {
+            return Some(true);
+        }
+        let keep_from = window.len().saturating_sub(marker.len().saturating_sub(1));
+        overlap.clear();
+        overlap.extend_from_slice(&window[keep_from..]);
+    }
+}
+
 /// Pure owner gate: does this log text prove the local player is the
 /// owner? Takes the text (not a path) so tests drive it with fixtures.
 fn log_shows_owner(log_text: &str) -> bool {
@@ -764,7 +793,18 @@ fn provision_action(embedded: Option<&str>, log_tail: Option<&str>) -> Provision
 /// The secret itself is never logged — only the outcome line is.
 pub(crate) fn provision_host_secret(game_dir: &Path) {
     let log_tail = most_recent_player_log(game_dir)
-        .and_then(|path| read_log_tail(&path, LOG_TAIL_BYTES));
+        .and_then(|path| {
+            let tail = read_log_tail(&path, LOG_TAIL_BYTES)?;
+            if log_shows_owner(&tail) || log_file_shows_owner(&path)? {
+                Some(if log_shows_owner(&tail) {
+                    tail
+                } else {
+                    OWNER_LOG_MARKER.to_string()
+                })
+            } else {
+                Some(tail)
+            }
+        });
     match provision_action(EMBEDDED_AGENT_SECRET, log_tail.as_deref()) {
         ProvisionAction::Write(secret) => {
             let file = agent_secret_file(game_dir);
@@ -772,23 +812,31 @@ pub(crate) fn provision_host_secret(game_dir: &Path) {
                 .map(|text| text.trim() == secret.as_str())
                 .unwrap_or(false);
             if already {
-                println!("[tachyon] host provisioning: applied");
+                gate_log(game_dir, "[tachyon] host provisioning: applied");
                 return;
             }
             // Exact secret bytes, no trailing newline.
             let written = std::fs::create_dir_all(server_dir(game_dir))
                 .and_then(|()| std::fs::write(&file, &secret));
             match written {
-                Ok(()) => println!("[tachyon] host provisioning: applied"),
-                Err(error) => eprintln!("[tachyon] host provisioning failed: {error}"),
+                Ok(()) => gate_log(game_dir, "[tachyon] host provisioning: applied"),
+                Err(error) => gate_log(
+                    game_dir,
+                    &format!("[tachyon] host provisioning failed: {error}"),
+                ),
             }
         }
         ProvisionAction::NotOwner => {
-            println!("[tachyon] host provisioning: not this machine");
+            gate_log(
+                game_dir,
+                "[tachyon] host provisioning: owner marker not found in the local game log",
+            );
         }
         ProvisionAction::NoEmbeddedSecret => {
-            // Dormant by design (fork/local builds): stay silent,
-            // exactly like the missing-file path in v1.0.78.
+            gate_log(
+                game_dir,
+                "[tachyon] host provisioning: this release has no valid Playit secret",
+            );
         }
     }
 }
@@ -848,8 +896,8 @@ fn spawn_agent(exe: &Path, secret: &str) {
         // The v2 daemon authenticates from playit.toml (written by
         // provision_agent_config before this spawn); the environment
         // variable is kept as a harmless belt-and-braces for other
-        // builds. Either way the secret never goes on the command
-        // line (visible in process listings) and never into a log.
+        // builds. The launcher keeps the secret out of arguments and
+        // its own log; Playit writes tunnel status to playit.log.
         .env("SECRET_KEY", secret)
         .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .spawn()
