@@ -224,6 +224,7 @@ pub(crate) fn install_patch2026_embedded(game_dir: &Path, ns_host: &str) -> Resu
         ("Injector.exe", INJECTOR),
         ("RecRoomScreen.bat", SCREEN_BATCH),
         ("RecRoomVR.bat", VR_BATCH),
+        ("FluxRec-Diagnose.cmd", &include_bytes!("../assets/FluxRec-Diagnose.cmd")[..]),
     ] {
         let path = game_dir.join(name);
         if std::fs::read(&path)
@@ -249,6 +250,11 @@ pub(crate) fn install_patch2026_embedded(game_dir: &Path, ns_host: &str) -> Resu
         render_2026patch_ini(ns_host, existing.as_deref()),
     )
     .map_err(|error| format!("write 2026patch.ini: {error}"))?;
+    let diagnostics = game_dir.join("Diagnostics");
+    if std::fs::create_dir_all(&diagnostics).is_ok() {
+        let _ = std::fs::write(diagnostics.join("READ-ME.txt"),
+            "Flux Rec diagnostic logs\r\nNormal launcher starts write Player.log here.\r\nFor injector checks, run FluxRec-Diagnose.cmd in the game folder.\r\nAfter reproducing the error, close the game before sharing error lines. Logs may contain account information.\r\n");
+    }
     Ok(())
 }
 
