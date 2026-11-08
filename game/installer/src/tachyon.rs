@@ -1,4 +1,4 @@
-//! Tachyon background server (v1.0.82).
+//! Tachyon background server (v1.0.83).
 //!
 //! The 2026 client's room/voice transport is a Tachyon session server
 //! (Unity Netcode/LiteNetLib under the historical "Photon" label — see
@@ -41,6 +41,25 @@
 //! image whose full path is exactly our server exe's path. A
 //! listener that fails both proofs is never touched.
 //!
+//! Spawned-hash staleness (v1.0.83): the v1.0.82 takeover only fired
+//! when the *same launch's* sync reported a fresh download, but
+//! nothing recorded which binary the RUNNING server was started
+//! from — so once the on-disk exe reached the mirror version while
+//! an older process kept serving (a takeover whose proof failed,
+//! a file replaced out-of-band), every later launch synced as
+//! "unchanged", logged "already listening", and the stale process
+//! served forever. The gate now also records the spawned binary's
+//! sha256 in `tachyon-server.spawned-hash` at spawn time, and the
+//! takeover decision is driven by `running_is_stale`: a listener
+//! whose spawned record is missing (any pre-v1.0.83 server) or
+//! disagrees with the on-disk or mirror hash is stale and goes
+//! through the same ownership proofs on EVERY launch, whatever the
+//! sync outcome was. A proof failure still leaves the listener
+//! running — but now logs the full proof report (recorded PID,
+//! image-name result, port owner, owner image path, expected exe
+//! path, and all three hashes) so the next diagnosis is never
+//! blind. Gate log lines also carry a UTC timestamp from v1.0.83.
+//!
 //! Everything here is fail-soft by design:
 //! - a failed sidecar fetch keeps the installed exe untouched;
 //! - a failed download never replaces a working exe (temp file, hash
@@ -69,6 +88,14 @@ const SERVER_EXE_NAME: &str = "TachyonServer.exe";
 /// launch may replace a running server only when the PID recorded
 /// here is still alive and still running our server image.
 const SERVER_PID_NAME: &str = "tachyon-server.pid";
+/// Spawned-hash record naming the binary the running server was
+/// started from: the sha256 of the exe file at spawn time, written
+/// next to the binary (v1.0.83). The pidfile proves WHO the
+/// listener is; this record proves WHAT it is running — the
+/// staleness half of the takeover decision (`running_is_stale`).
+/// Servers spawned before v1.0.83 left no record, which the
+/// staleness check treats as stale (their vintage is unknown).
+const SERVER_SPAWNED_HASH_NAME: &str = "tachyon-server.spawned-hash";
 /// UDP port the bundled server listens on (loopback endpoint handed out
 /// by matchmaking for local sessions).
 pub(crate) const SERVER_PORT: u16 = 7777;
@@ -148,6 +175,75 @@ fn write_server_pid(game_dir: &Path, pid: u32) {
     let _ = std::fs::write(server_pid_file(game_dir), pid.to_string());
 }
 
+fn server_spawned_hash_file(game_dir: &Path) -> PathBuf {
+    server_dir(game_dir).join(SERVER_SPAWNED_HASH_NAME)
+}
+
+/// Parse spawned-hash contents: a 64-char hex sha256. Tolerant of
+/// surrounding whitespace and of upper case (normalized to the
+/// lowercase form `sha256_file` and the sidecar parser produce);
+/// anything else means "no usable record" — which the staleness
+/// check treats exactly like a missing file (stale).
+fn parse_spawned_hash(text: &str) -> Option<String> {
+    let token = text.trim().to_ascii_lowercase();
+    (token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit())).then_some(token)
+}
+
+/// The recorded hash of the binary the running server was spawned
+/// from, if a usable record exists.
+fn read_spawned_hash(game_dir: &Path) -> Option<String> {
+    parse_spawned_hash(&std::fs::read_to_string(server_spawned_hash_file(game_dir)).ok()?)
+}
+
+/// Remember which binary the gate just spawned, so a later launch
+/// can tell whether the listener on udp/7777 is still running that
+/// binary or a stale one (`running_is_stale`). Best-effort, like
+/// the pidfile: a missing record only ever makes the listener look
+/// stale (and the ownership proofs still gate any replacement),
+/// never blocks a launch.
+fn write_spawned_hash(game_dir: &Path, hash: &str) {
+    let _ = std::fs::create_dir_all(server_dir(game_dir));
+    let _ = std::fs::write(server_spawned_hash_file(game_dir), hash);
+}
+
+/// Is the server listening on udp/7777 running a stale binary?
+/// Pure, so the whole matrix is unit-tested.
+///
+/// - `spawned_hash`: the record written at spawn time — WHICH
+///   binary the running process was started from.
+/// - `disk_hash`: the exe on disk now (post-sync).
+/// - `mirror_hash`: the hash the mirror currently serves, when
+///   the sync could fetch it.
+///
+/// Stale when the spawned record is MISSING (any pre-v1.0.83
+/// server: its vintage is unknown, so it cannot be trusted to be
+/// current), or the spawned hash disagrees with any hash that is
+/// known. Not stale only when a record exists and matches every
+/// known hash — including the vacuous case where neither other
+/// hash could be determined (offline first run after a spawn:
+/// the record is all we have, and it is ours).
+fn running_is_stale(
+    spawned_hash: Option<&str>,
+    disk_hash: Option<&str>,
+    mirror_hash: Option<&str>,
+) -> bool {
+    let spawned = match spawned_hash {
+        Some(hash) => hash,
+        None => return true,
+    };
+    if let Some(disk) = disk_hash {
+        if spawned != disk {
+            return true;
+        }
+    }
+    if let Some(mirror) = mirror_hash {
+        if spawned != mirror {
+            return true;
+        }
+    }
+    false
+}
+
 fn agent_exe(game_dir: &Path) -> PathBuf {
     server_dir(game_dir).join(AGENT_EXE_NAME)
 }
@@ -213,9 +309,10 @@ fn sync_decision(local_hash: Option<&str>, expected_hash: Option<&str>) -> SyncD
 }
 
 /// What one mirror sync pass did to the exe on disk. The readiness
-/// gate needs this to decide the takeover: a stale server that is
-/// still running may only be replaced when the sync actually
-/// brought a newer binary than the one it was started from.
+/// gate uses this for the pending-install step (`UpdatePending`)
+/// and to leave a stale listener alone when the sync itself
+/// `Failed`; since v1.0.83 the takeover's warrant is the listener's
+/// staleness (`running_is_stale`), not this outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SyncOutcome {
     /// The installed exe already matched the mirror, or the mirror
@@ -240,11 +337,17 @@ pub(crate) enum SyncOutcome {
 /// local copy is missing or its hash differs. If the sidecar fetch
 /// fails (offline, mirror hiccup) and a local exe exists, it is kept
 /// as-is — the same fail-soft contract as the plugin sync.
-pub(crate) async fn ensure_server(game_dir: &Path) -> SyncOutcome {
+///
+/// Returns the outcome AND the mirror hash the sync fetched
+/// (`None` when the sidecar could not be fetched): the readiness
+/// gate threads that hash into `running_is_stale`, so a running
+/// server can be judged against what the mirror serves NOW, not
+/// only against what this launch happened to download (v1.0.83).
+pub(crate) async fn ensure_server(game_dir: &Path) -> (SyncOutcome, Option<String>) {
     let dir = server_dir(game_dir);
     if let Err(error) = std::fs::create_dir_all(&dir) {
         eprintln!("[tachyon] cannot create {}: {error}", dir.display());
-        return SyncOutcome::Failed;
+        return (SyncOutcome::Failed, None);
     }
     let exe = dir.join(SERVER_EXE_NAME);
 
@@ -256,7 +359,7 @@ pub(crate) async fn ensure_server(game_dir: &Path) -> SyncOutcome {
         Ok(client) => client,
         Err(error) => {
             eprintln!("[tachyon] http client failed: {error}");
-            return SyncOutcome::Failed;
+            return (SyncOutcome::Failed, None);
         }
     };
 
@@ -268,20 +371,22 @@ pub(crate) async fn ensure_server(game_dir: &Path) -> SyncOutcome {
         None
     };
     let expected = match sync_decision(local.as_deref(), fetched.as_deref()) {
-        SyncDecision::UpToDate => return SyncOutcome::Unchanged, // already in sync
+        SyncDecision::UpToDate => return (SyncOutcome::Unchanged, fetched), // already in sync
         SyncDecision::KeepInstalledNoMirror => {
             if exe.is_file() {
                 println!("[tachyon] mirror unreachable — keeping installed server.");
             } else {
                 eprintln!("[tachyon] mirror unreachable and no server installed yet.");
             }
-            return SyncOutcome::Unchanged;
+            // `fetched` is None in this branch by construction (the
+            // decision only lands here when no hash was fetched).
+            return (SyncOutcome::Unchanged, fetched);
         }
         SyncDecision::Download => match fetched {
             Some(hash) => hash,
             // sync_decision only picks Download when a hash was
             // fetched; this arm is unreachable in practice.
-            None => return SyncOutcome::Failed,
+            None => return (SyncOutcome::Failed, None),
         },
     };
 
@@ -293,7 +398,7 @@ pub(crate) async fn ensure_server(game_dir: &Path) -> SyncOutcome {
     if let Err(error) = download_verified(&client, &url, &temp, &expected).await {
         eprintln!("[tachyon] server download failed: {error}");
         let _ = std::fs::remove_file(&temp);
-        return SyncOutcome::Failed;
+        return (SyncOutcome::Failed, Some(expected));
     }
     if exe.is_file() {
         // Windows cannot replace a running exe: if the old server is
@@ -307,10 +412,10 @@ pub(crate) async fn ensure_server(game_dir: &Path) -> SyncOutcome {
         // it via `install_pending_server`. Any other cause simply
         // defers the update to a later launch, as before.
         eprintln!("[tachyon] downloaded server not installed yet (exe busy?): {error}");
-        return SyncOutcome::UpdatePending;
+        return (SyncOutcome::UpdatePending, Some(expected));
     }
     println!("[tachyon] Tachyon server synced from mirror.");
-    SyncOutcome::Updated
+    (SyncOutcome::Updated, Some(expected))
 }
 
 /// Install a download that an earlier sync pass (this same gate
@@ -364,13 +469,39 @@ enum TakeoverAction {
     Replace(u32),
 }
 
+/// The pre-v1.0.83 decision, gated on this launch's sync outcome.
+/// Retained as a wrapper so its test matrix keeps pinning the old
+/// behaviour; the gate itself now decides via
+/// `takeover_action_for_stale` (see `running_is_stale` for why the
+/// outcome gate was a dead-end).
+#[allow(dead_code)]
 fn takeover_action(
     outcome: SyncOutcome,
     port_taken: bool,
     pidfile_pid: Option<u32>,
     image_name: Option<&str>,
 ) -> TakeoverAction {
-    if !port_taken || !sync_warrants_takeover(outcome) {
+    takeover_action_for_stale(
+        sync_warrants_takeover(outcome),
+        port_taken,
+        pidfile_pid,
+        image_name,
+    )
+}
+
+/// The v1.0.83 pidfile-proof decision: identical in shape to
+/// `takeover_action`, but the warrant is the listener's STALENESS
+/// (`running_is_stale`) rather than this launch's sync outcome.
+/// A stale listener goes through the proof on every launch —
+/// including the launches where the sync changes nothing, which
+/// is exactly the case the outcome gate could never recover from.
+fn takeover_action_for_stale(
+    stale: bool,
+    port_taken: bool,
+    pidfile_pid: Option<u32>,
+    image_name: Option<&str>,
+) -> TakeoverAction {
+    if !port_taken || !stale {
         return TakeoverAction::KeepRunning;
     }
     let pid = match pidfile_pid {
@@ -391,13 +522,34 @@ fn takeover_action(
 /// exactly our server exe's path. Same fail-closed shape as
 /// `takeover_action`: no update, no owner, or a foreign path all
 /// keep the listener running.
+/// The pre-v1.0.83 fallback decision, gated on the sync outcome.
+/// Retained as a wrapper like `takeover_action`; the gate now
+/// decides via `port_owner_action_for_stale`.
+#[allow(dead_code)]
 fn port_owner_action(
     outcome: SyncOutcome,
     owner_pid: Option<u32>,
     owner_image_path: Option<&str>,
     server_exe_path: &str,
 ) -> TakeoverAction {
-    if !sync_warrants_takeover(outcome) {
+    port_owner_action_for_stale(
+        sync_warrants_takeover(outcome),
+        owner_pid,
+        owner_image_path,
+        server_exe_path,
+    )
+}
+
+/// The v1.0.83 fallback decision: same fail-closed shape as
+/// `port_owner_action`, warranted by staleness instead of by this
+/// launch's sync outcome.
+fn port_owner_action_for_stale(
+    stale: bool,
+    owner_pid: Option<u32>,
+    owner_image_path: Option<&str>,
+    server_exe_path: &str,
+) -> TakeoverAction {
+    if !stale {
         return TakeoverAction::KeepRunning;
     }
     let pid = match owner_pid {
@@ -680,19 +832,71 @@ fn tachyon_log_path(game_dir: &Path) -> PathBuf {
     server_dir(game_dir).join("tachyon.log")
 }
 
+/// Days since the Unix epoch → (year, month, day) in the
+/// proleptic Gregorian calendar (Howard Hinnant's civil-from-days
+/// algorithm). Pure integer math, so the timestamp formatter needs
+/// no date crate — this crate deliberately carries no chrono/time
+/// dependency for one log prefix.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // day of era, [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // year of era, [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year, [0, 365]
+    let mp = (5 * doy + 2) / 153; // month index, March = 0, [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Format Unix seconds as an ISO-8601 UTC timestamp
+/// (`2026-11-08T17:33:44Z`). Pure, so the conversion is
+/// unit-tested against known vectors (epoch, leap days).
+fn format_utc_from_unix(unix_secs: u64) -> String {
+    let days = (unix_secs / 86_400) as i64;
+    let secs_of_day = unix_secs % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        secs_of_day / 3600,
+        (secs_of_day % 3600) / 60,
+        secs_of_day % 60
+    )
+}
+
+/// The current UTC time, formatted by `format_utc_from_unix`. A
+/// clock reading from before the epoch (never in practice) clamps
+/// to the epoch instead of failing — a log prefix must not be able
+/// to break the gate.
+fn utc_now_timestamp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    format_utc_from_unix(secs)
+}
+
 /// Emit one readiness-gate outcome line: to stdout, like every
 /// launcher log line, AND appended to `tachyon.log` — on Windows the
 /// stdout is gone once the launcher exits, while the file is the
 /// artifact support can ask for when a launch misbehaves. Strictly
 /// best-effort: a failed file write never affects the gate.
+///
+/// Every line carries a UTC timestamp prefix (v1.0.83):
+/// `tachyon.log` accumulates across launches and server swaps, and
+/// an undated line cannot be tied to the launch that produced it —
+/// the exact ambiguity that made the v4/v5 server mix-up hard to
+/// prove from the log alone.
 fn gate_log(game_dir: &Path, line: &str) {
-    println!("{line}");
+    let stamped = format!("{} {line}", utc_now_timestamp());
+    println!("{stamped}");
     if std::fs::create_dir_all(server_dir(game_dir)).is_ok() {
         let appended = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(tachyon_log_path(game_dir))
-            .and_then(|mut file| writeln!(file, "{line}"));
+            .and_then(|mut file| writeln!(file, "{stamped}"));
         let _ = appended;
     }
 }
@@ -713,24 +917,34 @@ fn yes_no(value: bool) -> &'static str {
 /// confirmed listening, or the bounded budget (`READY_BUDGET`)
 /// expires and the gate logs and lets the launch proceed unarmed.**
 ///
-/// v1.0.82 adds the takeover step, and with it a second invariant:
-/// **a mirror update reaches the running server on the same
-/// launch — but the gate only ever stops a process an ownership
-/// proof vouches for (the pidfile record, or owning the port with
-/// our exe's exact image path); any other listener is never
-/// touched and keeps meaning "server ready".**
+/// v1.0.82 added the takeover step; v1.0.83 re-drives it by
+/// staleness instead of by the sync outcome, and with it a second
+/// invariant:
+/// **a mirror update reaches the running server — on the launch
+/// that brings it, or on any later launch that finds the running
+/// server stale — but the gate only ever stops a process an
+/// ownership proof vouches for (the pidfile record, or owning the
+/// port with our exe's exact image path); any other listener is
+/// never touched and keeps meaning "server ready".**
 ///
 /// In order: (a) sync `TachyonServer.exe` with the mirror,
 /// synchronously — a first run may spend a while on the 67 MB
 /// download, with progress lines, instead of the game freezing at
 /// 18% against a dead endpoint; (a2) if a server from an earlier
 /// session still holds the port (it is detached and outlives the
-/// launcher) and the sync brought a newer binary, take over: stop
-/// the proven stale process (pidfile proof, or the port-owner
-/// path proof for pre-pidfile servers), install the update if it
-/// is still pending, and fall through to the spawn step with the
-/// port free — a listener that fails both proofs is left alone
-/// and the gate returns ready exactly as the old fast path did;
+/// launcher), judge it with `running_is_stale` — spawned-hash
+/// record vs the post-sync disk hash and the mirror hash the sync
+/// fetched. Not stale: the gate returns ready exactly as the old
+/// fast path did. Stale: take over on ANY completed sync outcome
+/// (`Unchanged` included — that is the v1.0.83 fix), stopping the
+/// proven stale process (pidfile proof, or the port-owner path
+/// proof for pre-record servers), installing the update if one is
+/// still pending, and falling through to the spawn step with the
+/// port free. A stale listener that fails both proofs is left
+/// alone and the gate returns ready — but the full proof report
+/// is logged first. A stale listener whose sync FAILED is also
+/// left alone (nothing new was learned about the mirror; the
+/// next launch retries with a completed sync);
 /// (b) spawn
 /// the server hidden and detached if the port is free (the
 /// existing `ensure_running`), recording its PID in the pidfile;
@@ -772,10 +986,10 @@ pub(crate) fn ensure_server_ready(game_dir: &Path) -> bool {
         }
     };
     let sync_budget = budget_remaining(READY_BUDGET, started.elapsed());
-    let outcome = match runtime
+    let (outcome, mirror_hash) = match runtime
         .block_on(async { tokio::time::timeout(sync_budget, ensure_server(game_dir)).await })
     {
-        Ok(outcome) => outcome,
+        Ok(pair) => pair,
         Err(_) => {
             // The dropped sync may leave a partial `.download` temp
             // file; the next launch's download truncates and
@@ -810,27 +1024,76 @@ pub(crate) fn ensure_server_ready(game_dir: &Path) -> bool {
         },
     );
 
-    // (a2) Takeover: a leftover server holds the port and the sync
-    // brought a newer binary than the one it was started from.
-    // Replace it ONLY when an ownership proof vouches for the
-    // listener: primarily the pidfile (the process an earlier gate
-    // spawned — recorded PID, still alive, still our server
-    // image); as a fallback for servers spawned before the
-    // pidfile existed (v1.0.80 and earlier), the port's owner
-    // running an image whose path is exactly our exe's path.
-    // Anything else keeps the pre-takeover behavior: a busy port
-    // means a server is ready.
+    // (a2) Staleness + takeover (v1.0.83): a leftover server holds
+    // the port. Judge it by `running_is_stale` — the spawned-hash
+    // record against the post-sync disk hash and the mirror hash
+    // the sync fetched — NOT by whether this launch's sync
+    // downloaded anything (the v1.0.82 outcome gate dead-ended
+    // permanently once the disk reached the mirror version under
+    // a still-running older process). A stale listener is replaced
+    // ONLY when an ownership proof vouches for it: primarily the
+    // pidfile (the process an earlier gate spawned — recorded PID,
+    // still alive, still our server image); as a fallback for
+    // servers spawned before the pidfile existed (v1.0.80 and
+    // earlier), the port's owner running an image whose path is
+    // exactly our exe's path. Anything else keeps the pre-takeover
+    // behavior: a busy port means a server is ready.
     if !udp_port_free(SERVER_PORT) {
+        let spawned_hash = read_spawned_hash(game_dir);
+        let disk_hash = sha256_file(&server_exe(game_dir));
+        let stale = running_is_stale(
+            spawned_hash.as_deref(),
+            disk_hash.as_deref(),
+            mirror_hash.as_deref(),
+        );
+        if !stale {
+            gate_log(
+                game_dir,
+                "[tachyon] readiness gate: server already listening on udp/7777",
+            );
+            return true;
+        }
+        gate_log(
+            game_dir,
+            &format!(
+                "[tachyon] staleness: the running server is STALE (spawned={} disk={} mirror={}) — checking ownership proofs",
+                spawned_hash.as_deref().unwrap_or("none"),
+                disk_hash.as_deref().unwrap_or("none"),
+                mirror_hash.as_deref().unwrap_or("none"),
+            ),
+        );
+        if outcome == SyncOutcome::Failed {
+            // The sync learned nothing new (client build failure,
+            // early IO error, failed download): leave the stale
+            // listener serving rather than restarting it onto a
+            // binary state this launch could not verify. The next
+            // launch retries with a completed sync.
+            gate_log(
+                game_dir,
+                "[tachyon] takeover: the sync failed, so the stale listener is left running this launch",
+            );
+            gate_log(
+                game_dir,
+                "[tachyon] readiness gate: server already listening on udp/7777",
+            );
+            return true;
+        }
         let pidfile_pid = read_server_pid(game_dir);
         let image_name = pidfile_pid.and_then(process_image_name);
-        let primary = takeover_action(outcome, true, pidfile_pid, image_name.as_deref());
-        let action = if primary == TakeoverAction::KeepRunning
-            && sync_warrants_takeover(outcome)
-        {
-            let owner_pid = udp_port_owner_pid(SERVER_PORT);
-            let owner_path = owner_pid.and_then(process_image_path);
-            let fallback = port_owner_action(
-                outcome,
+        let primary =
+            takeover_action_for_stale(true, true, pidfile_pid, image_name.as_deref());
+        // The port-owner fallback doubles as the proof report's
+        // evidence, so it is gathered whenever the pidfile proof
+        // declines — its own verdict may decline too.
+        let mut owner_pid: Option<u32> = None;
+        let mut owner_path: Option<String> = None;
+        let action = if primary != TakeoverAction::KeepRunning {
+            primary
+        } else {
+            owner_pid = udp_port_owner_pid(SERVER_PORT);
+            owner_path = owner_pid.and_then(process_image_path);
+            let fallback = port_owner_action_for_stale(
+                true,
                 owner_pid,
                 owner_path.as_deref(),
                 &server_exe(game_dir).to_string_lossy(),
@@ -842,15 +1105,13 @@ pub(crate) fn ensure_server_ready(game_dir: &Path) -> bool {
                 );
             }
             fallback
-        } else {
-            primary
         };
         match action {
             TakeoverAction::Replace(pid) => {
                 gate_log(
                     game_dir,
                     &format!(
-                        "[tachyon] takeover: mirror update ready and udp/7777 is held by our stale server (pid {pid}) — restarting it"
+                        "[tachyon] takeover: udp/7777 is held by our stale server (pid {pid}) — restarting it on the current binary"
                     ),
                 );
                 if terminate_process(pid) {
@@ -884,16 +1145,28 @@ pub(crate) fn ensure_server_ready(game_dir: &Path) -> bool {
                     );
                 }
                 // Fall through: the spawn step below starts the
-                // updated binary if the port freed up, and no-ops
+                // current binary if the port freed up (recording
+                // the pidfile AND the spawned-hash), and no-ops
                 // (port still taken) if it did not.
             }
             TakeoverAction::KeepRunning => {
-                if sync_warrants_takeover(outcome) {
-                    gate_log(
-                        game_dir,
-                        "[tachyon] takeover: an update is ready but the listener on udp/7777 is not provably ours — leaving it running",
-                    );
-                }
+                // Fail-closed as ever — but never blind again: the
+                // full proof report goes to tachyon.log, so the
+                // next diagnosis starts from evidence, not guesses.
+                gate_log(
+                    game_dir,
+                    &format!(
+                        "[tachyon] takeover proof report: the listener on udp/7777 is stale but NOT provably ours — leaving it running | pidfile_pid={} image_name={} owner_pid={} owner_image_path={} expected_exe={} spawned_hash={} disk_hash={} mirror_hash={}",
+                        pidfile_pid.map(|pid| pid.to_string()).as_deref().unwrap_or("none"),
+                        image_name.as_deref().unwrap_or("none"),
+                        owner_pid.map(|pid| pid.to_string()).as_deref().unwrap_or("none"),
+                        owner_path.as_deref().unwrap_or("none"),
+                        server_exe(game_dir).display(),
+                        spawned_hash.as_deref().unwrap_or("none"),
+                        disk_hash.as_deref().unwrap_or("none"),
+                        mirror_hash.as_deref().unwrap_or("none"),
+                    ),
+                );
                 gate_log(
                     game_dir,
                     "[tachyon] readiness gate: server already listening on udp/7777",
@@ -1096,8 +1369,13 @@ fn sha256_file(path: &Path) -> Option<String> {
 /// Start the bundled server, hidden and detached, unless one is
 /// already listening: a loopback UDP port that cannot be bound is the
 /// "already running" signal. A successful spawn is recorded in the
-/// pidfile (the takeover's ownership proof) and its PID returned;
-/// `None` when nothing was spawned.
+/// pidfile (the takeover's ownership proof) AND in the spawned-hash
+/// record (the takeover's staleness proof, v1.0.83: the sha256 of
+/// the exe file at spawn time), and its PID returned; `None` when
+/// nothing was spawned. If the exe cannot be hashed the spawn still
+/// counts — the missing record just makes the listener look stale
+/// to the next launch, where the ownership proofs still gate any
+/// replacement.
 pub(crate) fn ensure_running(game_dir: &Path) -> Option<u32> {
     let exe = server_exe(game_dir);
     if !exe.is_file() {
@@ -1108,6 +1386,9 @@ pub(crate) fn ensure_running(game_dir: &Path) -> Option<u32> {
     }
     let pid = spawn_server(&exe)?;
     write_server_pid(game_dir, pid);
+    if let Some(hash) = sha256_file(&exe) {
+        write_spawned_hash(game_dir, &hash);
+    }
     Some(pid)
 }
 
@@ -1454,13 +1735,15 @@ fn spawn_agent(_exe: &Path, _secret: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        budget_remaining, gate_log, image_name_is_server, image_path_is_our_server,
-        install_pending_server, listen_wait_allowance, parse_netstat_udp_owner,
-        parse_server_pid, parse_sidecar_hash, parse_tasklist_image_name, parse_udp_owner_pids,
-        port_free_wait_allowance, port_owner_action, read_server_pid, server_download_temp,
-        server_exe, server_pid_file, sha256_file, sync_decision, takeover_action,
-        tachyon_log_path, udp_port_free, wait_until_listening_with, write_server_pid,
-        SyncDecision, SyncOutcome, TakeoverAction,
+        budget_remaining, format_utc_from_unix, gate_log, image_name_is_server,
+        image_path_is_our_server, install_pending_server, listen_wait_allowance,
+        parse_netstat_udp_owner, parse_server_pid, parse_sidecar_hash, parse_spawned_hash,
+        parse_tasklist_image_name, parse_udp_owner_pids, port_free_wait_allowance,
+        port_owner_action, port_owner_action_for_stale, read_server_pid, read_spawned_hash,
+        running_is_stale, server_download_temp, server_exe, server_pid_file,
+        server_spawned_hash_file, sha256_file, sync_decision, takeover_action,
+        takeover_action_for_stale, tachyon_log_path, udp_port_free, wait_until_listening_with,
+        write_server_pid, write_spawned_hash, SyncDecision, SyncOutcome, TakeoverAction,
     };
     use std::path::Path;
     use std::time::Duration;
@@ -1823,11 +2106,165 @@ mod tests {
         gate_log(&game_dir, "[tachyon] readiness gate: first");
         gate_log(&game_dir, "[tachyon] readiness gate: second");
         let written = std::fs::read_to_string(tachyon_log_path(&game_dir)).unwrap();
-        assert_eq!(
-            written,
-            "[tachyon] readiness gate: first\n[tachyon] readiness gate: second\n"
-        );
+        let lines: Vec<&str> = written.lines().collect();
+        assert_eq!(lines.len(), 2);
+        // v1.0.83: every line carries a UTC timestamp prefix
+        // (`2026-11-08T17:33:44Z `, 21 chars) ahead of the message.
+        for (line, message) in lines.iter().zip([
+            "[tachyon] readiness gate: first",
+            "[tachyon] readiness gate: second",
+        ]) {
+            assert_eq!(line.len(), 21 + message.len());
+            assert!(line.ends_with(message));
+            let stamp = &line[..20];
+            assert_eq!(&stamp[4..5], "-");
+            assert_eq!(&stamp[7..8], "-");
+            assert_eq!(&stamp[10..11], "T");
+            assert_eq!(&stamp[13..14], ":");
+            assert_eq!(&stamp[16..17], ":");
+            assert_eq!(&stamp[19..20], "Z");
+            assert_eq!(&line[20..21], " ");
+        }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn utc_timestamp_format_matches_known_vectors() {
+        // Independently computed vectors (system `date -u`).
+        assert_eq!(format_utc_from_unix(0), "1970-01-01T00:00:00Z");
+        // Leap days: 2000 (divisible by 400) and 2024.
+        assert_eq!(format_utc_from_unix(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(format_utc_from_unix(1_709_208_000), "2024-02-29T12:00:00Z");
+        assert_eq!(format_utc_from_unix(1_700_000_000), "2023-11-14T22:13:20Z");
+        // The v5 Tachyon server ship moment.
+        assert_eq!(format_utc_from_unix(1_794_159_224), "2026-11-08T17:33:44Z");
+        // Day/month/year boundaries roll over cleanly.
+        assert_eq!(format_utc_from_unix(86_399), "1970-01-01T23:59:59Z");
+        assert_eq!(format_utc_from_unix(86_400), "1970-01-02T00:00:00Z");
+    }
+
+    #[test]
+    fn running_is_stale_full_matrix() {
+        let current = "9947d9ffd222d4eb10d180f947277dd3a3af3e46be31c8a29cf96823251cbde0";
+        let older = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        // Missing record -> stale, whatever else is known: any
+        // pre-v1.0.83 server (or a lost record) has unknown vintage.
+        assert!(running_is_stale(None, Some(current), Some(current)));
+        assert!(running_is_stale(None, Some(current), None));
+        assert!(running_is_stale(None, None, Some(current)));
+        assert!(running_is_stale(None, None, None));
+        // Record matches every known hash -> NOT stale. Includes
+        // the vacuous case (neither other hash determinable).
+        assert!(!running_is_stale(Some(current), Some(current), Some(current)));
+        assert!(!running_is_stale(Some(current), Some(current), None));
+        assert!(!running_is_stale(Some(current), None, Some(current)));
+        assert!(!running_is_stale(Some(current), None, None));
+        // Disk mismatch -> stale (the out-of-band / manual sync
+        // case: disk reached the mirror under a running old build).
+        assert!(running_is_stale(Some(older), Some(current), Some(current)));
+        assert!(running_is_stale(Some(older), Some(current), None));
+        // Mirror mismatch -> stale (mirror moved past both the
+        // running build and the not-yet-updated disk).
+        assert!(running_is_stale(Some(older), Some(older), Some(current)));
+        assert!(running_is_stale(Some(older), None, Some(current)));
+        // One matching hash never rescues a mismatching other one.
+        assert!(running_is_stale(Some(current), Some(current), Some(older)));
+        assert!(running_is_stale(Some(current), Some(older), Some(current)));
+    }
+
+    #[test]
+    fn spawned_hash_record_round_trips_and_parses() {
+        let hash = "2ba4452223a69eb3dc21906ad590f208f2305efea02afbf8601224c9fbe4fd34";
+        // Parse: exact, whitespace-tolerant, case-normalizing;
+        // anything else is "no record" (which reads as stale).
+        assert_eq!(parse_spawned_hash(hash), Some(hash.to_string()));
+        assert_eq!(parse_spawned_hash(&format!("  {hash}\n")), Some(hash.to_string()));
+        assert_eq!(
+            parse_spawned_hash(&hash.to_uppercase()),
+            Some(hash.to_string())
+        );
+        assert_eq!(parse_spawned_hash(""), None);
+        assert_eq!(parse_spawned_hash("not-a-hash"), None);
+        assert_eq!(parse_spawned_hash(&hash[..63]), None);
+        // File round-trip through the tachyon-server folder.
+        let dir = std::env::temp_dir().join(format!(
+            "fluxrec-tachyon-spawned-{}",
+            std::process::id()
+        ));
+        let game_dir = dir.join("game");
+        assert_eq!(
+            server_spawned_hash_file(&game_dir),
+            game_dir
+                .join("tachyon-server")
+                .join("tachyon-server.spawned-hash")
+        );
+        assert_eq!(read_spawned_hash(&game_dir), None);
+        write_spawned_hash(&game_dir, hash);
+        assert_eq!(read_spawned_hash(&game_dir).as_deref(), Some(hash));
+        // Garbage content reads as no record, like a missing file.
+        std::fs::write(server_spawned_hash_file(&game_dir), "garbage").unwrap();
+        assert_eq!(read_spawned_hash(&game_dir), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stale_takeover_decision_matrix() {
+        let ours_path = "C:\\Games\\FluxRec\\tachyon-server\\TachyonServer.exe";
+        let pid = Some(1234);
+        let ours_name = Some("TachyonServer.exe");
+        // Stale + full pidfile proof -> replace, on ANY sync
+        // outcome: the gate passes `stale` here, never the outcome,
+        // which is the whole v1.0.83 fix (an Unchanged sync used to
+        // dead-end this exact case).
+        assert_eq!(
+            takeover_action_for_stale(true, true, pid, ours_name),
+            TakeoverAction::Replace(1234)
+        );
+        // Not stale -> never replace, however clean the proof.
+        assert_eq!(
+            takeover_action_for_stale(false, true, pid, ours_name),
+            TakeoverAction::KeepRunning
+        );
+        // Port free -> nothing to take over.
+        assert_eq!(
+            takeover_action_for_stale(true, false, pid, ours_name),
+            TakeoverAction::KeepRunning
+        );
+        // Stale but the proof fails -> keep running (fail-closed).
+        assert_eq!(
+            takeover_action_for_stale(true, true, None, None),
+            TakeoverAction::KeepRunning
+        );
+        assert_eq!(
+            takeover_action_for_stale(true, true, pid, Some("other.exe")),
+            TakeoverAction::KeepRunning
+        );
+        assert_eq!(
+            takeover_action_for_stale(true, true, pid, None),
+            TakeoverAction::KeepRunning
+        );
+        // The fallback follows the same stale warrant.
+        assert_eq!(
+            port_owner_action_for_stale(true, Some(4321), Some(ours_path), ours_path),
+            TakeoverAction::Replace(4321)
+        );
+        assert_eq!(
+            port_owner_action_for_stale(false, Some(4321), Some(ours_path), ours_path),
+            TakeoverAction::KeepRunning
+        );
+        assert_eq!(
+            port_owner_action_for_stale(true, None, Some(ours_path), ours_path),
+            TakeoverAction::KeepRunning
+        );
+        assert_eq!(
+            port_owner_action_for_stale(
+                true,
+                Some(4321),
+                Some("C:\\Windows\\System32\\svchost.exe"),
+                ours_path
+            ),
+            TakeoverAction::KeepRunning
+        );
     }
 
     #[test]
