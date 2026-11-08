@@ -1,4 +1,4 @@
-//! Tachyon background server (v1.0.78).
+//! Tachyon background server (v1.0.79).
 //!
 //! The 2026 client's room/voice transport is a Tachyon session server
 //! (Unity Netcode/LiteNetLib under the historical "Photon" label — see
@@ -14,8 +14,9 @@
 //! locally-hosted server reachable from the public internet. The agent
 //! is downloaded for everyone but only ever *started* on the host's
 //! own install: the launcher holds no account context, so the gate is
-//! the presence of an out-of-band provisioned `playit-secret.txt`
-//! (see `ensure_agent_running`).
+//! the presence of a `playit-secret.txt` in the folder — provisioned
+//! out-of-band, or by release builds themselves on the owner's
+//! machine (see `provision_host_secret`).
 //!
 //! Everything here is fail-soft by design:
 //! - a failed sidecar fetch keeps the installed exe untouched;
@@ -90,6 +91,10 @@ pub(crate) fn kick_off(game_dir: &Path) {
                 });
             }
             ensure_running(&game_dir);
+            // Owner-host provisioning: on the owner's machine only,
+            // materialise the agent's secret file from the secret
+            // baked into release builds (fail-closed, fail-soft).
+            provision_host_secret(&game_dir);
             // The tunnel agent comes up only after the server it
             // exposes is running.
             ensure_agent_running(&game_dir);
@@ -416,14 +421,147 @@ fn provision_agent_config(game_dir: &Path, secret: &str) {
     }
 }
 
+/// Playit secret baked in at compile time by CI release builds from
+/// the `PLAYIT_SECRET_KEY` Actions secret (the workflow passes it as
+/// `FLUXREC_PLAYIT_SECRET` — the same `option_env!` pattern as the ns
+/// host and Photon ids in `main.rs`). The value exists ONLY in the
+/// compiled binary: never in source, never logged, never written
+/// anywhere except the owner's `playit-secret.txt` below. `None` in
+/// any build whose environment lacked the variable (forks, local
+/// builds, PR builds), which keeps those builds fully dormant.
+const EMBEDDED_AGENT_SECRET: Option<&str> = option_env!("FLUXREC_PLAYIT_SECRET");
+
+/// The owner's public in-game handle. A machine's own Player.log
+/// carries identity lines naming the *local* player, so the owner's
+/// log contains this marker and no other player's log does.
+const OWNER_LOG_MARKER: &str = "Ripo6000";
+
+/// Bytes of Player.log tail the owner gate inspects — enough to cover
+/// a recent session's identity lines without reading a log that can
+/// grow to tens of MB end to end.
+const LOG_TAIL_BYTES: u64 = 256 * 1024;
+
+/// Candidate `Player.log` paths, mirroring the folder logic of
+/// `launcher::diagnostic_log_path` (the game's `Diagnostics` folder
+/// first, then the per-user FluxRec folder under LOCALAPPDATA).
+/// Read-only: unlike the diagnostics helper this never creates
+/// folders or files.
+fn player_log_candidates(game_dir: &Path) -> Vec<PathBuf> {
+    let mut folders = vec![game_dir.join("Diagnostics")];
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        folders.push(PathBuf::from(local).join("FluxRec").join("Diagnostics"));
+    }
+    folders.into_iter().map(|f| f.join("Player.log")).collect()
+}
+
+/// The most recently modified existing candidate log, if any.
+fn most_recent_player_log(game_dir: &Path) -> Option<PathBuf> {
+    let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
+    for candidate in player_log_candidates(game_dir) {
+        let modified = std::fs::metadata(&candidate)
+            .ok()
+            .filter(|m| m.is_file())
+            .and_then(|m| m.modified().ok());
+        if let Some(modified) = modified {
+            if best.as_ref().map_or(true, |(_, t)| modified > *t) {
+                best = Some((candidate, modified));
+            }
+        }
+    }
+    best.map(|(path, _)| path)
+}
+
+/// The last `max_bytes` of a file as lossy UTF-8; `None` on any IO
+/// error. Seeks instead of reading the whole file.
+fn read_log_tail(path: &Path, max_bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(max_bytes))).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Pure owner gate: does this log text prove the local player is the
+/// owner? Takes the text (not a path) so tests drive it with fixtures.
+fn log_shows_owner(log_text: &str) -> bool {
+    log_text.contains(OWNER_LOG_MARKER)
+}
+
+/// What provisioning should do — a pure decision, unit-tested with a
+/// dummy secret. The real secret never flows through the tests.
+#[derive(Debug, PartialEq, Eq)]
+enum ProvisionAction {
+    /// Nothing usable was compiled in: stay dormant (fork/local build
+    /// or an unset CI secret).
+    NoEmbeddedSecret,
+    /// A secret exists but this machine's log does not prove the
+    /// owner (a missing or unreadable log included): write nothing.
+    NotOwner,
+    /// Owner proven: write this secret to `playit-secret.txt`.
+    Write(String),
+}
+
+fn provision_action(embedded: Option<&str>, log_tail: Option<&str>) -> ProvisionAction {
+    let secret = match embedded {
+        Some(raw) if plausible_agent_secret(raw.trim()) => raw.trim(),
+        _ => return ProvisionAction::NoEmbeddedSecret,
+    };
+    match log_tail {
+        Some(text) if log_shows_owner(text) => ProvisionAction::Write(secret.to_string()),
+        _ => ProvisionAction::NotOwner,
+    }
+}
+
+/// Owner-host provisioning, run inside `kick_off` before the agent
+/// start: on the owner's machine only, materialise `playit-secret.txt`
+/// from the embedded secret so `ensure_agent_running` can bring the
+/// tunnel up. Fail-closed (no owner proof → nothing is written) and
+/// fail-soft (any IO error → nothing is written, launch proceeds).
+/// The secret itself is never logged — only the outcome line is.
+pub(crate) fn provision_host_secret(game_dir: &Path) {
+    let log_tail = most_recent_player_log(game_dir)
+        .and_then(|path| read_log_tail(&path, LOG_TAIL_BYTES));
+    match provision_action(EMBEDDED_AGENT_SECRET, log_tail.as_deref()) {
+        ProvisionAction::Write(secret) => {
+            let file = agent_secret_file(game_dir);
+            let already = std::fs::read_to_string(&file)
+                .map(|text| text.trim() == secret.as_str())
+                .unwrap_or(false);
+            if already {
+                println!("[tachyon] host provisioning: applied");
+                return;
+            }
+            // Exact secret bytes, no trailing newline.
+            let written = std::fs::create_dir_all(server_dir(game_dir))
+                .and_then(|()| std::fs::write(&file, &secret));
+            match written {
+                Ok(()) => println!("[tachyon] host provisioning: applied"),
+                Err(error) => eprintln!("[tachyon] host provisioning failed: {error}"),
+            }
+        }
+        ProvisionAction::NotOwner => {
+            println!("[tachyon] host provisioning: not this machine");
+        }
+        ProvisionAction::NoEmbeddedSecret => {
+            // Dormant by design (fork/local builds): stay silent,
+            // exactly like the missing-file path in v1.0.78.
+        }
+    }
+}
+
 /// Start the playit tunnel agent — HOST ONLY.
 ///
 /// The launcher holds no account context (sign-in is web-only; the
 /// play path never sees an account id or access token), so it cannot
 /// prove the signed-in player is the host account. The gate is
-/// therefore the out-of-band provisioned secret file: the agent runs
-/// only when `playit-secret.txt` exists in the tachyon-server folder,
-/// which is only ever true on the host's own install. Every other
+/// therefore the provisioned secret file: the agent runs only when
+/// `playit-secret.txt` exists in the tachyon-server folder, which is
+/// only ever true on the host's own install (written there either
+/// out-of-band or by `provision_host_secret` on the owner's machine).
+/// Every other
 /// player gets the binary (inert, a few MB) but never a running agent.
 /// No secret file, no exe → skip silently.
 pub(crate) fn ensure_agent_running(game_dir: &Path) {
@@ -606,6 +744,99 @@ mod tests {
         super::write_playit_toml(&dir, &hex_secret).unwrap();
         let written = std::fs::read_to_string(dir.join("playit.toml")).unwrap();
         assert_eq!(written, format!("secret_key = \"{hex_secret}\"\n"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn owner_gate_needs_the_owner_marker() {
+        // Fixtures shaped like the local-player identity lines a real
+        // Player.log carries.
+        let owner_log =
+            "Loaded scene 'DormRoom'\n[Net] Local player Ripo6000 (account 121) joined\n";
+        assert!(super::log_shows_owner(owner_log));
+        let other_log =
+            "Loaded scene 'DormRoom'\n[Net] Local player Guest42 (account 999) joined\n";
+        assert!(!super::log_shows_owner(other_log));
+        assert!(!super::log_shows_owner(""));
+    }
+
+    #[test]
+    fn provisioning_decision_is_fail_closed() {
+        let dummy_secret = "0123456789abcdef".repeat(4);
+        let owner_log = Some("session\nLocal player Ripo6000\n");
+        let other_log = Some("session\nLocal player Guest42\n");
+        // No usable embedded secret -> dormant, whatever the log says.
+        assert_eq!(
+            super::provision_action(None, owner_log),
+            super::ProvisionAction::NoEmbeddedSecret
+        );
+        assert_eq!(
+            super::provision_action(Some(""), owner_log),
+            super::ProvisionAction::NoEmbeddedSecret
+        );
+        assert_eq!(
+            super::provision_action(Some("not-a-secret"), owner_log),
+            super::ProvisionAction::NoEmbeddedSecret
+        );
+        // Owner log + plausible secret -> write exactly the secret.
+        assert_eq!(
+            super::provision_action(Some(dummy_secret.as_str()), owner_log),
+            super::ProvisionAction::Write(dummy_secret.clone())
+        );
+        // Any other log state -> fail closed, write nothing.
+        assert_eq!(
+            super::provision_action(Some(dummy_secret.as_str()), other_log),
+            super::ProvisionAction::NotOwner
+        );
+        assert_eq!(
+            super::provision_action(Some(dummy_secret.as_str()), Some("")),
+            super::ProvisionAction::NotOwner
+        );
+        assert_eq!(
+            super::provision_action(Some(dummy_secret.as_str()), None),
+            super::ProvisionAction::NotOwner
+        );
+    }
+
+    #[test]
+    fn log_tail_reads_the_end_of_the_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "fluxrec-tachyon-tail-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("Player.log");
+        let mut content = vec![b'x'; 4096];
+        content.extend_from_slice(b"Ripo6000");
+        std::fs::write(&file, &content).unwrap();
+        let tail = super::read_log_tail(&file, 64).unwrap();
+        assert_eq!(tail.len(), 64);
+        assert!(tail.ends_with("Ripo6000"));
+        // A short file is returned whole; a missing one yields None.
+        let short = dir.join("short.log");
+        std::fs::write(&short, b"tiny").unwrap();
+        assert_eq!(super::read_log_tail(&short, 64).as_deref(), Some("tiny"));
+        assert!(super::read_log_tail(&dir.join("missing.log"), 64).is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn owner_log_is_found_under_the_game_diagnostics_folder() {
+        let dir = std::env::temp_dir().join(format!(
+            "fluxrec-tachyon-logfind-{}",
+            std::process::id()
+        ));
+        let game_dir = dir.join("game");
+        let diagnostics = game_dir.join("Diagnostics");
+        std::fs::create_dir_all(&diagnostics).unwrap();
+        // No log anywhere -> no candidate.
+        assert_eq!(super::most_recent_player_log(&game_dir), None);
+        let log = diagnostics.join("Player.log");
+        std::fs::write(&log, "Local player Ripo6000\n").unwrap();
+        // The game-dir Diagnostics folder is the crate's primary
+        // Player.log location (launcher::diagnostic_log_path).
+        assert_eq!(super::player_log_candidates(&game_dir)[0], log);
+        assert_eq!(super::most_recent_player_log(&game_dir), Some(log));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

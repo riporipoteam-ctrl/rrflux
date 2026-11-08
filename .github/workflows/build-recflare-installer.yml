@@ -69,6 +69,7 @@ jobs:
           FLUXREC_PHOTON_RT: ${{ secrets.FLUXREC_PHOTON_RT }}
           FLUXREC_PHOTON_VOICE: ${{ secrets.FLUXREC_PHOTON_VOICE }}
           FLUXREC_PHOTON_CHAT: ${{ secrets.FLUXREC_PHOTON_CHAT }}
+          FLUXREC_PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET_KEY }}
         run: cargo build --release
 
       - name: Publish stable release
