@@ -480,6 +480,21 @@ fn game_exe_for_launch(dir: &Path, is_2026: bool) -> Option<std::path::PathBuf> 
     crate::find_game_exe(dir)
 }
 
+fn diagnostic_log_path(dir: &Path) -> Option<std::path::PathBuf> {
+    let mut folders = vec![dir.join("Diagnostics")];
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        folders.push(std::path::PathBuf::from(local).join("FluxRec").join("Diagnostics"));
+    }
+    for folder in folders {
+        if std::fs::create_dir_all(&folder).is_err() { continue; }
+        let log = folder.join("Player.log");
+        if std::fs::OpenOptions::new().create(true).append(true).open(&log).is_ok() {
+            return Some(log);
+        }
+    }
+    None
+}
+
 /// safe. Infallible: a missing exe shows a readable status instead of panicking.
 ///
 /// v0.3.2: pre-flight check — the game is USELESS without the patch (it
@@ -575,7 +590,11 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
                     progress.set_status("2026 game executable is missing. Verify files.", 100);
                     return;
                 };
-                crate::stealth::launch_hidden(&game_exe, &["+forcemode:screen"]);
+                if let Some(log) = diagnostic_log_path(dir) {
+                    crate::stealth::launch_hidden(&game_exe, &["+forcemode:screen", "-logFile", &log.to_string_lossy()]);
+                } else {
+                    crate::stealth::launch_hidden(&game_exe, &["+forcemode:screen"]);
+                }
                 return;
             }
             println!("[launcher] starting game: {}", exe.display());
@@ -592,6 +611,15 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
 #[cfg(test)]
 mod tests {
     use super::game_exe_for_launch;
+
+    #[test]
+    fn creates_writable_game_folder_diagnostics() {
+        let dir = std::env::temp_dir().join(format!("fluxrec-diagnostics-{}", std::process::id()));
+        let log = super::diagnostic_log_path(&dir).unwrap();
+        assert_eq!(log, dir.join("Diagnostics").join("Player.log"));
+        assert!(log.is_file());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn launches_2026_unity_exe_when_both_executables_exist() {
