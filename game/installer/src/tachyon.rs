@@ -599,6 +599,8 @@ fn spawn_server(exe: &Path) {
     let dir = exe.parent().unwrap_or_else(|| Path::new("."));
     match std::process::Command::new(exe)
         .current_dir(dir)
+        .arg("--log-path")
+        .arg(dir.join("playit.log"))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -894,8 +896,8 @@ fn spawn_agent(exe: &Path, secret: &str) {
         // The v2 daemon authenticates from playit.toml (written by
         // provision_agent_config before this spawn); the environment
         // variable is kept as a harmless belt-and-braces for other
-        // builds. Either way the secret never goes on the command
-        // line (visible in process listings) and never into a log.
+        // builds. The launcher keeps the secret out of arguments and
+        // its own log; Playit writes tunnel status to playit.log.
         .env("SECRET_KEY", secret)
         .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .spawn()
