@@ -46,14 +46,19 @@ openssl rand -hex 32
 wrangler secrets-store secret create recflare JWT_SECRET --value "<hex>"
 ```
 
-## 3. Photon (separate from Cloudflare)
-Create **three** Photon Cloud apps (free tier ≈ 20 CCU each): Realtime, Voice,
-Chat — or one app reused where the dashboard allows. Record the three App IDs;
-they go into the shipped plugin config (step 6), NOT into the server `.env`.
-The server hands them out via `GET /player/connection-info`
-(`RECFLARE_PHOTON_REALTIME_APP_ID` / `_VOICE_` / `_CHAT_` knobs in `.env`).
-Voice (Tachyon): no server implementation exists upstream — leave
-`RECFLARE_TACHYON_HOST_PORT` unset; voice stays silent, the client tolerates it.
+## 3. Realtime transport
+The 2026 client uses Tachyon over UDP for room networking. The launcher bundles
+the Tachyon server and a Playit tunnel agent, but the match Worker still needs the
+public `host:port` assigned to the owner's UDP tunnel. Set
+`RECFLARE_TACHYON_HOST_PORT=<public-host>:<public-port>` in the deployment
+environment and deploy `match`. Do not set this to `127.0.0.1`: every client
+would connect to its own computer. When unset, `GET /player/connection-info`
+returns an empty voice connection address and the client takes its offline path.
+
+The legacy 2023 plugin also uses Photon. Its Realtime, Voice and Chat app IDs are
+separate from Tachyon; the match Worker returns them through
+`RECFLARE_PHOTON_REALTIME_APP_ID`, `RECFLARE_PHOTON_VOICE_APP_ID`, and
+`RECFLARE_PHOTON_CHAT_APP_ID`.
 
 ## 4. Migrate the database
 ```sh
