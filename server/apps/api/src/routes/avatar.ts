@@ -209,13 +209,10 @@ async function pushConsumableAdded(
  * The most ids `POST /api/customAvatarItems/v1/bulk` will resolve. A batch over this answers
  * EMPTY rather than being truncated.
  *
- * Empty rather than the first 100, because a truncated answer is indistinguishable from the
- * items simply not existing — the client reads the items it got back, not the ids it asked
- * about, so it cannot tell a cut-off batch from a batch of misses and would cache the
- * difference. Nothing renders this many custom items at once, so a batch this size is the
- * client doing something other than filling a screen.
+ * Inventory prefetches can exceed 100 entries. Resolve up to 1000 through
+ * bounded database queries; reject oversized requests without truncating them.
  */
-const BULK_CUSTOM_AVATAR_ITEM_CAP = 100
+const BULK_CUSTOM_AVATAR_ITEM_CAP = 1000
 
 /**
  * The ids `POST /api/customAvatarItems/v1/bulk` was asked to resolve. They ride as repeated
@@ -1598,9 +1595,8 @@ export const avatarRoutes = new Hono<App>({ strict: false })
 				'the query string or in the form — is served each save’s `UnityAsset`/`UnityAsset2` ' +
 				'under `quest/`, the Android build of the same assetbundle. Target 0 (PC), any ' +
 				'other value, and no target at all get the bare filenames as stored.\n\n' +
-				'A batch of more than 100 ids answers an EMPTY array without reading the table: the ' +
-				'client has been seen posting more than a screen could draw, and a miss is already ' +
-				'not an error here.',
+				'Batches up to 1000 ids are resolved in database chunks of at most 100 unique ids. ' +
+				'Larger requests answer an empty array without reading the table.',
 			security: AUTHED,
 			requestBody: form(BulkCustomAvatarItemsRequest, 'The custom-avatar-item ids to resolve'),
 			responses: {

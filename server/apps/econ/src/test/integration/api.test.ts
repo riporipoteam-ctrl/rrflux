@@ -96,7 +96,31 @@ import { CHALLENGE_GIFT_SCHEMA_DDL, CHALLENGE_STATUS_SCHEMA_DDL } from '../../ch
 // tests exercise whatever this week actually holds instead of ids from a rotation that has
 // since rolled over.
 import { buildRotation, rotationIndex, withWeeklyGift } from '../../challenge-rotation'
-import { CONSUMABLE_SCHEMA_DDL, grantConsumable } from '../../consumables-db'
+import { CONSUMABLE_SCHEMA_DDL, grantConsumable, consumeRoomBoost, ROOM_BOOST_DESC } from '../../consumables-db'
+
+test('Room Boost use credits the live room once and never spends without a room or sufficient stock', async () => {
+	const accountId = 920001, roomId = 920001
+	const itemId = await grantConsumable(env.DB, accountId, ROOM_BOOST_DESC, 1)
+	try {
+		expect(await consumeRoomBoost(env.DB, accountId, itemId, 1)).toBeNull()
+		await env.DB.prepare('INSERT INTO room(data) VALUES (?1)').bind(JSON.stringify({ RoomId: roomId, Name: 'BoostAtomicTest', CreatorAccountId: accountId, Accessibility: 1, IsDorm: false })).run()
+		await env.DB.prepare('INSERT INTO presence(data) VALUES (?1)').bind(JSON.stringify({ accountId, roomInstance: { roomId, roomInstanceId: roomId }, expiresAt: Math.floor(Date.now()/1000)+300 })).run()
+		expect(await consumeRoomBoost(env.DB, accountId, itemId, 2)).toBeNull()
+		expect(await consumeRoomBoost(env.DB, accountId + 1, itemId, 1)).toBeNull()
+		const response = await exports.default.fetch(`${ORIGIN}/api/consumables/v1/consume`, {
+			method: 'POST', headers: { ...(await bearer(String(accountId))), 'Content-Type': 'application/json' }, body: JSON.stringify({ Id: itemId, DeltaCount: 1 }),
+		})
+		expect(await response.json()).toMatchObject({ success: true })
+		expect(await consumeRoomBoost(env.DB, accountId, itemId, 1)).toBeNull()
+		const room = await env.DB.prepare("SELECT json_extract(data, '$.BoostCount') AS count FROM room WHERE room_id = ?1").bind(roomId).first<{count: number}>()
+		expect(room?.count).toBe(1)
+		expect(await env.DB.prepare('SELECT count FROM consumable WHERE id = ?1').bind(itemId).first()).toBeNull()
+	} finally {
+		await env.DB.prepare('DELETE FROM consumable WHERE account_id = ?1').bind(accountId).run()
+		await env.DB.prepare('DELETE FROM presence WHERE account_id = ?1').bind(accountId).run()
+		await env.DB.prepare('DELETE FROM room WHERE room_id = ?1').bind(roomId).run()
+	}
+})
 import { EQUIPMENT_SCHEMA_DDL, grantEquipment } from '../../equipment-db'
 import { OBJECTIVE_STATUS_SCHEMA_DDL } from '../../objective-db'
 import { grantCustomAvatarItem, INVENTORY_CUSTOM_SCHEMA_DDL } from '../../inventory-custom-db'

@@ -26,6 +26,34 @@ export const CONSUMABLE_SCHEMA_DDL: string[] = [
 	`CREATE INDEX IF NOT EXISTS idx_consumable_account ON consumable (account_id)`,
 ]
 
+export const ROOM_BOOST_DESC = 'wH7shWdU0E6xpw0d60ZdtA'
+
+/** Spend boosts only when their owner has a live room to credit. D1 batches
+ * serialize the room credit and inventory decrement as one transaction. */
+export async function consumeRoomBoost(db: D1Database, accountId: number, id: number, count: number): Promise<(ConsumeResult & { roomId: number }) | null> {
+	if (!Number.isSafeInteger(count) || count <= 0) return null
+	const now = Math.floor(Date.now() / 1000)
+	const eligible = `FROM consumable c JOIN presence p ON p.account_id = c.account_id
+	 JOIN room r ON r.room_id = p.room_id
+	 WHERE c.id = ?1 AND c.account_id = ?2 AND c.consumable_item_desc = ?3
+	 AND c.count >= ?4 AND p.expires_at > ?5`
+	const bind = (sql: string) => db.prepare(sql).bind(id, accountId, ROOM_BOOST_DESC, count, now)
+	const result = await db.batch([
+		bind(`SELECT c.count, c.created_at, r.room_id ${eligible}`),
+		bind(`UPDATE room SET data = json_set(data, '$.BoostCount', MAX(0, CAST(COALESCE(json_extract(data, '$.BoostCount'), 0) AS INTEGER)) + ?4)
+		 WHERE room_id IN (SELECT r.room_id ${eligible})`),
+		bind(`UPDATE consumable SET count = count - ?4 WHERE id = ?1 AND account_id = ?2
+		 AND id IN (SELECT c.id ${eligible})`),
+		db.prepare('DELETE FROM consumable WHERE id = ?1 AND account_id = ?2 AND count = 0').bind(id, accountId),
+		db.prepare('SELECT count FROM consumable WHERE id = ?1 AND account_id = ?2').bind(id, accountId),
+	])
+	const before = result[0].results[0] as { count: number; created_at: string; room_id: number } | undefined
+	if (!before) return null
+	const after = result[4].results[0] as { count: number } | undefined
+	return { id, consumableItemDesc: ROOM_BOOST_DESC, createdAt: before.created_at,
+		previousCount: before.count, remaining: after?.count ?? 0, roomId: before.room_id }
+}
+
 /**
  * An unlocked consumable as `/api/consumables/v2/getUnlocked` serves it: one entry per
  * distinct `ConsumableItemDesc`, aggregating every instance the player owns. `Ids` and

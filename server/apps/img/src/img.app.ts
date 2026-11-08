@@ -339,6 +339,33 @@ function withBlobTimeout<T>(promise: Promise<T>): Promise<T> {
  * need the whole body, so callers buffer before calling this. A `stub` signature
  * is already on `headers` by this point.
  */
+const resizedImages = new Map<string, { bytes: Uint8Array; contentType: string }>()
+let resizedImageBytes = 0
+const RESIZE_CACHE_BYTES = 16 * 1024 * 1024
+
+async function cachedResize(bytes: ArrayBuffer, transform: Transform) {
+	// Key by actual content, so overwriting an image never serves an old resize.
+	const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+	const key = Array.from(digest, b => b.toString(16).padStart(2, '0')).join('') + JSON.stringify(transform)
+	const cached = resizedImages.get(key)
+	if (cached) {
+		resizedImages.delete(key)
+		resizedImages.set(key, cached)
+		return cached
+	}
+	const output = resizeImage(new Uint8Array(bytes), transform)
+	if (output.bytes.byteLength <= RESIZE_CACHE_BYTES / 2) {
+		while (resizedImages.size && (resizedImageBytes + output.bytes.byteLength > RESIZE_CACHE_BYTES || resizedImages.size >= 32)) {
+			const oldest = resizedImages.keys().next().value!
+			resizedImageBytes -= resizedImages.get(oldest)!.bytes.byteLength
+			resizedImages.delete(oldest)
+		}
+		resizedImages.set(key, output)
+		resizedImageBytes += output.bytes.byteLength
+	}
+	return output
+}
+
 async function finalizeImage(
 	env: Env,
 	bytes: ArrayBuffer,
@@ -348,7 +375,7 @@ async function finalizeImage(
 ): Promise<Response> {
 	let body: BufferSource = bytes
 	if (transform) {
-		const out = resizeImage(new Uint8Array(bytes), transform)
+		const out = await cachedResize(bytes, transform)
 		body = out.bytes
 		// The output is re-encoded (PNG stays PNG, everything else is JPEG), and the
 		// source etag no longer describes the body.
@@ -667,7 +694,7 @@ app.get(
 				// The fallback is a stand-in for a missing key, not the real object: never
 				// cache it as immutable, or clients keep the wrong image for 30 days after
 				// the real upload lands under this key.
-				headers.set('cache-control', 'public, max-age=60')
+				headers.set('cache-control', 'no-store')
 				applyStubSignature(headers, signing)
 				// This 1×1 image is deliberately only a missing-object placeholder. Passing
 				// it through Photon for the client's common `?width=256&sig=p1` request

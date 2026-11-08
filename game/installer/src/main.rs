@@ -1325,8 +1325,8 @@ pub(crate) async fn apply_logo_bundle(
         && watch_settings_2026.exists()
         && !file_ok(
             &watch_settings_2026,
-            Some("3e3272a879fef56c9c022c548b48f2c8"),
-            Some(1_313_180),
+            Some("d58776f171571aeb207b3b72050c3fd0"),
+            Some(1_313_044),
         )
     {
         let patch_gzip = dir.join("2026-watch-settings-no-export.bundle.gz");
@@ -1338,8 +1338,8 @@ pub(crate) async fn apply_logo_bundle(
         let applied = install_logo_bundle(
             &patch_gzip,
             &watch_settings_2026,
-            "3e3272a879fef56c9c022c548b48f2c8",
-            1_313_180,
+            "d58776f171571aeb207b3b72050c3fd0",
+            1_313_044,
         );
         let _ = std::fs::remove_file(&patch_gzip);
         applied?;

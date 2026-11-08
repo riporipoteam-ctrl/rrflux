@@ -2868,15 +2868,17 @@ export async function searchRooms(
 	// who MADE the room instead, below.
 	const tagTerms = terms.filter((t) => t.startsWith('#')).map((t) => t.slice(1))
 	const communityOnly = tagTerms.includes(COMMUNITY_TAG)
+	const rroOnly = tagTerms.some(tag => tag === 'rro' || (TAG_ALIASES[tag] ?? []).includes('rro'))
 	const tagSets = tagTerms
-		.filter((tag) => tag !== COMMUNITY_TAG)
+		.filter((tag) => tag !== COMMUNITY_TAG && tag !== 'rro' && !(TAG_ALIASES[tag] ?? []).includes('rro'))
 		.map((tag) => [tag, ...(TAG_ALIASES[tag] ?? [])])
 	const { sql, binds } = roomsByTagsQuery(tagSets, PUBLIC_WHERE)
 	const { results } = await db
 		.prepare(sql)
 		.bind(...binds)
 		.all<RoomRow>()
-	let rooms = parseAll(results).filter((r) => r.IsDorm !== true && r.Accessibility === 1)
+	let rooms = (await parseAllWithTags(db, results)).filter((r) => r.IsDorm !== true && r.Accessibility === 1)
+	if (rroOnly) rooms = rooms.filter(isRRO)
 
 	// The same test the hot feed's `community` chip applies: every room a player made, which
 	// is every room the Coach account doesn't own. It narrows the other terms rather than
@@ -3058,7 +3060,7 @@ export async function getHotRooms(
 	skip: number,
 	take: number
 ): Promise<{ Results: Room[]; TotalResults: number }> {
-	const t = tag.trim().toLowerCase()
+	const t = tag.trim().toLowerCase().replace(/^#/, '')
 
 	// A REAL tag narrows in SQL — this is the query `room_tag` exists for, and the one a
 	// discovery category row runs: only the rooms carrying the tag have their blobs read.

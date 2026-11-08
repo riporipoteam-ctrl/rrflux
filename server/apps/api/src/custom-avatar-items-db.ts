@@ -295,11 +295,15 @@ export async function getCustomAvatarItems(
 	// Lowercase both sides so an uppercase GUID still resolves instead of silently dropping
 	// the item (which the store renders as "not for sale" and checkout as unresolvable).
 	const lowered = ids.map((id) => id.toLowerCase())
-	const placeholders = lowered.map((_, i) => `?${i + 1}`).join(', ')
-	const { results } = await db
-		.prepare(`SELECT data FROM custom_avatar_item WHERE custom_avatar_item_id IN (${placeholders})`)
-		.bind(...lowered)
-		.all<Row>()
+	const results: Row[] = []
+	const unique = [...new Set(lowered)]
+	for (let offset = 0; offset < unique.length; offset += 100) {
+		const batch = unique.slice(offset, offset + 100)
+		const placeholders = batch.map((_, i) => `?${i + 1}`).join(', ')
+		const rows = await db.prepare(`SELECT data FROM custom_avatar_item WHERE custom_avatar_item_id IN (${placeholders})`)
+			.bind(...batch).all<Row>()
+		results.push(...rows.results)
+	}
 	const byId = new Map(
 		results.map(toDto).map((item) => [item.CustomAvatarItemId.toLowerCase(), item])
 	)
@@ -568,6 +572,7 @@ type MinimalCatalogEntry = {
  */
 function findStaticCatalogItemById(id: string): CustomAvatarItem | undefined {
 	const wanted = id.toLowerCase()
+	if (!/^00000000-0000-4000-8000-\d{12}$/.test(wanted)) return undefined
 	const entry = (minimalCatalog as MinimalCatalogEntry[]).find(
 		(entry) => staticCustomAvatarItemId(entry.id).toLowerCase() === wanted
 	)

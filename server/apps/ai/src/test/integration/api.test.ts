@@ -49,6 +49,25 @@ const REFUSAL = {
 	error: 'This room does not support Rec Room Game AI',
 }
 
+describe('Roomie session energy synchronization', () => {
+	for (const method of ['POST', 'PUT']) {
+		it(`${method} acknowledges spend in either energy mode`, async () => {
+			for (const RoomieEnergyMode of [0, 1]) {
+				const response = await SELF.fetch(`${ORIGIN}/roomieai/session/spend`, {
+					method, headers: { ...(await bearer()), 'Content-Type': 'application/json' },
+					body: JSON.stringify({ SpendSessionId: crypto.randomUUID(), RoomId: 1, RoomInstanceId: 1, Spend: 0.1, RoomieEnergyMode }),
+				})
+				expect(response.status).toBe(200)
+				expect(await response.json()).toMatchObject({ success: true, value: { EnergyLeft: 2147483647, OutputAudioEnabled: true } })
+			}
+		})
+		it(`${method} requires authentication`, async () => {
+			const response = await SELF.fetch(`${ORIGIN}/roomieai/session/spend`, { method, body: '{}' })
+			expect(response.status).toBe(401)
+		})
+	}
+})
+
 describe('ai endpoints', () => {
 	it('GET / reports service status', async () => {
 		const res = await SELF.fetch(`${ORIGIN}/`)
@@ -342,7 +361,9 @@ describe('GET /openapi.json', () => {
 			'POST /realtime-session/create',
 			'POST /roomieai/chat',
 			'POST /roomieai/listen',
+			'POST /roomieai/session/spend',
 			'POST /roomieai/speak',
+			'PUT /roomieai/session/spend',
 		])
 
 		for (const ops of Object.values(spec.paths)) {
