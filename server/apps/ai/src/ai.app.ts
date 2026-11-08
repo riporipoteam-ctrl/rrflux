@@ -84,6 +84,20 @@ function unauthorized(c: Context<App>) {
 	return c.body(null, 401)
 }
 
+// The client periodically reports session spend in both energy modes. This
+// service does not bill energy, so acknowledge the report with the same budget
+// as the access read instead of letting the request fall through to a 404.
+async function syncRoomieSpend(c: Context<App>) {
+	if (await authedId(c) === null) return unauthorized(c)
+	const body = await c.req.json().catch(() => null)
+	if (!body || typeof body !== 'object' || Array.isArray(body)) return c.body(null, 400)
+	c.header('Cache-Control', 'private, no-store')
+	return c.json({
+		success: true, error_id: null, error: null,
+		value: { MaxEnergyFromSubscriptions: INT32_MAX, EnergyLeft: INT32_MAX, NextSubscriptionEnergyRechargeAt: null, OutputAudioEnabled: true },
+	})
+}
+
 /**
  * Roomie session creation is called by multiple 2026 client builds whose JSON
  * shape is not stable. Keep this endpoint tolerant of omitted, wrapped, and
@@ -127,6 +141,14 @@ const app = new Hono<App>()
 
 	.onError(withOnError())
 	.notFound(withNotFound())
+	.post('/roomieai/session/spend', describeRoute({
+		summary: 'Synchronize Roomie session energy', tags: ['Roomie AI', '2026'], security: AUTHED,
+		responses: { 200: json(RoomieAiAccess, 'Current energy budget'), 400: { description: 'Invalid JSON object' }, 401: UNAUTHORIZED_RESPONSE },
+	}), syncRoomieSpend)
+	.put('/roomieai/session/spend', describeRoute({
+		summary: 'Synchronize Roomie session energy', tags: ['Roomie AI', '2026'], security: AUTHED,
+		responses: { 200: json(RoomieAiAccess, 'Current energy budget'), 400: { description: 'Invalid JSON object' }, 401: UNAUTHORIZED_RESPONSE },
+	}), syncRoomieSpend)
 
 	// Root health check.
 	.get(
