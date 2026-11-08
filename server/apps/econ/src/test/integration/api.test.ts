@@ -4,6 +4,20 @@ import { beforeAll, describe, expect, test } from 'vitest'
 
 import '../../econ.app'
 
+test('popup shop details resolve original RRO purchase and gift ids', async () => {
+	for (const body of [{ PurchasableItemIds: [525] }, { GiftDropIds: [1962] }]) {
+		const response = await exports.default.fetch(`${ORIGIN}/api/storefronts/v1/purchasableitems`, {
+			method: 'POST',
+			headers: { ...(await bearer('42', undefined, '20260323.14')), 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		})
+		expect(response.status).toBe(200)
+		const items = await response.json() as Array<{ GiftDrop: { FriendlyName: string } }>
+		expect(items).toHaveLength(1)
+		expect(items[0].GiftDrop.FriendlyName).toBe('Scallywag Bracers (Brown)')
+	}
+})
+
 import {
 	getOwnedInventionIds,
 	getProgression,
