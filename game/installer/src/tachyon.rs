@@ -1,4 +1,4 @@
-//! Tachyon background server (v1.0.81).
+//! Tachyon background server (v1.0.82).
 //!
 //! The 2026 client's room/voice transport is a Tachyon session server
 //! (Unity Netcode/LiteNetLib under the historical "Photon" label — see
@@ -27,11 +27,26 @@
 //! the gate is the fix). Only the playit agent duties — none of which
 //! may gate the game — stay on the detached `kick_off` thread.
 //!
+//! Running-server takeover (v1.0.82): the spawned server is detached
+//! and outlives the launcher, so without a takeover a mirror update
+//! would never take effect on a machine whose old server is still
+//! running — the stale binary would serve forever (v1.0.80's fast
+//! path returned before even syncing). The gate now records the
+//! spawned server's PID in `tachyon-server.pid`; when the sync
+//! brings a newer binary and the port is held by the process that
+//! pidfile names — verified live, by image name — the gate stops
+//! that one process and starts the updated binary instead. Servers
+//! spawned by v1.0.80 or earlier left no pidfile, so a second proof
+//! covers them: the process owning the port must be running an
+//! image whose full path is exactly our server exe's path. A
+//! listener that fails both proofs is never touched.
+//!
 //! Everything here is fail-soft by design:
 //! - a failed sidecar fetch keeps the installed exe untouched;
 //! - a failed download never replaces a working exe (temp file, hash
 //!   verified, then renamed into place);
-//! - a busy UDP 7777 means a server is already running — nothing to do;
+//! - a busy UDP 7777 means a server is already running — nothing to
+//!   do, unless the takeover above proves it is our own stale one;
 //! - no error in this module may block or fail the game launch. The
 //!   readiness gate is bounded (see `READY_BUDGET`); on any failure
 //!   it logs and the game launches unarmed.
@@ -49,6 +64,11 @@ use std::time::{Duration, Instant};
 const MIRROR_BASE: &str =
     "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/tachyon-server/";
 const SERVER_EXE_NAME: &str = "TachyonServer.exe";
+/// Pidfile naming the server process the gate spawned, written next
+/// to the binary. It is the takeover's ownership proof: a later
+/// launch may replace a running server only when the PID recorded
+/// here is still alive and still running our server image.
+const SERVER_PID_NAME: &str = "tachyon-server.pid";
 /// UDP port the bundled server listens on (loopback endpoint handed out
 /// by matchmaking for local sessions).
 pub(crate) const SERVER_PORT: u16 = 7777;
@@ -62,6 +82,10 @@ const READY_BUDGET: Duration = Duration::from_secs(180);
 /// How long the gate waits, after the spawn step, for the server to
 /// actually bind UDP 7777 (further bounded by the remaining budget).
 const LISTEN_WAIT: Duration = Duration::from_secs(10);
+/// How long the gate waits, after a takeover stop, for UDP 7777 to
+/// free up before it installs + respawns the updated server
+/// (further bounded by the remaining budget).
+const TAKEOVER_FREE_WAIT: Duration = Duration::from_secs(5);
 /// Poll interval while waiting for the port to be taken.
 const LISTEN_POLL: Duration = Duration::from_millis(250);
 
@@ -88,6 +112,40 @@ fn server_dir(game_dir: &Path) -> PathBuf {
 
 fn server_exe(game_dir: &Path) -> PathBuf {
     server_dir(game_dir).join(SERVER_EXE_NAME)
+}
+
+fn server_pid_file(game_dir: &Path) -> PathBuf {
+    server_dir(game_dir).join(SERVER_PID_NAME)
+}
+
+/// Temp file a mirror download lands in before its hash verifies
+/// and it is renamed over `server_exe`.
+fn server_download_temp(game_dir: &Path) -> PathBuf {
+    server_dir(game_dir).join(format!("{SERVER_EXE_NAME}.download"))
+}
+
+/// Parse pidfile contents: a plain decimal PID. Tolerant of the
+/// whitespace a hand edit might add; zero, junk and overflow all
+/// mean "no usable pid" — the takeover fails closed on any of them.
+fn parse_server_pid(text: &str) -> Option<u32> {
+    let pid: u32 = text.trim().parse().ok()?;
+    (pid > 0).then_some(pid)
+}
+
+/// The PID recorded in the pidfile, if it holds a usable one.
+fn read_server_pid(game_dir: &Path) -> Option<u32> {
+    parse_server_pid(&std::fs::read_to_string(server_pid_file(game_dir)).ok()?)
+}
+
+/// Remember which process the gate spawned, so a later launch can
+/// prove the listener on udp/7777 is that very process before
+/// replacing it after a mirror update (the takeover in
+/// `ensure_server_ready`). Best-effort, like every file write in
+/// this module: a missing pidfile only ever disables the takeover,
+/// never the launch.
+fn write_server_pid(game_dir: &Path, pid: u32) {
+    let _ = std::fs::create_dir_all(server_dir(game_dir));
+    let _ = std::fs::write(server_pid_file(game_dir), pid.to_string());
 }
 
 fn agent_exe(game_dir: &Path) -> PathBuf {
@@ -154,16 +212,39 @@ fn sync_decision(local_hash: Option<&str>, expected_hash: Option<&str>) -> SyncD
     }
 }
 
+/// What one mirror sync pass did to the exe on disk. The readiness
+/// gate needs this to decide the takeover: a stale server that is
+/// still running may only be replaced when the sync actually
+/// brought a newer binary than the one it was started from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SyncOutcome {
+    /// The installed exe already matched the mirror, or the mirror
+    /// was unreachable and the installed exe was kept: the binary
+    /// on disk is exactly what it was before the sync.
+    Unchanged,
+    /// A different exe was downloaded and installed.
+    Updated,
+    /// A different exe was downloaded and hash-verified but could
+    /// NOT be installed: the running server locks its own image on
+    /// Windows, so the rename had to wait. The verified download
+    /// stays in the `.download` temp file for
+    /// `install_pending_server` (the takeover's second half).
+    UpdatePending,
+    /// The sync could not complete (client build failure, an early
+    /// IO error, or a failed download): disk untouched.
+    Failed,
+}
+
 /// Keep the bundled `TachyonServer.exe` in sync with the HF mirror:
 /// fetch the `.sha256` sidecar and download the exe only when the
 /// local copy is missing or its hash differs. If the sidecar fetch
 /// fails (offline, mirror hiccup) and a local exe exists, it is kept
 /// as-is — the same fail-soft contract as the plugin sync.
-pub(crate) async fn ensure_server(game_dir: &Path) {
+pub(crate) async fn ensure_server(game_dir: &Path) -> SyncOutcome {
     let dir = server_dir(game_dir);
     if let Err(error) = std::fs::create_dir_all(&dir) {
         eprintln!("[tachyon] cannot create {}: {error}", dir.display());
-        return;
+        return SyncOutcome::Failed;
     }
     let exe = dir.join(SERVER_EXE_NAME);
 
@@ -175,7 +256,7 @@ pub(crate) async fn ensure_server(game_dir: &Path) {
         Ok(client) => client,
         Err(error) => {
             eprintln!("[tachyon] http client failed: {error}");
-            return;
+            return SyncOutcome::Failed;
         }
     };
 
@@ -187,45 +268,338 @@ pub(crate) async fn ensure_server(game_dir: &Path) {
         None
     };
     let expected = match sync_decision(local.as_deref(), fetched.as_deref()) {
-        SyncDecision::UpToDate => return, // already in sync
+        SyncDecision::UpToDate => return SyncOutcome::Unchanged, // already in sync
         SyncDecision::KeepInstalledNoMirror => {
             if exe.is_file() {
                 println!("[tachyon] mirror unreachable — keeping installed server.");
             } else {
                 eprintln!("[tachyon] mirror unreachable and no server installed yet.");
             }
-            return;
+            return SyncOutcome::Unchanged;
         }
         SyncDecision::Download => match fetched {
             Some(hash) => hash,
             // sync_decision only picks Download when a hash was
             // fetched; this arm is unreachable in practice.
-            None => return,
+            None => return SyncOutcome::Failed,
         },
     };
 
     // Download to a temp name, verify the hash, then move into place:
     // a partial or corrupt download never replaces a working exe.
     println!("[tachyon] Downloading Tachyon server…");
-    let temp = dir.join(format!("{SERVER_EXE_NAME}.download"));
+    let temp = server_download_temp(game_dir);
     let url = format!("{MIRROR_BASE}{SERVER_EXE_NAME}");
     if let Err(error) = download_verified(&client, &url, &temp, &expected).await {
         eprintln!("[tachyon] server download failed: {error}");
         let _ = std::fs::remove_file(&temp);
-        return;
+        return SyncOutcome::Failed;
     }
     if exe.is_file() {
-        // Windows cannot replace a running exe; if the old server is
-        // still up this removal fails and the new binary lands on the
-        // next launch instead (ensure_running starts nothing there).
+        // Windows cannot replace a running exe: if the old server is
+        // still up, this removal fails and the rename below with it.
         let _ = std::fs::remove_file(&exe);
     }
     if let Err(error) = std::fs::rename(&temp, &exe) {
-        eprintln!("[tachyon] could not install downloaded server: {error}");
-        let _ = std::fs::remove_file(&temp);
-        return;
+        // Almost always the running server locking its own image.
+        // The download is verified and stays in the temp file; the
+        // gate's takeover stops the stale server and then installs
+        // it via `install_pending_server`. Any other cause simply
+        // defers the update to a later launch, as before.
+        eprintln!("[tachyon] downloaded server not installed yet (exe busy?): {error}");
+        return SyncOutcome::UpdatePending;
     }
     println!("[tachyon] Tachyon server synced from mirror.");
+    SyncOutcome::Updated
+}
+
+/// Install a download that an earlier sync pass (this same gate
+/// run) verified but could not move into place because the running
+/// server locked its exe. Retries the remove + rename from the
+/// `.download` temp file; true when the new binary is in place
+/// afterwards. The temp content was hash-verified by
+/// `download_verified` before it was parked, so no second check
+/// happens here.
+fn install_pending_server(game_dir: &Path) -> bool {
+    let temp = server_download_temp(game_dir);
+    if !temp.is_file() {
+        return false;
+    }
+    let exe = server_exe(game_dir);
+    if exe.is_file() {
+        let _ = std::fs::remove_file(&exe);
+    }
+    if std::fs::rename(&temp, &exe).is_err() {
+        return false;
+    }
+    println!("[tachyon] Tachyon server updated from the downloaded build.");
+    true
+}
+
+/// Whether a sync outcome means a newer server binary than the
+/// one a running server was started from is now on disk (or, for
+/// `UpdatePending`, verified and waiting in the temp file).
+fn sync_warrants_takeover(outcome: SyncOutcome) -> bool {
+    matches!(outcome, SyncOutcome::Updated | SyncOutcome::UpdatePending)
+}
+
+/// What the readiness gate should do about a listener on udp/7777
+/// after the sync step — pure, so the whole decision matrix is
+/// unit-tested with fixtures.
+#[derive(Debug, PartialEq, Eq)]
+enum TakeoverAction {
+    /// Leave the listener alone: it already runs the current
+    /// binary, or it is not provably the launcher's own server
+    /// (missing pidfile, stale recorded PID, the PID now belongs
+    /// to another program, and the port owner is not running our
+    /// exe from its own path). A busy port keeps meaning "server
+    /// ready", exactly as it did before the takeover existed.
+    KeepRunning,
+    /// Stop this PID — proven ours by an ownership proof (the
+    /// pidfile's recorded process, still alive and still running
+    /// our server image; or the port's owner, running an image
+    /// whose path is exactly our server exe's) — so the gate can
+    /// install the update (if it is still pending) and spawn the
+    /// new binary.
+    Replace(u32),
+}
+
+fn takeover_action(
+    outcome: SyncOutcome,
+    port_taken: bool,
+    pidfile_pid: Option<u32>,
+    image_name: Option<&str>,
+) -> TakeoverAction {
+    if !port_taken || !sync_warrants_takeover(outcome) {
+        return TakeoverAction::KeepRunning;
+    }
+    let pid = match pidfile_pid {
+        Some(pid) => pid,
+        None => return TakeoverAction::KeepRunning,
+    };
+    match image_name {
+        Some(name) if image_name_is_server(name) => TakeoverAction::Replace(pid),
+        _ => TakeoverAction::KeepRunning,
+    }
+}
+
+/// The fallback decision, for when the pidfile proof cannot speak:
+/// servers spawned by v1.0.80 or earlier left no pidfile at all,
+/// and a pidfile can also go stale. The gate has then found the
+/// process OWNING the port (the caller only runs this with the
+/// port taken); it may be replaced only when its image path is
+/// exactly our server exe's path. Same fail-closed shape as
+/// `takeover_action`: no update, no owner, or a foreign path all
+/// keep the listener running.
+fn port_owner_action(
+    outcome: SyncOutcome,
+    owner_pid: Option<u32>,
+    owner_image_path: Option<&str>,
+    server_exe_path: &str,
+) -> TakeoverAction {
+    if !sync_warrants_takeover(outcome) {
+        return TakeoverAction::KeepRunning;
+    }
+    let pid = match owner_pid {
+        Some(pid) => pid,
+        None => return TakeoverAction::KeepRunning,
+    };
+    match owner_image_path {
+        Some(path) if image_path_is_our_server(path, server_exe_path) => {
+            TakeoverAction::Replace(pid)
+        }
+        _ => TakeoverAction::KeepRunning,
+    }
+}
+
+/// Pull the image name out of `tasklist /FO LIST` output
+/// (`Image Name:   TachyonServer.exe`). `None` when no such line
+/// exists — e.g. the "No tasks are running" info line tasklist
+/// prints for a dead PID. (Referenced from the Windows
+/// `process_image_name` and from the tests; dead on other
+/// non-test builds.)
+#[allow(dead_code)]
+fn parse_tasklist_image_name(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let name = line.trim().strip_prefix("Image Name:")?.trim();
+        (!name.is_empty()).then(|| name.to_string())
+    })
+}
+
+/// Does a tasklist image name denote our bundled server? Exact,
+/// case-insensitive (Windows image names are): anything looser
+/// could match an unrelated process, and the takeover only ever
+/// stops a process it has proven is ours.
+fn image_name_is_server(image_name: &str) -> bool {
+    image_name.trim().eq_ignore_ascii_case(SERVER_EXE_NAME)
+}
+
+/// Pull the owning PID for `port` out of `netstat -ano -p UDP`
+/// output. Rows look like:
+///   `  UDP    127.0.0.1:7777    *:*                       1234`
+/// (proto, local address, foreign address, PID). The local
+/// address's port must match exactly — `:77770` is not `:7777`.
+/// `None` when no row owns the port. (Referenced from the Windows
+/// `udp_port_owner_pid` and from the tests; dead on other
+/// non-test builds.)
+#[allow(dead_code)]
+fn parse_netstat_udp_owner(output: &str, port: u16) -> Option<u32> {
+    let port_suffix = format!(":{port}");
+    output.lines().find_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 4 || !fields[0].eq_ignore_ascii_case("UDP") {
+            return None;
+        }
+        if !fields[1].ends_with(&port_suffix) {
+            return None;
+        }
+        fields.last().and_then(|pid| parse_server_pid(pid))
+    })
+}
+
+/// Parse what
+/// `Get-NetUDPEndpoint … | Select-Object -ExpandProperty OwningProcess`
+/// prints: one decimal PID per line. The first usable one wins —
+/// a listener bound on several addresses reports its process once
+/// per endpoint. (Same references/liveness as
+/// `parse_netstat_udp_owner`.)
+#[allow(dead_code)]
+fn parse_udp_owner_pids(output: &str) -> Option<u32> {
+    output.lines().find_map(parse_server_pid)
+}
+
+/// Normalize an executable path for comparison: Windows paths are
+/// case-insensitive, accept either separator spelling, and tool
+/// output may wrap the value in quotes or stray whitespace.
+fn normalize_exe_path(path: &str) -> String {
+    path.trim()
+        .trim_matches('"')
+        .replace('/', "\\")
+        .to_lowercase()
+}
+
+/// Does `image_path` (a running process's full image path, e.g.
+/// from `Get-Process`) point at OUR server binary — the exe in
+/// the game's `tachyon-server` folder? Full-path equality after
+/// normalization: a `TachyonServer.exe` anywhere else (a second
+/// install, a renamed copy in the same folder) does NOT prove
+/// the port owner is the server this launcher manages.
+fn image_path_is_our_server(image_path: &str, server_exe_path: &str) -> bool {
+    let candidate = normalize_exe_path(image_path);
+    !candidate.is_empty() && candidate == normalize_exe_path(server_exe_path)
+}
+
+/// Image name of the process with `pid`, via tasklist — the same
+/// tool `spawn_agent` already shells out to for its duplicate
+/// check. `None` when the process is gone or tasklist failed.
+#[cfg(windows)]
+fn process_image_name(pid: u32) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "LIST"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    parse_tasklist_image_name(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(not(windows))]
+fn process_image_name(_pid: u32) -> Option<String> {
+    // tasklist is a Windows tool, and the bundled server is a
+    // Windows binary: other platforms have nothing to inspect, so
+    // the takeover simply never fires there.
+    None
+}
+
+/// PID of the process owning UDP `port`, if any. PowerShell's
+/// `Get-NetUDPEndpoint` first; `netstat -ano -p UDP` is the
+/// fallback for systems where the cmdlet is missing or slow to
+/// load. Only a candidate finder — the caller still has to prove
+/// the PID is our server (image path) before acting on it.
+#[cfg(windows)]
+fn udp_port_owner_pid(port: u16) -> Option<u32> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let script = format!(
+        "Get-NetUDPEndpoint -LocalPort {port} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess"
+    );
+    let via_cmdlet = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()
+        .and_then(|out| parse_udp_owner_pids(&String::from_utf8_lossy(&out.stdout)));
+    if via_cmdlet.is_some() {
+        return via_cmdlet;
+    }
+    let output = std::process::Command::new("netstat")
+        .args(["-ano", "-p", "UDP"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    parse_netstat_udp_owner(&String::from_utf8_lossy(&output.stdout), port)
+}
+
+#[cfg(not(windows))]
+fn udp_port_owner_pid(_port: u16) -> Option<u32> {
+    // The endpoint cmdlets and netstat's `-ano` shape are Windows
+    // tools: other platforms have nothing to inspect, so the
+    // fallback proof simply never fires there.
+    None
+}
+
+/// Full image path of the process with `pid`, via PowerShell's
+/// `Get-Process` (the supported successor to `wmic process`).
+/// `None` when the process is gone, its path is not readable, or
+/// PowerShell failed.
+#[cfg(windows)]
+fn process_image_path(pid: u32) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let script = format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path");
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(not(windows))]
+fn process_image_path(_pid: u32) -> Option<String> {
+    None
+}
+
+/// Force-stop the process with `pid` (`taskkill /F`). Only ever
+/// called with a PID an ownership proof (`takeover_action` or
+/// `port_owner_action`) has proven is our own stale server. True
+/// when taskkill reports success.
+#[cfg(windows)]
+fn terminate_process(pid: u32) -> bool {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn terminate_process(_pid: u32) -> bool {
+    false
 }
 
 /// Pure budget math for the readiness gate: how much of `budget` is
@@ -238,6 +612,13 @@ fn budget_remaining(budget: Duration, elapsed: Duration) -> Duration {
 /// listen-wait cap, further bounded by the launch budget left over.
 fn listen_wait_allowance(budget: Duration, elapsed: Duration) -> Duration {
     LISTEN_WAIT.min(budget_remaining(budget, elapsed))
+}
+
+/// How long the gate may wait for the port to free up after a
+/// takeover stop: the takeover cap, further bounded by the launch
+/// budget left over (same shape as `listen_wait_allowance`).
+fn port_free_wait_allowance(budget: Duration, elapsed: Duration) -> Duration {
+    TAKEOVER_FREE_WAIT.min(budget_remaining(budget, elapsed))
 }
 
 /// Poll `is_listening` every `poll` until it reports true or
@@ -267,6 +648,19 @@ fn wait_until_listening_with(
 fn wait_until_listening(max_wait: Duration) -> bool {
     wait_until_listening_with(
         || !udp_port_free(SERVER_PORT),
+        max_wait,
+        LISTEN_POLL,
+        std::thread::sleep,
+    )
+}
+
+/// The gate's generic poll loop with the probe inverted: poll
+/// until UDP 7777 can be bound again (bounded by `max_wait`). The
+/// tail of a successful takeover stop — `taskkill` returning does
+/// not guarantee the socket is released yet.
+fn wait_until_port_free(max_wait: Duration) -> bool {
+    wait_until_listening_with(
+        || udp_port_free(SERVER_PORT),
         max_wait,
         LISTEN_POLL,
         std::thread::sleep,
@@ -319,30 +713,45 @@ fn yes_no(value: bool) -> &'static str {
 /// confirmed listening, or the bounded budget (`READY_BUDGET`)
 /// expires and the gate logs and lets the launch proceed unarmed.**
 ///
+/// v1.0.82 adds the takeover step, and with it a second invariant:
+/// **a mirror update reaches the running server on the same
+/// launch — but the gate only ever stops a process an ownership
+/// proof vouches for (the pidfile record, or owning the port with
+/// our exe's exact image path); any other listener is never
+/// touched and keeps meaning "server ready".**
+///
 /// In order: (a) sync `TachyonServer.exe` with the mirror,
 /// synchronously — a first run may spend a while on the 67 MB
 /// download, with progress lines, instead of the game freezing at
-/// 18% against a dead endpoint; (b) spawn the server hidden and
-/// detached if the port is free (the existing `ensure_running`);
-/// (c) poll until the port is actually taken. A server left over
-/// from an earlier session (it is detached and outlives the
-/// launcher) short-circuits the whole gate: it is already listening,
-/// and its binary cannot be replaced while it runs anyway.
+/// 18% against a dead endpoint; (a2) if a server from an earlier
+/// session still holds the port (it is detached and outlives the
+/// launcher) and the sync brought a newer binary, take over: stop
+/// the proven stale process (pidfile proof, or the port-owner
+/// path proof for pre-pidfile servers), install the update if it
+/// is still pending, and fall through to the spawn step with the
+/// port free — a listener that fails both proofs is left alone
+/// and the gate returns ready exactly as the old fast path did;
+/// (b) spawn
+/// the server hidden and detached if the port is free (the
+/// existing `ensure_running`), recording its PID in the pidfile;
+/// (c) poll until the port is actually taken.
 ///
 /// Returns true when a server is listening. Every failure path
 /// returns false and NEVER propagates an error: worst case the
 /// launch behaves exactly like the pre-Tachyon launcher.
 pub(crate) fn ensure_server_ready(game_dir: &Path) -> bool {
-    // Fast path: already listening (see above).
+    let started = Instant::now();
     if !udp_port_free(SERVER_PORT) {
+        // No more unconditional fast path (that was the v1.0.80
+        // stale-server trap): the sync still has to run so a mirror
+        // update is at least discovered — and can then take over.
         gate_log(
             game_dir,
-            "[tachyon] readiness gate: server already listening on udp/7777",
+            "[tachyon] readiness gate: a server is listening on udp/7777 — checking the mirror before trusting it",
         );
-        return true;
+    } else {
+        gate_log(game_dir, "[tachyon] readiness gate: syncing background server…");
     }
-    let started = Instant::now();
-    gate_log(game_dir, "[tachyon] readiness gate: syncing background server…");
 
     // (a) Sync the binary, synchronously, inside the launch budget.
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -352,31 +761,147 @@ pub(crate) fn ensure_server_ready(game_dir: &Path) -> bool {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("[tachyon] readiness gate: could not start async runtime: {error}");
+            if !udp_port_free(SERVER_PORT) {
+                gate_log(
+                    game_dir,
+                    "[tachyon] readiness gate: server already listening on udp/7777",
+                );
+                return true;
+            }
             return false;
         }
     };
     let sync_budget = budget_remaining(READY_BUDGET, started.elapsed());
-    let synced = runtime.block_on(async {
-        tokio::time::timeout(sync_budget, ensure_server(game_dir))
-            .await
-            .is_ok()
-    });
-    if !synced {
-        // The dropped sync may leave a partial `.download` temp file;
-        // the next launch's download truncates and rewrites it.
-        gate_log(
-            game_dir,
-            "[tachyon] readiness gate: sync exceeded the launch budget — launching unarmed",
-        );
-        return false;
-    }
+    let outcome = match runtime
+        .block_on(async { tokio::time::timeout(sync_budget, ensure_server(game_dir)).await })
+    {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            // The dropped sync may leave a partial `.download` temp
+            // file; the next launch's download truncates and
+            // rewrites it.
+            if !udp_port_free(SERVER_PORT) {
+                gate_log(
+                    game_dir,
+                    "[tachyon] readiness gate: sync exceeded the launch budget, but a server is already listening — launching armed",
+                );
+                return true;
+            }
+            gate_log(
+                game_dir,
+                "[tachyon] readiness gate: sync exceeded the launch budget — launching unarmed",
+            );
+            return false;
+        }
+    };
     gate_log(
         game_dir,
-        &format!(
-            "[tachyon] readiness gate: sync done (server binary present: {})",
-            yes_no(server_exe(game_dir).is_file())
-        ),
+        match outcome {
+            SyncOutcome::Updated => {
+                "[tachyon] readiness gate: sync done — server binary updated from the mirror"
+            }
+            SyncOutcome::UpdatePending => {
+                "[tachyon] readiness gate: sync done — update downloaded, install waiting on the running server"
+            }
+            SyncOutcome::Unchanged => {
+                "[tachyon] readiness gate: sync done — server binary unchanged"
+            }
+            SyncOutcome::Failed => "[tachyon] readiness gate: sync done — sync failed",
+        },
     );
+
+    // (a2) Takeover: a leftover server holds the port and the sync
+    // brought a newer binary than the one it was started from.
+    // Replace it ONLY when an ownership proof vouches for the
+    // listener: primarily the pidfile (the process an earlier gate
+    // spawned — recorded PID, still alive, still our server
+    // image); as a fallback for servers spawned before the
+    // pidfile existed (v1.0.80 and earlier), the port's owner
+    // running an image whose path is exactly our exe's path.
+    // Anything else keeps the pre-takeover behavior: a busy port
+    // means a server is ready.
+    if !udp_port_free(SERVER_PORT) {
+        let pidfile_pid = read_server_pid(game_dir);
+        let image_name = pidfile_pid.and_then(process_image_name);
+        let primary = takeover_action(outcome, true, pidfile_pid, image_name.as_deref());
+        let action = if primary == TakeoverAction::KeepRunning
+            && sync_warrants_takeover(outcome)
+        {
+            let owner_pid = udp_port_owner_pid(SERVER_PORT);
+            let owner_path = owner_pid.and_then(process_image_path);
+            let fallback = port_owner_action(
+                outcome,
+                owner_pid,
+                owner_path.as_deref(),
+                &server_exe(game_dir).to_string_lossy(),
+            );
+            if fallback != TakeoverAction::KeepRunning {
+                gate_log(
+                    game_dir,
+                    "[tachyon] takeover: no usable pidfile proof — the port owner runs our exe from its own path",
+                );
+            }
+            fallback
+        } else {
+            primary
+        };
+        match action {
+            TakeoverAction::Replace(pid) => {
+                gate_log(
+                    game_dir,
+                    &format!(
+                        "[tachyon] takeover: mirror update ready and udp/7777 is held by our stale server (pid {pid}) — restarting it"
+                    ),
+                );
+                if terminate_process(pid) {
+                    let allowance = port_free_wait_allowance(READY_BUDGET, started.elapsed());
+                    if wait_until_port_free(allowance) {
+                        gate_log(
+                            game_dir,
+                            &format!(
+                                "[tachyon] takeover: stale server pid {pid} stopped — udp/7777 is free"
+                            ),
+                        );
+                        if outcome == SyncOutcome::UpdatePending && install_pending_server(game_dir)
+                        {
+                            gate_log(
+                                game_dir,
+                                "[tachyon] takeover: updated server binary installed",
+                            );
+                        }
+                    } else {
+                        gate_log(
+                            game_dir,
+                            "[tachyon] takeover: udp/7777 stayed busy after the stop — leaving the listener in place",
+                        );
+                    }
+                } else {
+                    gate_log(
+                        game_dir,
+                        &format!(
+                            "[tachyon] takeover: could not stop pid {pid} — leaving the running server in place"
+                        ),
+                    );
+                }
+                // Fall through: the spawn step below starts the
+                // updated binary if the port freed up, and no-ops
+                // (port still taken) if it did not.
+            }
+            TakeoverAction::KeepRunning => {
+                if sync_warrants_takeover(outcome) {
+                    gate_log(
+                        game_dir,
+                        "[tachyon] takeover: an update is ready but the listener on udp/7777 is not provably ours — leaving it running",
+                    );
+                }
+                gate_log(
+                    game_dir,
+                    "[tachyon] readiness gate: server already listening on udp/7777",
+                );
+                return true;
+            }
+        }
+    }
 
     // (b) Spawn hidden/detached if the port is (still) free.
     ensure_running(game_dir);
@@ -570,16 +1095,20 @@ fn sha256_file(path: &Path) -> Option<String> {
 
 /// Start the bundled server, hidden and detached, unless one is
 /// already listening: a loopback UDP port that cannot be bound is the
-/// "already running" signal.
-pub(crate) fn ensure_running(game_dir: &Path) {
+/// "already running" signal. A successful spawn is recorded in the
+/// pidfile (the takeover's ownership proof) and its PID returned;
+/// `None` when nothing was spawned.
+pub(crate) fn ensure_running(game_dir: &Path) -> Option<u32> {
     let exe = server_exe(game_dir);
     if !exe.is_file() {
-        return;
+        return None;
     }
     if !udp_port_free(SERVER_PORT) {
-        return; // already running (or another listener owns the port)
+        return None; // already running (or another listener owns the port)
     }
-    spawn_server(&exe);
+    let pid = spawn_server(&exe)?;
+    write_server_pid(game_dir, pid);
+    Some(pid)
 }
 
 /// True when nothing is bound to UDP 127.0.0.1:`port`.
@@ -587,8 +1116,11 @@ fn udp_port_free(port: u16) -> bool {
     std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok()
 }
 
+/// Spawn the server binary; returns the child PID for the pidfile.
+/// The `Child` handle itself is deliberately dropped: the server is
+/// detached and must outlive the launcher, not be reaped by it.
 #[cfg(windows)]
-fn spawn_server(exe: &Path) {
+fn spawn_server(exe: &Path) -> Option<u32> {
     use std::os::windows::process::CommandExt;
 
     // CREATE_NO_WINDOW | DETACHED_PROCESS: no console window, ever, and
@@ -607,16 +1139,23 @@ fn spawn_server(exe: &Path) {
         .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .spawn()
     {
-        Ok(_) => println!("[tachyon] background server started on udp/{SERVER_PORT}."),
-        Err(error) => eprintln!("[tachyon] could not start server: {error}"),
+        Ok(child) => {
+            println!("[tachyon] background server started on udp/{SERVER_PORT}.");
+            Some(child.id())
+        }
+        Err(error) => {
+            eprintln!("[tachyon] could not start server: {error}");
+            None
+        }
     }
 }
 
 #[cfg(not(windows))]
-fn spawn_server(_exe: &Path) {
+fn spawn_server(_exe: &Path) -> Option<u32> {
     // The bundled server binary is Windows-only; other platforms have
     // nothing to spawn. No-op so the launch flow (and its tests) stays
     // identical in Linux CI checks.
+    None
 }
 
 /// Read the provisioned playit secret. `None` when the file is
@@ -915,9 +1454,13 @@ fn spawn_agent(_exe: &Path, _secret: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        budget_remaining, gate_log, listen_wait_allowance, parse_sidecar_hash, server_exe,
-        sha256_file, sync_decision, tachyon_log_path, udp_port_free, wait_until_listening_with,
-        SyncDecision,
+        budget_remaining, gate_log, image_name_is_server, image_path_is_our_server,
+        install_pending_server, listen_wait_allowance, parse_netstat_udp_owner,
+        parse_server_pid, parse_sidecar_hash, parse_tasklist_image_name, parse_udp_owner_pids,
+        port_free_wait_allowance, port_owner_action, read_server_pid, server_download_temp,
+        server_exe, server_pid_file, sha256_file, sync_decision, takeover_action,
+        tachyon_log_path, udp_port_free, wait_until_listening_with, write_server_pid,
+        SyncDecision, SyncOutcome, TakeoverAction,
     };
     use std::path::Path;
     use std::time::Duration;
@@ -1285,5 +1828,275 @@ mod tests {
             "[tachyon] readiness gate: first\n[tachyon] readiness gate: second\n"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pidfile_parse_accepts_only_a_plain_decimal_pid() {
+        assert_eq!(parse_server_pid("1234"), Some(1234));
+        // Whitespace/newlines from hand edits or other writers are fine.
+        assert_eq!(parse_server_pid("  98765\n"), Some(98765));
+        // Everything else fails closed: the takeover must never act
+        // on a PID it cannot read exactly.
+        assert_eq!(parse_server_pid(""), None);
+        assert_eq!(parse_server_pid("   \n"), None);
+        assert_eq!(parse_server_pid("abc"), None);
+        assert_eq!(parse_server_pid("12.5"), None);
+        assert_eq!(parse_server_pid("12 34"), None);
+        assert_eq!(parse_server_pid("-42"), None);
+        assert_eq!(parse_server_pid("0"), None);
+        assert_eq!(parse_server_pid("99999999999999999999999999"), None);
+    }
+
+    #[test]
+    fn pidfile_round_trips_through_disk() {
+        let dir = std::env::temp_dir().join(format!(
+            "fluxrec-tachyon-pidfile-{}",
+            std::process::id()
+        ));
+        let game_dir = dir.join("game");
+        // The pidfile lives in the tachyon-server folder.
+        assert_eq!(
+            server_pid_file(&game_dir),
+            game_dir.join("tachyon-server").join("tachyon-server.pid")
+        );
+        // Missing file -> no recorded server.
+        assert_eq!(read_server_pid(&game_dir), None);
+        write_server_pid(&game_dir, 4242);
+        assert_eq!(
+            std::fs::read_to_string(server_pid_file(&game_dir)).unwrap(),
+            "4242"
+        );
+        assert_eq!(read_server_pid(&game_dir), Some(4242));
+        // A later spawn overwrites the record.
+        write_server_pid(&game_dir, 7777);
+        assert_eq!(read_server_pid(&game_dir), Some(7777));
+        // Garbage content fails closed, like a missing file.
+        std::fs::write(server_pid_file(&game_dir), "not-a-pid").unwrap();
+        assert_eq!(read_server_pid(&game_dir), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn tasklist_list_output_yields_the_image_name() {
+        // Fixture shaped like real `tasklist /FO LIST` output.
+        let listing = "\r\nImage Name:   TachyonServer.exe\r\nPID:          1234\r\nSession Name: Console\r\nSession#:     1\r\nMem Usage:    42,000 K\r\n";
+        assert_eq!(
+            parse_tasklist_image_name(listing).as_deref(),
+            Some("TachyonServer.exe")
+        );
+        // A dead PID prints an info line, not a listing.
+        assert_eq!(
+            parse_tasklist_image_name(
+                "INFO: No tasks are running which match the specified criteria."
+            ),
+            None
+        );
+        assert_eq!(parse_tasklist_image_name(""), None);
+    }
+
+    #[test]
+    fn server_image_name_match_is_exact_but_case_insensitive() {
+        assert!(image_name_is_server("TachyonServer.exe"));
+        assert!(image_name_is_server("tachyonserver.EXE"));
+        assert!(image_name_is_server("  TachyonServer.exe  "));
+        // Anything that is not exactly our binary must NOT match —
+        // the takeover kills whatever this accepts.
+        assert!(!image_name_is_server("NotTachyonServer.exe"));
+        assert!(!image_name_is_server("TachyonServer2.exe"));
+        assert!(!image_name_is_server("TachyonServer.exe.bak"));
+        assert!(!image_name_is_server("playit.exe"));
+        assert!(!image_name_is_server(""));
+    }
+
+    #[test]
+    fn takeover_decision_matrix() {
+        let pid = Some(1234);
+        let ours = Some("TachyonServer.exe");
+        let other = Some("something-else.exe");
+        // The full proof: update ready + port held + pidfile PID
+        // alive and still running our image -> replace exactly it.
+        // (Updated: install already landed; UpdatePending: the
+        // verified download waits in the temp file.)
+        for outcome in [SyncOutcome::Updated, SyncOutcome::UpdatePending] {
+            assert_eq!(
+                takeover_action(outcome, true, pid, ours),
+                TakeoverAction::Replace(1234)
+            );
+        }
+        // No newer binary -> never take over, however clean the proof.
+        for outcome in [SyncOutcome::Unchanged, SyncOutcome::Failed] {
+            assert_eq!(
+                takeover_action(outcome, true, pid, ours),
+                TakeoverAction::KeepRunning
+            );
+        }
+        // Port free -> nothing to take over (the spawn step handles it).
+        assert_eq!(
+            takeover_action(SyncOutcome::Updated, false, pid, ours),
+            TakeoverAction::KeepRunning
+        );
+        // Update ready but the listener is not provably ours:
+        // no pidfile, a foreign image, or a stale PID whose process
+        // is gone (or whose slot another program now owns).
+        assert_eq!(
+            takeover_action(SyncOutcome::Updated, true, None, None),
+            TakeoverAction::KeepRunning
+        );
+        assert_eq!(
+            takeover_action(SyncOutcome::Updated, true, pid, other),
+            TakeoverAction::KeepRunning
+        );
+        assert_eq!(
+            takeover_action(SyncOutcome::Updated, true, pid, None),
+            TakeoverAction::KeepRunning
+        );
+        assert_eq!(
+            takeover_action(SyncOutcome::UpdatePending, true, None, ours),
+            TakeoverAction::KeepRunning
+        );
+    }
+
+    #[test]
+    fn port_free_wait_allowance_matches_the_listen_shape() {
+        let budget = Duration::from_secs(180);
+        // Capped by the takeover limit while budget lasts…
+        assert_eq!(
+            port_free_wait_allowance(budget, Duration::from_secs(30)),
+            super::TAKEOVER_FREE_WAIT
+        );
+        // …and by the remaining budget once that runs lower.
+        assert_eq!(
+            port_free_wait_allowance(budget, Duration::from_secs(178)),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            port_free_wait_allowance(budget, Duration::from_secs(999)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn pending_install_moves_the_verified_temp_into_place() {
+        let dir = std::env::temp_dir().join(format!(
+            "fluxrec-tachyon-pending-{}",
+            std::process::id()
+        ));
+        let game_dir = dir.join("game");
+        std::fs::create_dir_all(super::server_dir(&game_dir)).unwrap();
+        // No temp parked -> nothing to install.
+        assert!(!install_pending_server(&game_dir));
+        // Stale exe in place + verified temp parked by the sync.
+        std::fs::write(server_exe(&game_dir), b"old-binary").unwrap();
+        std::fs::write(server_download_temp(&game_dir), b"new-binary").unwrap();
+        assert!(install_pending_server(&game_dir));
+        assert_eq!(
+            std::fs::read(server_exe(&game_dir)).unwrap(),
+            b"new-binary"
+        );
+        // The temp is consumed by the rename; a second call no-ops.
+        assert!(!server_download_temp(&game_dir).exists());
+        assert!(!install_pending_server(&game_dir));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn netstat_udp_output_yields_the_port_owner() {
+        // Fixture shaped like real `netstat -ano -p UDP` output.
+        let listing = "Active Connections\r\n\r\n  Proto  Local Address          Foreign Address        PID\r\n  UDP    0.0.0.0:500            *:*                    1180\r\n  UDP    127.0.0.1:7777         *:*                    4321\r\n  UDP    127.0.0.1:77770        *:*                    9999\r\n  UDP    [::]:5353              *:*                    1180\r\n";
+        assert_eq!(parse_netstat_udp_owner(listing, 7777), Some(4321));
+        // Other ports resolve to their own owners…
+        assert_eq!(parse_netstat_udp_owner(listing, 500), Some(1180));
+        // …and an unowned port, a truncated row, and empty output
+        // all fail closed.
+        assert_eq!(parse_netstat_udp_owner(listing, 7778), None);
+        assert_eq!(parse_netstat_udp_owner("  UDP    127.0.0.1:7777\r\n", 7777), None);
+        assert_eq!(parse_netstat_udp_owner("", 7777), None);
+    }
+
+    #[test]
+    fn powershell_owner_output_parses_the_first_pid() {
+        // What `Get-NetUDPEndpoint … -ExpandProperty OwningProcess`
+        // prints: one decimal PID per line.
+        assert_eq!(parse_udp_owner_pids("4321\r\n"), Some(4321));
+        assert_eq!(parse_udp_owner_pids("  4321 \n"), Some(4321));
+        // A listener on several addresses repeats its PID; the
+        // first usable line wins, junk lines are skipped.
+        assert_eq!(parse_udp_owner_pids("4321\n4321\n"), Some(4321));
+        assert_eq!(parse_udp_owner_pids("\n4321\n"), Some(4321));
+        assert_eq!(parse_udp_owner_pids(""), None);
+        assert_eq!(parse_udp_owner_pids("no process\n"), None);
+        assert_eq!(parse_udp_owner_pids("0\n"), None);
+    }
+
+    #[test]
+    fn image_path_match_requires_our_exact_exe_path() {
+        let ours = "C:\\Games\\FluxRec\\tachyon-server\\TachyonServer.exe";
+        assert!(image_path_is_our_server(ours, ours));
+        // Case and separator spelling are not significant on
+        // Windows, and neither is tool-added quoting/whitespace.
+        assert!(image_path_is_our_server(
+            "c:\\games\\fluxrec\\tachyon-server\\tachyonserver.exe",
+            ours
+        ));
+        assert!(image_path_is_our_server(
+            "C:/Games/FluxRec/tachyon-server/TachyonServer.exe",
+            ours
+        ));
+        assert!(image_path_is_our_server(
+            "  \"C:\\Games\\FluxRec\\tachyon-server\\TachyonServer.exe\"  ",
+            ours
+        ));
+        // Anything else must NOT match — the takeover kills
+        // whatever this accepts: another install, a near-name in
+        // the same folder, the agent, an empty reading.
+        assert!(!image_path_is_our_server(
+            "D:\\Other\\tachyon-server\\TachyonServer.exe",
+            ours
+        ));
+        assert!(!image_path_is_our_server(
+            "C:\\Games\\FluxRec\\tachyon-server\\TachyonServer2.exe",
+            ours
+        ));
+        assert!(!image_path_is_our_server(
+            "C:\\Games\\FluxRec\\tachyon-server\\playit.exe",
+            ours
+        ));
+        assert!(!image_path_is_our_server("", ours));
+    }
+
+    #[test]
+    fn port_owner_decision_matrix() {
+        let ours_path = "C:\\Games\\FluxRec\\tachyon-server\\TachyonServer.exe";
+        let other_path = Some("C:\\Windows\\System32\\svchost.exe");
+        let owner = Some(4321);
+        // The fallback proof: update ready + port owner found +
+        // its image path is exactly our exe's -> replace exactly it.
+        for outcome in [SyncOutcome::Updated, SyncOutcome::UpdatePending] {
+            assert_eq!(
+                port_owner_action(outcome, owner, Some(ours_path), ours_path),
+                TakeoverAction::Replace(4321)
+            );
+        }
+        // No newer binary -> never take over, however clean the proof.
+        for outcome in [SyncOutcome::Unchanged, SyncOutcome::Failed] {
+            assert_eq!(
+                port_owner_action(outcome, owner, Some(ours_path), ours_path),
+                TakeoverAction::KeepRunning
+            );
+        }
+        // The owner is another program, cannot be found, or its
+        // path cannot be read: fail closed in every combination.
+        assert_eq!(
+            port_owner_action(SyncOutcome::Updated, owner, other_path, ours_path),
+            TakeoverAction::KeepRunning
+        );
+        assert_eq!(
+            port_owner_action(SyncOutcome::Updated, None, Some(ours_path), ours_path),
+            TakeoverAction::KeepRunning
+        );
+        assert_eq!(
+            port_owner_action(SyncOutcome::Updated, owner, None, ours_path),
+            TakeoverAction::KeepRunning
+        );
     }
 }
