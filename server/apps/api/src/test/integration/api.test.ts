@@ -1958,16 +1958,16 @@ describe('public endpoints', () => {
 		)
 		expect(((await queried.json()) as unknown[]).length).toBe(1)
 
-		// Over 100 ids answers EMPTY without touching the table. The client has been seen posting
-		// far more than a screen could draw, and empty is safe precisely because a miss here is
-		// already not an error. Empty rather than the first 100: the client reads the items it got
-		// back, not the ids it asked about, so it cannot tell a truncated batch from a batch of
-		// misses and would cache the difference.
+		// Inventory prefetches may exceed a screenful. Keep resolving known items
+		// across database batches instead of treating the whole request as missing.
 		const padding = Array.from({ length: 99 }, () => '00000000-0000-0000-0000-000000000000')
 		expect(await bulkLookup([first.CustomAvatarItemId, ...padding])).toHaveLength(1)
 		expect(
 			await bulkLookup([first.CustomAvatarItemId, second.CustomAvatarItemId, ...padding])
-		).toEqual([])
+		).toHaveLength(2)
+		const many = Array.from({ length: 101 }, () => crypto.randomUUID())
+		expect(await bulkLookup([...many, first.CustomAvatarItemId, second.CustomAvatarItemId])).toHaveLength(2)
+		expect(await bulkLookup(Array.from({ length: 1001 }, () => first.CustomAvatarItemId))).toEqual([])
 	})
 
 	// Unpublished items are held back from everyone but their creator — the same rule the

@@ -95,7 +95,7 @@ describe('img endpoints', () => {
 
 	// Real images use the CDN's 30-day immutable cache, while a missing-key
 	// fallback expires quickly so a later uploaded thumbnail is not hidden.
-	it('uses long caching for real images and short caching for missing-image fallbacks', async () => {
+	it('caches real images but never caches missing-image fallbacks', async () => {
 		const CACHE_CONTROL = `public, max-age=${86400 * 30}, immutable`
 
 		// The stored object and a static asset.
@@ -106,7 +106,7 @@ describe('img endpoints', () => {
 		}
 		const fallback = await SELF.fetch(`${ORIGIN}/does-not-exist-anywhere.jpg`)
 		expect(fallback.status).toBe(200)
-		expect(fallback.headers.get('cache-control')).toBe('public, max-age=60')
+		expect(fallback.headers.get('cache-control')).toBe('no-store')
 		expect(fallback.headers.get('cache-control')).not.toContain('immutable')
 
 		// And the transformed variant, which is rebuilt rather than streamed. Uses a real
@@ -420,6 +420,7 @@ describe('img endpoints', () => {
 		const res = await SELF.fetch(`${ORIGIN}/missing.png`)
 		expect(res.status).toBe(200)
 		expect(res.headers.get('content-type')).toMatch(/^image\/png/)
+		expect(res.headers.get('cache-control')).toBe('no-store')
 		const body = new Uint8Array(await res.arrayBuffer())
 		// The blob-store miss falls through to a generated 1x1 transparent PNG —
 		// an honest "no image", not a branded placeholder.

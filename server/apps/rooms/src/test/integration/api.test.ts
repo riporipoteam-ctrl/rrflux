@@ -15,6 +15,8 @@ import {
 } from '@repo/domain'
 
 import { NotificationType } from '../../../../notify/src/notification-types'
+import { CONSUMABLE_SCHEMA_DDL } from '../../../../econ/src/consumables-db'
+import loadingScreenSql from '../../../migrations/0024_global_loading_screen.sql?raw'
 import importRooms from '../../../static/ImportRooms.json'
 import app from '../../rooms.app'
 
@@ -96,6 +98,8 @@ async function clearPresence(accountId: number): Promise<void> {
 beforeAll(async () => {
 	// Seed the shared JWT signing key into the local Secrets Store so .get() resolves.
 	await adminSecretsStore(env.JWT_SECRET).create('test-signing-key')
+	await env.DB.prepare(loadingScreenSql.replace(/^\s*--.*$/gm, '').trim()).run()
+	for (const statement of CONSUMABLE_SCHEMA_DDL) await env.DB.prepare(statement).run()
 	for (const stmt of ROOM_SCHEMA_DDL) await env.DB.prepare(stmt).run()
 	for (const stmt of SUBROOM_SCHEMA_DDL) await env.DB.prepare(stmt).run()
 	for (const stmt of ROOM_INSTANCE_SCHEMA_DDL) await env.DB.prepare(stmt).run()
@@ -896,6 +900,12 @@ describe('rooms endpoints', () => {
 		expect(body.Results.map((room) => room.Name)).toEqual(
 			expect.arrayContaining(['Showdown', 'MyLittleMonsters'])
 		)
+		for (const path of ['/rooms/search?query=%23rro', '/rooms/search?query=%23recroomoriginal', '/rooms/hot?tag=%23rro']) {
+			const response = await SELF.fetch(`${ORIGIN}${path}&take=200`)
+			expect(response.status).toBe(200)
+			const result = await response.json() as { Results: Array<{ Name: string }> }
+			expect(result.Results.map(room => room.Name)).toEqual(expect.arrayContaining(['Showdown', 'MyLittleMonsters']))
+		}
 
 		await env.DB.prepare('DELETE FROM room_tag WHERE room_id IN (?1, ?2)')
 			.bind(...ids)
@@ -4386,8 +4396,10 @@ describe('rooms endpoints', () => {
 		expect(otherGet).toMatchObject({ Cheered: false, Favorited: false })
 	})
 
-	it('GET /rooms/:roomId/boosts/:playerId/count returns a bare zero', async () => {
-		const res = await SELF.fetch(`${ORIGIN}/rooms/2/boosts/555/count`)
+	it('GET /rooms/:roomId/boosts/:playerId/count requires auth and returns the owner balance', async () => {
+		const path = `${ORIGIN}/rooms/2/boosts/555/count`
+		expect((await SELF.fetch(path)).status).toBe(401)
+		const res = await SELF.fetch(path, { headers: await bearer('555') })
 		expect(res.status).toBe(200)
 		expect(await res.json()).toBe(0)
 	})

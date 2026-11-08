@@ -14,6 +14,7 @@ import {
 	getOutfits,
 	getPendingGifts,
 	getPlayerIdsInRoom,
+	getRoomById,
 	grantInvention,
 	levelsReached,
 	ownsInvention,
@@ -77,6 +78,8 @@ import { claimChallengeGift, getChallengeStatuses, recordChallengeProgress } fro
 import { buildRotation, rotationMapId, withWeeklyGift } from './challenge-rotation'
 import {
 	consumeConsumable,
+	consumeRoomBoost,
+	ROOM_BOOST_DESC,
 	getConsumables,
 	grantConsumable,
 	grantConsumableStatement,
@@ -5805,10 +5808,28 @@ const app = new Hono<App>({ strict: false })
 				.catch(() => ({}) as { Id?: unknown; DeltaCount?: unknown })
 			const consumableId = typeof body.Id === 'number' ? body.Id : Number.NaN
 			const delta = typeof body.DeltaCount === 'number' ? body.DeltaCount : 1
-			if (!Number.isNaN(consumableId) && delta > 0) {
-				const consumed = await consumeConsumable(c.env.DB, id, consumableId, delta)
+			if (Number.isSafeInteger(consumableId) && Number.isSafeInteger(delta) && delta > 0) {
+				const owned = await c.env.DB.prepare('SELECT consumable_item_desc FROM consumable WHERE id = ?1 AND account_id = ?2')
+					.bind(consumableId, id).first<{ consumable_item_desc: string }>()
+				const isBoost = owned?.consumable_item_desc === ROOM_BOOST_DESC
+				const consumed = isBoost
+					? await consumeRoomBoost(c.env.DB, id, consumableId, delta)
+					: await consumeConsumable(c.env.DB, id, consumableId, delta)
+				if (isBoost && !consumed) return c.json({ error: 'Join a room and check your boost balance before applying a Room Boost.', success: false, value: null })
 				// Notify the player so their client removes/updates the item in inventory.
 				if (consumed !== null) await pushConsumableRemoved(c, id, consumed)
+				if (consumed && 'roomId' in consumed && typeof consumed.roomId === 'number') {
+					const roomId = consumed.roomId
+					c.executionCtx.waitUntil((async () => {
+						try {
+							const room = await getRoomById(c.env.DB, roomId)
+							if (!room) return
+							const audience = new Set([id, ...await getPlayerIdsInRoom(c.env.DB, roomId)])
+							await Promise.all([...audience].map(playerId => c.env.RECFLARE_NOTIFICATIONS_HUB.getByName(HUB_INSTANCE)
+								.notifyPlayer(playerId, NotificationType.SubscriptionUpdateRoom, { ...room })))
+						} catch { logger.warn('Room Boost committed but room notification failed', { roomId }) }
+					})())
+				}
 			}
 			return c.json({ error: '', success: true, value: null })
 		}
