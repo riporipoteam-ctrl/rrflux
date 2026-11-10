@@ -1,0 +1,178 @@
+================================================================================
+FLUX REC — TACHYON SERVER HANDOVER (for ChatGPT / any engineer picking this up)
+Written by Bob (Muse) 2026-11-10. Repo: github.com/riporipoteam-ctrl/rrflux
+Folder: tachyon-server/  (this file lives next to README.md and STATUS.md)
+================================================================================
+
+--------------------------------------------------------------------------------
+1. WHAT YOU ARE FIXING
+--------------------------------------------------------------------------------
+Flux Rec is a private Rec Room revival. The 2026 Rec Room client
+(build 20260323.14) does NOT use Photon for rooms — its room transport is
+"Tachyon": a forked Unity Netcode (NGO) over LiteNetLib. This .NET 8 server
+(src/) is the Tachyon endpoint: connection approval (RSA->AES "Carrot"
+handshake), Dissonance voice, room-event relay, TimeSync stream.
+
+SYMPTOM: the game hangs at 18% loading into the dorm room, every time.
+
+ROOT-CAUSE EVIDENCE (from the 2026 client's own Player.log, attempt
+2026-11-08 21:43 UTC, server v7): a Newtonsoft JSON parse exception inside
+TachyonClient.NetworkManager_OnClientConnectedCallback —
+"unexpected character D at position 0" — then FailedToConnectToVoice (8719).
+
+The approval Payload the server sends is the string:
+    {"DR":"Carrot","KT":"<base64 RSA(SessionKeyB)>"}
+(char index 2 of that string is 'D' — exactly the character the client chokes
+on at position 0, i.e. the string the client RECONSTRUCTS starts two chars in
+and is truncated.)
+
+STATUS OF BUILDS:
+- v7 (sha 807e45c0...): approval built per the 2025 fork layout in
+  docs/ngo-fork-batch-and-approval.md. Client throws the 'D' exception above.
+- v8 (sha 68e2523a..., CURRENT source in src/): Bob's hypothesis — the 2026
+  ConnectionApprovedMessage.Deserialize consumes TWO extra bit-packed scalar
+  values between NetworkTick and the Payload string vs the 2025 layout, so v8
+  writes [bitpacked ownerClientId][bitpacked 0] there
+  (NgoMessages.BuildApprovalBody). v8 ALSO FAILED on the real client
+  (2026-11-10, still 18%). No client exception text from the v8 attempt has
+  been captured yet — GET IT: it discriminates the layout precisely (see §5).
+
+YOUR JOB: find the true 2026 ConnectionApprovedMessage wire layout and fix
+BuildApprovalBody so the client's callback parses the payload cleanly; then
+prove it on the real client (dorm loads past 18%).
+
+--------------------------------------------------------------------------------
+2. REPO MAP (riporipoteam-ctrl/rrflux, branch main)
+--------------------------------------------------------------------------------
+- tachyon-server/            THIS project (server source, docs, selftest)
+- game/installer/            the Ripo Team Launcher (Rust). Syncs
+                             TachyonServer.exe from the HF mirror on --play,
+                             spawns it hidden on 127.0.0.1:7777, kills stale
+                             copies (v1.0.83 spawned-hash staleness takeover).
+                             Holds DEFAULT_VOICE_KEY_XML (the server's RSA
+                             PUBLIC key) in src/bepinex.rs.
+- server/                    RecFlare worker monorepo (Cloudflare). apps/match
+                             builds VoiceConnectionInfo from
+                             RECFLARE_TACHYON_HOST_PORT (currently the playit
+                             tunnel 147.185.221.214:17346). DO NOT redeploy
+                             match from a checkout without checking live
+                             bindings first.
+- Separate repo: riporipoteam-ctrl/patch-2026 — the client-side 2026Patch DLL
+  + its AGENTS.md (transport/approval observations from the 2026 client;
+  read it, it is the best 2026-specific evidence available).
+
+--------------------------------------------------------------------------------
+3. LIVE INFRASTRUCTURE (names, locations — NO secret values, see §7)
+--------------------------------------------------------------------------------
+- HF dataset (binary distribution): Echoxr/rrflux-game
+    tachyon-server/TachyonServer.exe          (the server binary)
+    tachyon-server/TachyonServer.exe.sha256   (sidecar: RAW ASCII hex of the
+                                               exe sha256 + newline, 65 B —
+                                               upload exe FIRST, sidecar LAST;
+                                               the launcher acts on the
+                                               sidecar; a base64 sidecar
+                                               silently breaks syncing)
+  HF account: Echoxr. Login is in Armin's Secure Vault (huggingface.co).
+- playit.gg: account ripo.ripoteam@gmail.com; agent "fluxrec-host" runs on
+  Armin's PC (provisioned by the launcher); tunnel "fluxrec-udp"
+  (UDP, origin 127.0.0.1:7777) public address 147.185.221.214:17346.
+  Password is in Armin's Secure Vault (playit.gg).
+- Cloudflare: workers under *.ripo-ripoteam.workers.dev (match, api, auth,
+  econ, ...). A permanent API token named "FLUX REC" exists but lives ONLY in
+  Bob's local deploy env — Bob does all Cloudflare deploys; you should not
+  need it. Matchmaking already points at the tunnel (verified 2026-11-08).
+- GitHub: account/org riporipoteam-ctrl. Armin's github.com login is in his
+  Secure Vault. If you can push: commit into tachyon-server/ on main.
+  If you CANNOT push/edit: output the complete changed files (or a built
+  TachyonServer.exe + its sha256) to Armin — Bob will commit and ship them
+  to the mirror the same hour. Do not stall on access; produce the fix.
+
+--------------------------------------------------------------------------------
+4. ARMIN'S PC (where the real client + server run)
+--------------------------------------------------------------------------------
+- Game dir: C:\Games\FluxRec
+- Server dir: C:\Games\FluxRec\tachyon-server\
+    TachyonServer.exe     (synced from the mirror by the launcher)
+    server-key.xml        (RSA PRIVATE key — see §7, never move/commit it)
+    server.log            (persistent server log; v8+ logs the exact approval
+                           body hex on every approval — USE IT)
+    tachyon-server.pid, tachyon-server.spawned-hash (launcher bookkeeping)
+    tachyon.log           (launcher gate decisions: syncs, takeovers, proofs)
+- Client log: the 2026 client's Player.log (LocalLow app folder) — contains
+  the TachyonClient exceptions. This is the ground truth for every attempt.
+- The launcher starts the server HIDDEN (no console window) and detached.
+  Never ship a fix that requires the player to run a console window or
+  PowerShell — zero-touch is a hard requirement.
+
+--------------------------------------------------------------------------------
+5. HOW TO CRACK THE LAYOUT (fastest paths, in order)
+--------------------------------------------------------------------------------
+a) Read the v8 attempt's Player.log exception FIRST (Armin's PC, latest
+   launch). Compare with v7's "D at position 0":
+   - No JSON exception anymore, still hangs -> approval is FIXED; the blocker
+     moved downstream (check server.log for the encryption marker flip
+     0x11 -> 0x2A and what arrives after approval).
+   - Exception char changed -> count how far into {"DR":"Carrot","KT":...}
+     that char sits; the shift tells you exactly how many packed values the
+     2026 reader consumes before/within the string. Adjust BuildApprovalBody.
+   - Same 'D' at 0 -> v8's two values were consumed as something else
+     entirely (e.g. a length+count pair); think again from the byte level
+     using the approval-body hex line in server.log.
+b) Decompile the 2026 client's ConnectionApprovedMessage.Deserialize
+   (IL2CPP; type names are unobfuscated Unity.Netcode.* — the 2025 fork's was
+   at 0x972F7D0; the patch-2026 notes/tools may help locate the 2026 one) and
+   diff its read sequence field-by-field against BuildApprovalBody.
+c) Ground-truth bytes: the server's [reqdump] log lines capture the client's
+   own ConnectionRequest datagram hex; the client's writer is the same NGO
+   stack as its reader — the request's field encodings (versions walk, then
+   the AuthPayload byte[] framing) are proven-correct reference encodings.
+
+PROVEN-CORRECT PARTS (do not re-litigate): LiteNetLib protocol 13 connect;
+24-byte batch header (BatchCount @16) + XXHash64 (client accepts our
+batches); per-message [packed index][packed size][body] framing; the fork
+bit-packing (encoded = (value<<3)|numBytes, ZigZag signed); AuthPayload
+decryption (VB self-test PASSES vs the real client; account in the token
+matches AI=121); Dissonance framing (docs/dissonance-named-message-framing.md,
+fork uses a 16-bit named type — do NOT switch to stock NGO's 64-bit hash on
+the fork's word alone; NgoMessages already dual-parses both).
+
+--------------------------------------------------------------------------------
+6. BUILD / SHIP
+--------------------------------------------------------------------------------
+  dotnet build -c Release src/TachyonServer/TachyonServer.csproj
+  dotnet publish -c Release -r win-x64 --self-contained true
+    -p:PublishSingleFile=true src/TachyonServer/TachyonServer.csproj
+Self-test: selftest/run-selftest.sh — WARNING: the synthetic client shares
+the server's assumptions; PASS proves internal consistency only.
+Ship: upload exe to the HF dataset path (§3), then the sidecar, then verify
+the sidecar's live bytes are raw hex. Bump the ServerBuildVersion string in
+NgoMessages (currently "v8") so the server's startup line self-identifies:
+  build=v9 ... exeSha256=<hash of the running exe>
+The launcher picks the new build up on the next --play automatically.
+
+--------------------------------------------------------------------------------
+7. SECRETS POLICY (non-negotiable)
+--------------------------------------------------------------------------------
+- NO credential values are in this repo or this file, by design. Passwords
+  live in Armin's Secure Vault (saved logins: github.com, huggingface.co,
+  playit.gg, cloudflare.com, google.com, discord.com, x.com, instagram.com) —
+  ask Armin to sign in / share from the vault if you need a session. Bob
+  never sees or stores the raw values either.
+- server-key.xml (RSA private key) stays on Armin's PC + Bob's machine only.
+  DO NOT regenerate the keypair: the public half is baked into the launcher
+  (DEFAULT_VOICE_KEY_XML) and 2026patch.ini; a new pair breaks every client
+  handshake until those are re-shipped too. The public key itself is safe to
+  share and is in voice-key-public.xml here.
+- Never commit .env files or tokens (Cloudflare/HF/GitHub) anywhere.
+
+--------------------------------------------------------------------------------
+8. HARD RULES FROM THE BOSS (Armin)
+--------------------------------------------------------------------------------
+- Zero spend: free tiers only, no cards, no paid services, no domains.
+- Zero-touch for players: everything auto-installs/auto-updates via the
+  launcher, runs hidden in the background, no console windows, ever.
+- Never point matchmaking at an endpoint that is not proven listening —
+  a dead Tachyon endpoint hangs the client at 18% instead of falling back.
+- A build is "fixed" only when the real client on Armin's PC loads the dorm.
+  Synthetic tests and log-free claims do not count.
+================================================================================
