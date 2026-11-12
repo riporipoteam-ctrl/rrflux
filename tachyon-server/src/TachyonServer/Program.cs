@@ -33,6 +33,7 @@ internal static class Program
 
     private static readonly object LogLock = new();
     private static RSA _serverKey;
+    private static RecRoomClientEncryptLayer _encryptLayer;
     private static string _defaultInstance = "default";
     private static int _nextClientId; // first Interlocked.Increment -> clientId 1 (0 = the server)
     private static ushort _nextDissonanceId = 1;
@@ -182,7 +183,8 @@ internal static class Program
 
         // ------------------------------------------------------------ transport
         var listener = new EventBasedNetListener();
-        var layer = new RecRoomClientEncryptLayer { Log = m => Log(m) };
+        _encryptLayer = new RecRoomClientEncryptLayer { Log = m => Log(m) };
+        var layer = _encryptLayer;
         var net = new NetManager(listener, layer)
         {
             PingInterval = 1000,
@@ -219,6 +221,7 @@ internal static class Program
         {
             try
             {
+                layer.ClearKey(new IPEndPoint(peer.Address, peer.Port));
                 if (Sessions.TryRemove(peer, out var session) && session.Approved)
                 {
                     Log($"[session] account {session.AccountId} (client {session.ClientId}, peer id={peer.Id} endpoint={peer}) left instance '{session.InstanceId}': {info.Reason}");
@@ -582,6 +585,10 @@ internal static class Program
         session.ServerLogIndex = NgoMessages.FindTypeIndex(req.Versions, "ServerLogMessage");
         session.DisconnectReasonIndex = NgoMessages.FindTypeIndex(req.Versions, "DisconnectReasonMessage");
         session.SessionKey = outcome.SessionKey;
+        // The client arms its encrypt layer as soon as it reads approval.
+        // Install this peer's key before sending approval so the immediate
+        // encrypted response can be decrypted on the first receive callback.
+        _encryptLayer.SetKey(new IPEndPoint(peer.Address, peer.Port), outcome.SessionKey);
         session.Approved = true;
 
         int approvalIndex = NgoMessages.FindTypeIndex(req.Versions, "ConnectionApprovedMessage");
@@ -594,7 +601,7 @@ internal static class Program
         // Reply in the framing the peer used for its request. The
         // approval's NetworkTick comes from the server tick clock (v7) —
         // the same clock the TimeSync stream reports, as in stock NGO.
-        // v8: the body is built ONCE and then framed/wrapped, so the hex
+        // The body is built ONCE and then framed/wrapped, so the hex
         // logged below is exactly the body that went on the wire in both
         // framing modes (v7's legacy path rebuilt the body with a second
         // ServerTick() call — same format, potentially a tick apart).
@@ -609,9 +616,8 @@ internal static class Program
             $"vbSelfTest={(outcome.VbSelfTestPassed ? "PASS" : "FAIL")} " +
             $"tokenAccount={(outcome.TokenAccountId ?? "?")} env={(outcome.Environment ?? "?")} " +
             $"accessTokenLen={outcome.AccessTokenLength} approvalIndex={approvalIndex} namedIndex={session.NamedMessageIndex}");
-        // v8: ground truth for the approval body — so any future
-        // server.log shows exactly what was sent (the v8 layout question
-        // is precisely about these bytes; see STATUS.md v8).
+        // Ground truth for the approval body; this makes the exact sent
+        // bytes available for comparison with a live-client capture.
         int hexBytes = Math.Min(128, approvalBody.Length);
         Log($"[ngo] approval body sent to client {session.ClientId}: {approvalBody.Length}B, " +
             $"payload {(outcome.ApprovalPayloadJson?.Length ?? 0)} chars, " +

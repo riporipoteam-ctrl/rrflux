@@ -12,6 +12,48 @@ namespace TachyonWire;
 /// </summary>
 public static class BytePacker
 {
+    /// <summary>
+    /// NGO's ushort overload uses two tag bits: encoded = (value &lt;&lt; 2) |
+    /// byteCount, written little-endian. It differs from packed uint/int.
+    /// </summary>
+    public static void WritePackedUInt16(List<byte> buf, ushort value)
+    {
+        if (value > 0x3FFF)
+        {
+            // The client's 3-byte ushort form is a marker followed by the
+            // original, unshifted LE ushort (not value<<2 plus the marker).
+            buf.Add(3);
+            WriteU16LE(buf, value);
+            return;
+        }
+
+        int numBytes = value < 64 ? 1 : 2;
+        uint encoded = ((uint)value << 2) | (uint)numBytes;
+        for (int i = 0; i < numBytes; i++)
+            buf.Add((byte)(encoded >> (8 * i)));
+    }
+
+    /// <summary>
+    /// NGO's UInt64 overload uses four tag bits (the other integer overloads
+    /// use three). The low nibble is the total byte count; the high nibble of
+    /// byte zero carries the first four value bits, with the remaining value
+    /// bits following little-endian.
+    /// </summary>
+    public static void WritePackedUnsigned64(List<byte> buf, ulong value)
+    {
+        ulong remaining = value >> 4;
+        int numBytes = 1;
+        while (remaining != 0)
+        {
+            numBytes++;
+            remaining >>= 8;
+        }
+
+        buf.Add((byte)(((value & 0x0F) << 4) | (uint)numBytes));
+        for (int i = 1; i < numBytes; i++)
+            buf.Add((byte)(value >> (4 + (8 * (i - 1)))));
+    }
+
     public static void WritePackedUnsigned(List<byte> buf, ulong value)
     {
         if (value <= 0x1FFFFFFFUL)
@@ -119,6 +161,39 @@ public sealed class ByteCursor
         for (int i = 1; i < n; i++)
             encoded |= (ulong)ReadByte() << (8 * i);
         return encoded >> 3;
+    }
+
+    /// <summary>Read NGO's ushort bit-packed form (two tag bits).</summary>
+    public ushort ReadPackedUInt16()
+    {
+        byte b0 = ReadByte();
+        int n = b0 & 3;
+        if (n < 1 || n > 3)
+            throw new FormatException("invalid packed ushort byte count: " + n);
+        if (n == 3)
+            return ReadU16LE();
+
+        uint encoded = b0;
+        for (int i = 1; i < n; i++)
+            encoded |= (uint)ReadByte() << (8 * i);
+        uint value = encoded >> 2;
+        if (value > ushort.MaxValue)
+            throw new FormatException("packed ushort value exceeds 16 bits: " + value);
+        return (ushort)value;
+    }
+
+    /// <summary>Read NGO's packed UInt64 form (four-bit total-byte tag).</summary>
+    public ulong ReadPackedUnsigned64()
+    {
+        byte b0 = ReadByte();
+        int totalBytes = b0 & 0x0F;
+        if (totalBytes < 1 || totalBytes > 9)
+            throw new FormatException("invalid packed ulong byte count: " + totalBytes);
+
+        ulong value = (ulong)(b0 >> 4);
+        for (int i = 1; i < totalBytes; i++)
+            value |= (ulong)ReadByte() << (4 + (8 * (i - 1)));
+        return value;
     }
 
     public long ReadPackedSigned()

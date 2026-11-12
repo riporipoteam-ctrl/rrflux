@@ -19,8 +19,8 @@ public sealed class MessageVersionData
 /// </summary>
 public static class NgoMessages
 {
-    /// <summary>Server build version (v6). Used in the startup self-identification line.</summary>
-    public const string ServerBuildVersion = "v8";
+    /// <summary>Server build version. Used in the startup self-identification line.</summary>
+    public const string ServerBuildVersion = "v13";
 
     /// <summary>Sentinel named type for the stock-NGO u64-header fallback path (v6).</summary>
     public const ushort NamedStockU64Unknown = 0xFFFF;
@@ -184,18 +184,10 @@ public static class NgoMessages
     // ------------------------------------------------------------------ approval
 
     /// <summary>
-    /// Build a ConnectionApprovedMessage (message index prefix + body) exactly
-    /// per the documented Serialize order: bit-packed ZigZag MessageVersions
-    /// length; per entry raw LE u32 Hash + bit-packed ZigZag Version; bit-packed
-    /// OwnerClientId (ulong overload, NO zigzag); bit-packed ZigZag NetworkTick;
-    /// then (v8) TWO extra bit-packed unsigned scalars — the owner client id
-    /// again, then 0 — and only then, if Payload != null, bit-packed
-    /// Payload.Length followed by one bit-packed ushort per UTF-16 char. (The
-    /// 2025 fork layout had no such pair: the fork dropped ConnectedClientIds
-    /// and scene-object data — NGO here has no NetworkObject. The 2026 build's
-    /// Deserialize, however, demonstrably consumes two more packed scalars
-    /// before the Payload string than the 2025 layout carries — see the v8
-    /// note in STATUS.md and the reconstruction comment at the write site.)
+    /// Build a ConnectionApprovedMessage (message index prefix + body) in the
+    /// order captured from the live 2026 client: MessageVersions list,
+    /// OwnerClientId (packed UInt64 with its four-bit tag), NetworkTick, then
+    /// the optional packed Payload string.
     /// </summary>
     /// <summary>Approval BODY only (no index/size prefix) — see BuildApprovalMessage.</summary>
     public static byte[] BuildApprovalBody(
@@ -211,34 +203,13 @@ public static class NgoMessages
             BytePacker.WriteU32LE(buf, v.Hash);
             BytePacker.WritePackedSigned32(buf, v.Version);
         }
-        BytePacker.WritePackedUnsigned(buf, ownerClientId);
+        BytePacker.WritePackedUnsigned64(buf, ownerClientId);
         BytePacker.WritePackedSigned32(buf, networkTick);
-        // v8: two extra bit-packed unsigned scalars between NetworkTick and
-        // the Payload (ownerClientId again, then 0). Evidence: the REAL 2026
-        // client's log (attempt 2026-11-08 21:43 UTC against v7) shows a
-        // Newtonsoft JSON parse exception INSIDE
-        // TachyonClient.NetworkManager_OnClientConnectedCallback —
-        // "unexpected character D at position 0" — followed by
-        // FailedToConnectToVoice (8719). So ConnectionApproved.Handle DID
-        // run (Deserialize completed) but the Payload string it received
-        // started with 'D'. Our payload is {"DR":"Carrot","KT":...}: the
-        // char at index 2 is 'D'. The only layout story fitting ALL of it:
-        // the 2026 Deserialize consumes TWO extra bit-packed scalars here.
-        // It read our payload-length (~365) as scalar #1, our '{' (123) as
-        // scalar #2, our '"' (34) as ITS string length, then 34 chars
-        // beginning at our index 2 → "DR\":\"Carrot\",..." → 'D' at
-        // position 0. The pair (ownerClientId, 0) mirrors the stock-NGO-2.x
-        // session-owner order and also parses as a (count=1, elem=0) list;
-        // the callback only consumes DR/KT afterward, so exact field
-        // semantics don't matter — the parse alignment does. HYPOTHESIS
-        // fitted to the exception text; only a real-client run proves it.
-        BytePacker.WritePackedUnsigned(buf, ownerClientId);
-        BytePacker.WritePackedUnsigned(buf, 0UL);
         if (payload != null)
         {
             BytePacker.WritePackedUnsigned(buf, (ulong)payload.Length);
             foreach (char c in payload)
-                BytePacker.WritePackedUnsigned(buf, c);
+                BytePacker.WritePackedUInt16(buf, c);
         }
         return buf.ToArray();
     }
@@ -367,10 +338,6 @@ public static class NgoMessages
         public List<MessageVersionData> Versions = new();
         public ulong OwnerClientId;
         public int NetworkTick;
-        // v8 layout: the two extra bit-packed unsigned scalars the 2026
-        // Deserialize consumes between NetworkTick and the Payload string.
-        public ulong SessionScalar1;
-        public ulong SessionScalar2;
         public string Payload;
     }
 
@@ -389,16 +356,14 @@ public static class NgoMessages
             int version = cursor.ReadPackedSigned32();
             a.Versions.Add(new MessageVersionData { Hash = hash, Version = version });
         }
-        a.OwnerClientId = cursor.ReadPackedUnsigned();
+        a.OwnerClientId = cursor.ReadPackedUnsigned64();
         a.NetworkTick = cursor.ReadPackedSigned32();
-        a.SessionScalar1 = cursor.ReadPackedUnsigned();
-        a.SessionScalar2 = cursor.ReadPackedUnsigned();
         if (cursor.Remaining > 0)
         {
             int len = (int)cursor.ReadPackedUnsigned();
             var chars = new char[len];
             for (int i = 0; i < len; i++)
-                chars[i] = (char)cursor.ReadPackedUnsigned();
+                chars[i] = (char)cursor.ReadPackedUInt16();
             a.Payload = new string(chars);
         }
         return a;
