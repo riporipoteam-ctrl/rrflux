@@ -19,7 +19,7 @@ const PATCH2026_FILES: &[&str] = &[
     "RecRoomVR.bat",
 ];
 
-/// Keep an existing public Tachyon voice key when setup refreshes the patch config.
+/// Keep an existing public Tachyon voice key when setup refreshes the 2025 patch config.
 /// VoiceKeyXml is an RSA public key, not the Photon Voice app id; the native patch
 /// validates the XML again when it loads.
 pub(crate) fn render_2025patch_ini(ns_host: &str, existing_ini: Option<&str>) -> String {
@@ -47,18 +47,19 @@ pub(crate) fn render_2025patch_ini(ns_host: &str, existing_ini: Option<&str>) ->
 /// Public half of our Tachyon server's RSA keypair. Fresh installs get
 /// this as their `VoiceKeyXml` so the client trusts the bundled
 /// background server (see tachyon.rs); the matching private key never
-/// leaves the server. An existing valid key in the player's ini still
-/// wins — this is only the fallback when none is present.
-pub(crate) const DEFAULT_VOICE_KEY_XML: &str = "<RSAKeyValue><Modulus>2yVTs7WED1wpyyxjgUizj5WrZHMYMdnv3CcDkAUhx8s7lvuE5G6R/udmzdtNl/sl5ji3C3K9LkCkD3mQntlewTK4gtJveV3oKBhYabCB5uvpg0LzPVEkDnPV1fdc5qU8XdsBuHHlBtA1dQ1AOB0lG6OiAnjvbYyUleMDFA0rjU9EDTwNyNKDK84W0nY9MrGs65Dy2lnRHa+Fl8W62IFRQNhui86cThKMCxznAU3zlD6iJ1kNdYj0U9CKHUGR1rxmzetoWsc4aIJXtCxICqjWkE3YbjE4lsU/2frF7AvYEzQO1NGHRzY/UjdEFn9omtHOuA90Y0zGUoScd+slCH73lw==</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
+/// leaves the server. This canonical public key is also used to refresh
+/// stale 2026 client configs.
+pub(crate) const DEFAULT_VOICE_KEY_XML: &str = "<RSAKeyValue><Modulus>w++ntqEUJP0o5iSDpTwGhF5Jc+xiy6wi7hUQIYcIvxUeq7zzjC08T40mLBxUastpt/w4Tbu1EPa9Ww4l0N7/Or6ZkMdh+yMaqVoYHfT2mWLKdvfNyz8GT4h8LPqqX3bybKpBC0pcmhQepQOdTZls1Cf/CZ17xWH0Rf6Cwp2xGn5aDPqDd71qC9VEEgCevDCxDBaHXWAkHwzN32hFLOOQJD3M8g/9W8ng3bffrgGLdc9YXnLKXorYU6em9JJOih9JrvOrMtSf9+qxoqJfGmn2k+gObAl2vQOTRSNMw7+HmFwfbxdU6oheTy4/+oewuGSi2gtWChwisLGxODpyMZTACQ==</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
 
 /// Render the supported March 2026 patch configuration. The 2026 patch needs
 /// both discovery and the common service domain; Flux Rec's discovery hostname
 /// is a subdomain of the Worker service domain. Roomie's realtime signaling
 /// endpoint lives on the AI worker, so derive that host from the same domain.
-pub(crate) fn render_2026patch_ini(ns_host: &str, existing_ini: Option<&str>) -> String {
-    let voice_key_xml = existing_ini
-        .and_then(extract_public_voice_key)
-        .unwrap_or(DEFAULT_VOICE_KEY_XML);
+pub(crate) fn render_2026patch_ini(ns_host: &str, _existing_ini: Option<&str>) -> String {
+    // Flux Rec has one Tachyon server key. Refreshing an old 2026 config must
+    // replace stale but well-formed keys too, or the client encrypts its voice
+    // handshake for a server key that the live endpoint does not own.
+    let voice_key_xml = DEFAULT_VOICE_KEY_XML;
     let host = ns_host
         .trim()
         .trim_start_matches("https://")
@@ -345,10 +346,10 @@ mod tests {
     }
 
     #[test]
-    fn existing_2026_voice_key_wins_over_default() {
+    fn existing_2026_voice_key_is_refreshed_to_server_key() {
         let existing = format!("[config]\nVoiceKeyXml={PUBLIC_KEY}\n");
         let rendered = render_2026patch_ini("ns.ripo-ripoteam.workers.dev", Some(&existing));
-        assert!(rendered.contains(&format!("VoiceKeyXml={PUBLIC_KEY}\n")));
-        assert!(!rendered.contains(DEFAULT_VOICE_KEY_XML));
+        assert!(rendered.contains(&format!("VoiceKeyXml={DEFAULT_VOICE_KEY_XML}\n")));
+        assert!(!rendered.contains(&format!("VoiceKeyXml={PUBLIC_KEY}\n")));
     }
 }

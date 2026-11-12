@@ -1587,7 +1587,7 @@ async fn fresh_install(
         let refreshed_ini = bepinex::render_2026patch_ini(ns_host, Some(existing_ini));
         if let Err(e) = std::fs::write(target.join("2026patch.ini"), refreshed_ini) {
             staging.abort();
-            return Err(format!("preserve voice key in staged config: {e}"));
+            return Err(format!("write Tachyon voice key in staged config: {e}"));
         }
     }
     // Validate the complete staged tree, including the three stock 2026
