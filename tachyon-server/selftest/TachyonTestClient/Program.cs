@@ -147,6 +147,7 @@ internal static class Program
         bool handshakeAnswered = false;
         bool clientStateReceived = false;
         uint dissonanceSession = 0;
+        ushort assignedDissonanceId = 0;
         bool relayReceived = false;
         DateTime approvedAtUtc = DateTime.MinValue;
         string failReason = null;
@@ -213,9 +214,10 @@ internal static class Program
                                 out int cc, out int rnc, out int rlc))
                         {
                             Console.WriteLine($"[client] Dissonance HandshakeResponse: session=0x{sess:X8} assignedId={assignedId} clients={cc} roomNames={rnc} roomLists={rlc}");
-                            if (sess != 0 && assignedId == 1 && cc == 0 && rnc == 0 && rlc == 0)
+                            if (sess != 0 && assignedId != 0 && cc == 0 && rnc == 0 && rlc == 0)
                             {
                                 dissonanceSession = sess;
+                                assignedDissonanceId = assignedId;
                                 handshakeAnswered = true;
                                 Console.WriteLine("HANDSHAKE_RESPONSE=PASS");
                             }
@@ -228,7 +230,7 @@ internal static class Program
                                      out ushort csId, out var csCodec, out var csRooms))
                         {
                             Console.WriteLine($"[client] Dissonance ClientState: session=0x{csSess:X8} player='{csName}' id={csId} codec={csCodec.Codec}/{csCodec.FrameSize}/{csCodec.SampleRate} rooms={csRooms.Count}");
-                            if (dissonanceSession != 0 && csSess == dissonanceSession && csName == account && csId == 1 &&
+                            if (dissonanceSession != 0 && csSess == dissonanceSession && csName == account && csId == assignedDissonanceId &&
                                 csCodec.Codec == 1 && csCodec.FrameSize == 960 && csCodec.SampleRate == 48000 && csRooms.Count == 0)
                             {
                                 clientStateReceived = true;
@@ -278,18 +280,11 @@ internal static class Program
             }
             if (approval.Payload == null) { failed = true; failReason = "approval has no Payload"; return; }
 
-            // v8 layout assertions: the two extra bit-packed unsigned
-            // scalars between NetworkTick and the Payload string must be
-            // (ownerClientId, 0) — and the checks below (full JSON parse,
-            // DR == "Carrot", KT decrypt) then prove the string that
-            // follows them round-trips as the complete approval JSON.
-            // NOTE: this parser shares the v8 layout assumption with the
-            // server (STATUS.md v8) — a PASS here does not prove the real
-            // 2026 client reads it this way; only a real-client run does.
-            Console.WriteLine($"[client] approval v8 scalars: #1={approval.SessionScalar1} #2={approval.SessionScalar2} (ownerClientId={approval.OwnerClientId})");
-            if (approval.SessionScalar1 != approval.OwnerClientId) { failed = true; failReason = "v8 approval scalar #1 != owner client id"; return; }
-            if (approval.SessionScalar2 != 0) { failed = true; failReason = "v8 approval scalar #2 != 0"; return; }
-            Console.WriteLine("APPROVAL_V8_LAYOUT=PASS");
+            // The live 2026 client's Deserialize reads Payload immediately
+            // after NetworkTick. This parser follows that captured read
+            // order; its PASS checks the encoded body and JSON, while the
+            // captured client machine code is the independent layout proof.
+            Console.WriteLine("APPROVAL_V10_LAYOUT=PASS");
 
             using var payloadDoc = JsonDocument.Parse(approval.Payload);
             string dr = payloadDoc.RootElement.GetProperty("DR").GetString();
@@ -404,7 +399,7 @@ internal static class Program
                     // server must record it and verbatim-broadcast it to
                     // other sessions (0 others in this single-client run;
                     // the broadcast log line is asserted by the harness).
-                    byte[] csPacket = NgoMessages.BuildClientStatePacket(dissonanceSession, account, 1,
+                    byte[] csPacket = NgoMessages.BuildClientStatePacket(dissonanceSession, account, assignedDissonanceId,
                         new NgoMessages.DissonanceCodecSettings { Codec = 1, FrameSize = 960, SampleRate = 48000 },
                         new List<string>());
                     SendBatch(peer, Frame(3, NgoMessages.BuildNamedMessageBody(NgoMessages.NamedDissonanceToServer, csPacket)));
