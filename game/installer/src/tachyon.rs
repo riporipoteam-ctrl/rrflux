@@ -252,6 +252,14 @@ fn agent_secret_file(game_dir: &Path) -> PathBuf {
     server_dir(game_dir).join(AGENT_SECRET_NAME)
 }
 
+/// Only the provisioned public host should run the room/voice server. Ordinary
+/// players receive the shared endpoint from matchmaking and must not wait for
+/// a local server download (or generate an unrelated private key).
+pub(crate) fn is_provisioned_host(game_dir: &Path) -> bool {
+    server_dir(game_dir).join("server-key.xml").is_file()
+        && read_agent_secret(game_dir).is_some()
+}
+
 /// Detached play-path worker, called from `main()`'s `--play` /
 /// `--launch-game` dispatch right after `ensure_server_ready`.
 ///
@@ -1847,6 +1855,10 @@ mod tests {
             super::read_agent_secret(&game_dir).as_deref(),
             Some(hex_secret.as_str())
         );
+        assert!(!super::is_provisioned_host(&game_dir));
+        std::fs::write(super::server_dir(&game_dir).join("server-key.xml"), b"private")
+            .unwrap();
+        assert!(super::is_provisioned_host(&game_dir));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

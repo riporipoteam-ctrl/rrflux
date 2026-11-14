@@ -49,7 +49,7 @@ const CLIENT_ZIP_MIRRORS: &[&str] = &[
 ];
 /// The newest client build verified against the bundled native patch and live services.
 pub(crate) const CLIENT_BUILD: &str = "20260323.14";
-const CLIENT_ZIP_SIZE: u64 = 4_543_084_133;
+pub(crate) const CLIENT_ZIP_SIZE: u64 = 4_543_084_133;
 const CLIENT_2026_FINGERPRINTS: &[(&str, &str)] = &[
     ("GameAssembly.dll", "a6d90770cdfda4043eadb278a16198ed0907c3ba2ac09bc37d06cd4dd22a1d84"),
     ("Referee.dll", "5868c90a7c67757f3b678aa356cbd933d646c9749e0acaa31b7dcc9eaee12ead"),
@@ -2430,17 +2430,13 @@ fn main() {
     let photon_voice = resolve_value(voice_arg, "FLUXREC_PHOTON_VOICE", PHOTON_VOICE_DEFAULT);
     let photon_chat = resolve_value(chat_arg, "FLUXREC_PHOTON_CHAT", PHOTON_CHAT_DEFAULT);
 
-    // v1.0.80: Tachyon background server — on play sessions the local
-    // server must be LISTENING before the game starts: matchmaking can
-    // hand the client 127.0.0.1:7777, and a client that connects
-    // before anything listens there retries the voice/room connection
-    // instead of falling back — the load hangs (the v1.0.78 18% bug:
-    // kick_off ran on a detached thread, so the server was often
-    // still downloading when the game launched). ensure_server_ready
-    // is the synchronous, bounded, fail-soft gate that syncs, spawns
-    // and waits for the server first; kick_off then keeps only the
-    // detached playit-agent duties. Install mode is untouched.
-    if (play_mode || launch_game_mode) && find_game_exe(&dir).is_some() {
+    // Matchmaking assigns public clients the provisioned shared server.
+    // Only that host needs the local readiness gate and Playit agent; other
+    // players can launch immediately without a 180-second server sync.
+    if (play_mode || launch_game_mode)
+        && find_game_exe(&dir).is_some()
+        && tachyon::is_provisioned_host(&dir)
+    {
         tachyon::ensure_server_ready(&dir);
         tachyon::kick_off(&dir);
     }

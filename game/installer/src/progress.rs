@@ -59,8 +59,23 @@ pub fn channel() -> (Progress, mpsc::Receiver<crate::gui::GuiMsg>) {
     (p, rx)
 }
 
-/// Rolling byte counter → "done / total MB • ETA M:SS" strings.
-/// NOTE: No speed — user explicitly removed the speed indicator from the UI.
+/// Format transfer sizes with binary units while retaining a useful decimal.
+pub fn format_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+    if bytes >= GIB {
+        format!("{:.2} GiB", bytes as f64 / GIB as f64)
+    } else if bytes >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.0} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+/// Rolling byte counter → actual transfer size, measured rate and remaining time.
 struct Throughput {
     started: Instant,
     last_tick: Instant,
@@ -83,8 +98,8 @@ impl Throughput {
         *self = Throughput::new();
     }
 
-    /// Feed the absolute byte count; returns a formatted detail string.
-    /// `label` prefixes the line (e.g. "Downloading").
+    /// Feed the absolute byte count; returns a truthful detail string.
+    /// `label` prefixes the line (e.g. "Downloading game files").
     fn update(&mut self, label: &str, done: u64, total: u64) -> String {
         let now = Instant::now();
         if done < self.last_bytes {
@@ -108,16 +123,20 @@ impl Throughput {
             done as f64 / elapsed / 1_048_576.0
         };
 
-        let have_mb = done as f64 / 1_048_576.0;
-        let total_mb = total as f64 / 1_048_576.0;
+        if total == 0 {
+            return format!("{label}: {} downloaded · total size unavailable", format_bytes(done));
+        }
         let eta = if mbps > 0.05 && total > done {
             let s = ((total - done) as f64 / (mbps * 1_048_576.0)) as u64;
-            format!(" \u{2022} ETA {}", fmt_eta(s))
+            format!(" · {} left", fmt_eta(s))
         } else {
             String::new()
         };
         format!(
-            "{label}: {have_mb:.0} / {total_mb:.0} MB{eta}"
+            "{label}: {} / {} · {:.1} MiB/s{eta}",
+            format_bytes(done),
+            format_bytes(total),
+            mbps
         )
     }
 }
@@ -239,20 +258,23 @@ impl Progress {
         self.send(pct, &stage, &detail);
     }
 
-    /// Feed absolute byte counts for the current transfer-like stage.
-    /// Formats and shows the "done / total MB • ETA" detail line
-    /// (no speed — user explicitly removed the speed indicator).
-    /// and advances the bar proportionally.
+    /// Feed absolute byte counts for the current transfer-like stage. The UI
+    /// shows observed bytes/rate/ETA and advances only when a real total exists.
     pub fn set_throughput(&self, label: &str, done: u64, total: u64) {
+        self.set_transfer_detail(label, done, total);
+        if total > 0 {
+            self.set_fraction(done as f64 / total as f64);
+        }
+    }
+
+    /// Report bytes without changing progress, for callers using absolute percentages.
+    pub fn set_transfer_detail(&self, label: &str, done: u64, total: u64) {
         let detail = self
             .inner
             .throughput
             .lock()
             .map(|mut t| t.update(label, done, total))
             .unwrap_or_default();
-        if total > 0 {
-            self.set_fraction(done as f64 / total as f64);
-        }
         if !detail.is_empty() {
             self.set_detail(detail);
         }

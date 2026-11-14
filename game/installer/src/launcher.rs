@@ -269,6 +269,7 @@ pub fn run_launcher(
         UpdateDecision::Available {
             version,
             download_url,
+            size_bytes,
         } => {
             progress.set_status(
                 &format!("Update {version} found \u{2014} installing\u{2026}"),
@@ -280,6 +281,7 @@ pub fn run_launcher(
                     .block_on(crate::updater::download_update(
                         &download_url,
                         &dest,
+                        size_bytes,
                         &progress,
                     ))
                     .is_ok(),
