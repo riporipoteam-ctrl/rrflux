@@ -742,6 +742,39 @@ internal static class Program
             }
             case NgoMessages.NamedRRClientToServer:
             {
+                // The first control message is RR_JoinRequest (op 100). It
+                // needs a server-authored RR_JoinResponse (op 101), not a
+                // broadcast of the request to other clients.
+                if (rest.Length > 0 && rest[0] == 100)
+                {
+                    var response = new List<byte> { 101, 1, 1 }; // op, accepted, RoomDataFields.MasterClient
+                    response.AddRange(BitConverter.GetBytes(session.ClientId));
+                    SendMessage(session, NgoMessages.BuildRawNamedMessageBody(
+                        NgoMessages.NamedRRServerToClient, response.ToArray()));
+                    Log($"[room] RR_JoinRequest from account {session.AccountId}: sent accepted RR_JoinResponse, master={session.ClientId}");
+                    return;
+                }
+
+                // Room-load phase changes are buffered event op 22. The
+                // master waits for its own relay on the PROXIED channel;
+                // excluding the sender leaves a one-player dorm at 18%.
+                if (rest.Length > 0 && rest[0] == 22)
+                {
+                    var proxied = new List<byte>(4 + rest.Length);
+                    BytePacker.WriteI32LE(proxied, (int)session.ClientId);
+                    proxied.AddRange(rest);
+                    byte[] body = NgoMessages.BuildRawNamedMessageBody(
+                        NgoMessages.NamedRRServerToClientProxied, proxied.ToArray());
+                    int sent = 0;
+                    foreach (var member in Sessions.Values.Where(s => s.Approved && s.InstanceId == session.InstanceId).ToList())
+                    {
+                        SendMessage(member, body);
+                        sent++;
+                    }
+                    Log($"[room] echoed RRBufferedRoomEvent op 22 from account {session.AccountId} to {sent} client(s), including sender");
+                    return;
+                }
+
                 // v7 room-data relay (kind 5 -> 6): forwarded VERBATIM —
                 // no header is measured for kinds 5/6, so none is added —
                 // to every OTHER approved session in the instance, as the
