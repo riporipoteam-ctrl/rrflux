@@ -141,12 +141,19 @@ internal static class Program
         bool clientStateSent = false;
         bool roomProxiedSent = false;
         bool roomDataSent = false;
+        bool joinSent = false;
+        bool roomUpdateSent = false;
+        bool joinResponseReceived = false;
+        bool roomUpdateEchoReceived = false;
+        bool roomBarrierEchoReceived = false;
+        ulong ownerClientId = 0;
         bool timeSyncReplyReceived = false;
         int timeSyncReplyTick = -1;
         bool handshakeSent = false;
         bool handshakeAnswered = false;
         bool clientStateReceived = false;
         uint dissonanceSession = 0;
+        ushort assignedDissonanceId = 0;
         bool relayReceived = false;
         DateTime approvedAtUtc = DateTime.MinValue;
         string failReason = null;
@@ -201,6 +208,29 @@ internal static class Program
                 // answer (HandshakeResponse + ClientState burst).
                 if (index == 3 && NgoMessages.TryParseNamedMessageBody(cursor, out ushort nType, out byte[] rest))
                 {
+                    if (nType == NgoMessages.NamedRRServerToClientProxied && rest.Length >= 5 &&
+                        BitConverter.ToInt32(rest, 0) == (int)ownerClientId && rest[4] == 22)
+                    {
+                        roomBarrierEchoReceived = true;
+                        Console.WriteLine("ROOM_BARRIER_ECHO=PASS");
+                        return;
+                    }
+                    if (nType == NgoMessages.NamedRRServerToClient && rest.Length > 0)
+                    {
+                        if (rest[0] == 101 && rest.Length >= 20 && rest[1] == 1 && rest[2] == 7 &&
+                            BitConverter.ToUInt64(rest, 3) == ownerClientId && BitConverter.ToInt32(rest, 11) == 1 &&
+                            BitConverter.ToUInt64(rest, 15) == ownerClientId && rest[23] == 15)
+                        {
+                            joinResponseReceived = true;
+                            Console.WriteLine("ROOM_JOIN_RESPONSE=PASS");
+                        }
+                        if (rest[0] == 102 && rest.Length == 7 && rest[1] == 4 && rest[2] == 52)
+                        {
+                            roomUpdateEchoReceived = true;
+                            Console.WriteLine("ROOM_UPDATE_ECHO=PASS");
+                        }
+                        return;
+                    }
                     byte[] packet = NgoMessages.UnwrapDissonancePayload(rest, out bool hadPrefix);
                     string text = Encoding.UTF8.GetString(packet);
                     Console.WriteLine($"[client] named message received: type={nType} rest={rest.Length}B packet={packet.Length}B lengthPrefix={hadPrefix} containsProbe={text.Contains("selftest-voice-probe")}");
@@ -213,9 +243,10 @@ internal static class Program
                                 out int cc, out int rnc, out int rlc))
                         {
                             Console.WriteLine($"[client] Dissonance HandshakeResponse: session=0x{sess:X8} assignedId={assignedId} clients={cc} roomNames={rnc} roomLists={rlc}");
-                            if (sess != 0 && assignedId == 1 && cc == 0 && rnc == 0 && rlc == 0)
+                            if (sess != 0 && assignedId != 0 && cc == 0 && rnc == 0 && rlc == 0)
                             {
                                 dissonanceSession = sess;
+                                assignedDissonanceId = assignedId;
                                 handshakeAnswered = true;
                                 Console.WriteLine("HANDSHAKE_RESPONSE=PASS");
                             }
@@ -228,7 +259,7 @@ internal static class Program
                                      out ushort csId, out var csCodec, out var csRooms))
                         {
                             Console.WriteLine($"[client] Dissonance ClientState: session=0x{csSess:X8} player='{csName}' id={csId} codec={csCodec.Codec}/{csCodec.FrameSize}/{csCodec.SampleRate} rooms={csRooms.Count}");
-                            if (dissonanceSession != 0 && csSess == dissonanceSession && csName == account && csId == 1 &&
+                            if (dissonanceSession != 0 && csSess == dissonanceSession && csName == account && csId == assignedDissonanceId &&
                                 csCodec.Codec == 1 && csCodec.FrameSize == 960 && csCodec.SampleRate == 48000 && csRooms.Count == 0)
                             {
                                 clientStateReceived = true;
@@ -278,18 +309,11 @@ internal static class Program
             }
             if (approval.Payload == null) { failed = true; failReason = "approval has no Payload"; return; }
 
-            // v8 layout assertions: the two extra bit-packed unsigned
-            // scalars between NetworkTick and the Payload string must be
-            // (ownerClientId, 0) — and the checks below (full JSON parse,
-            // DR == "Carrot", KT decrypt) then prove the string that
-            // follows them round-trips as the complete approval JSON.
-            // NOTE: this parser shares the v8 layout assumption with the
-            // server (STATUS.md v8) — a PASS here does not prove the real
-            // 2026 client reads it this way; only a real-client run does.
-            Console.WriteLine($"[client] approval v8 scalars: #1={approval.SessionScalar1} #2={approval.SessionScalar2} (ownerClientId={approval.OwnerClientId})");
-            if (approval.SessionScalar1 != approval.OwnerClientId) { failed = true; failReason = "v8 approval scalar #1 != owner client id"; return; }
-            if (approval.SessionScalar2 != 0) { failed = true; failReason = "v8 approval scalar #2 != 0"; return; }
-            Console.WriteLine("APPROVAL_V8_LAYOUT=PASS");
+            // The live 2026 client's Deserialize reads Payload immediately
+            // after NetworkTick. This parser follows that captured read
+            // order; its PASS checks the encoded body and JSON, while the
+            // captured client machine code is the independent layout proof.
+            Console.WriteLine("APPROVAL_V10_LAYOUT=PASS");
 
             using var payloadDoc = JsonDocument.Parse(approval.Payload);
             string dr = payloadDoc.RootElement.GetProperty("DR").GetString();
@@ -302,6 +326,7 @@ internal static class Program
             for (int i = 0; i < 32; i++) sessionKey[i] = (byte)(aesKey[i] ^ sessionKeyB[i]);
             Console.WriteLine($"SESSION_KEY_SHA256={Convert.ToHexString(SHA256.HashData(sessionKey)).ToLowerInvariant()}");
             approved = true;
+            ownerClientId = approval.OwnerClientId;
             approvedAtUtc = DateTime.UtcNow;
         };
 
@@ -379,12 +404,12 @@ internal static class Program
                     // [payload], no Dissonance i32 wrapper) via
                     // BuildRawNamedMessageBody. The server must log the
                     // kind 3->4 relay line (0 recipients single-client).
-                    var proxiedPayload = new List<byte> { 42 }; // event byte
+                    var proxiedPayload = new List<byte> { 22 }; // RRBufferedRoomEvent
                     proxiedPayload.AddRange(BitConverter.GetBytes(777)); // cache index, int32 LE
                     proxiedPayload.AddRange(Encoding.UTF8.GetBytes("room-proxied-probe"));
                     SendBatch(peer, Frame(3, NgoMessages.BuildRawNamedMessageBody(NgoMessages.NamedRRClientToServerProxied, proxiedPayload.ToArray())));
                     roomProxiedSent = true;
-                    Console.WriteLine("[client] kind-3 proxied room probe sent (event=42 cacheIndex=777, " + proxiedPayload.Count + "B payload)");
+                    Console.WriteLine("[client] kind-3 proxied room probe sent (event=22 cacheIndex=777, " + proxiedPayload.Count + "B payload)");
                     Console.WriteLine("ROOM_PROXIED_PROBE_SENT=PASS");
                 }
                 if (!roomDataSent && sinceApprovalMs > 700)
@@ -398,13 +423,31 @@ internal static class Program
                     Console.WriteLine("[client] kind-5 room-data probe sent (" + roomPayload.Length + "B payload)");
                     Console.WriteLine("ROOM_DATA_PROBE_SENT=PASS");
                 }
+                if (!joinSent && sinceApprovalMs > 775)
+                {
+                    var join = new List<byte> { 100 };
+                    foreach (string value in new[] { account, "selftest" })
+                    {
+                        join.AddRange(BitConverter.GetBytes(value.Length));
+                        join.AddRange(Encoding.Unicode.GetBytes(value));
+                    }
+                    join.AddRange(new byte[] { 52, 0, 0, 0, 0 });
+                    SendBatch(peer, Frame(3, NgoMessages.BuildRawNamedMessageBody(NgoMessages.NamedRRClientToServer, join.ToArray())));
+                    joinSent = true;
+                }
+                if (!roomUpdateSent && joinResponseReceived && sinceApprovalMs > 850)
+                {
+                    byte[] update = { 102, 4, 52, 0, 0, 0, 0 };
+                    SendBatch(peer, Frame(3, NgoMessages.BuildRawNamedMessageBody(NgoMessages.NamedRRClientToServer, update)));
+                    roomUpdateSent = true;
+                }
                 if (!clientStateSent && handshakeAnswered && clientStateReceived)
                 {
                     // v6 probe: send own stock ClientState (type 1) — the
                     // server must record it and verbatim-broadcast it to
                     // other sessions (0 others in this single-client run;
                     // the broadcast log line is asserted by the harness).
-                    byte[] csPacket = NgoMessages.BuildClientStatePacket(dissonanceSession, account, 1,
+                    byte[] csPacket = NgoMessages.BuildClientStatePacket(dissonanceSession, account, assignedDissonanceId,
                         new NgoMessages.DissonanceCodecSettings { Codec = 1, FrameSize = 960, SampleRate = 48000 },
                         new List<string>());
                     SendBatch(peer, Frame(3, NgoMessages.BuildNamedMessageBody(NgoMessages.NamedDissonanceToServer, csPacket)));
@@ -414,7 +457,7 @@ internal static class Program
                 }
                 bool holdDone = sinceApprovalMs >= Math.Max(holdMs, 1100);
                 bool relayDone = !expectRelay || relayReceived;
-                if (probeSent && timeSyncSent && stockU64Sent && roomProxiedSent && roomDataSent && timeSyncReplyReceived && clientStateSent && handshakeSent && handshakeAnswered && clientStateReceived && holdDone && relayDone) break;
+                if (probeSent && timeSyncSent && stockU64Sent && roomProxiedSent && roomBarrierEchoReceived && roomDataSent && joinResponseReceived && roomUpdateEchoReceived && timeSyncReplyReceived && clientStateSent && handshakeSent && handshakeAnswered && clientStateReceived && holdDone && relayDone) break;
             }
             Thread.Sleep(10);
         }
@@ -443,6 +486,11 @@ internal static class Program
         if (!roomProxiedSent || !roomDataSent || !timeSyncReplyReceived)
         {
             Console.WriteLine($"SELFTEST_RESULT=FAIL v7 checks incomplete (roomProxied={roomProxiedSent} roomData={roomDataSent} timeSyncReply={timeSyncReplyReceived} tick={timeSyncReplyTick})");
+            return 1;
+        }
+        if (!joinResponseReceived || !roomUpdateEchoReceived || !roomBarrierEchoReceived)
+        {
+            Console.WriteLine($"SELFTEST_RESULT=FAIL room join/update (join={joinResponseReceived} update={roomUpdateEchoReceived} barrier={roomBarrierEchoReceived})");
             return 1;
         }
         if (expectRelay)
