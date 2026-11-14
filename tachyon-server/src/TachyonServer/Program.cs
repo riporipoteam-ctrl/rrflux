@@ -67,6 +67,7 @@ internal static class Program
         public ushort DissonancePlayerId;
         public string AccountId;
         public string InstanceId;
+        public byte[] JoinedPlayerData;
         public List<MessageVersionData> Versions;
         public int NamedMessageIndex = -1;
         public int TimeSyncIndex = -1;
@@ -747,11 +748,50 @@ internal static class Program
                 // broadcast of the request to other clients.
                 if (rest.Length > 0 && rest[0] == 100)
                 {
-                    var response = new List<byte> { 101, 1, 1 }; // op, accepted, RoomDataFields.MasterClient
-                    response.AddRange(BitConverter.GetBytes(session.ClientId));
+                    // RR_JoinRequest carries two UTF-16 strings followed by
+                    // its serialized property dictionary. Retain the exact
+                    // platform/properties bytes instead of reconstructing
+                    // variant values with an incomplete codec.
+                    if (rest.Length < 9) { Log("[room] truncated RR_JoinRequest"); return; }
+                    int nameChars = BitConverter.ToInt32(rest, 1);
+                    if (nameChars < 0 || nameChars > 128 || rest.Length < 9 + nameChars * 2)
+                    { Log("[room] invalid join name length"); return; }
+                    int platformOffset = 5 + nameChars * 2;
+                    int platformChars = BitConverter.ToInt32(rest, platformOffset);
+                    if (platformChars < 0 || platformChars > 128 || rest.Length < platformOffset + 4 + platformChars * 2 + 5)
+                    { Log("[room] invalid join platform/property length"); return; }
+                    var player = new List<byte> { 15 }; // PlayerDataFields.All
+                    player.AddRange(BitConverter.GetBytes(session.ClientId));
+                    player.AddRange(rest.Skip(1).Take(platformOffset - 1));
+                    player.AddRange(BitConverter.GetBytes(int.TryParse(session.AccountId, out int accountId) ? accountId : 0));
+                    player.AddRange(rest.Skip(platformOffset));
+                    session.JoinedPlayerData = player.ToArray();
+
+                    var members = Sessions.Values
+                        .Where(s => s.Approved && s.InstanceId == session.InstanceId && s.JoinedPlayerData != null)
+                        .OrderBy(s => s.ClientId).ToList();
+                    ulong masterId = members[0].ClientId;
+                    var response = new List<byte> { 101, 1, 7 }; // accepted; RoomDataFields.All
+                    response.AddRange(BitConverter.GetBytes(masterId));
+                    response.AddRange(BitConverter.GetBytes(members.Count));
+                    foreach (var member in members) response.AddRange(member.JoinedPlayerData);
+                    // SerializableDictionary variant 52, one entry:
+                    // GamePropertyKey.PlayerCount (byte 252) -> Int32 count.
+                    response.AddRange(new byte[] { 52, 1, 0, 0, 0, 5, 252, 10 });
+                    response.AddRange(BitConverter.GetBytes(members.Count));
                     SendMessage(session, NgoMessages.BuildRawNamedMessageBody(
                         NgoMessages.NamedRRServerToClient, response.ToArray()));
-                    Log($"[room] RR_JoinRequest from account {session.AccountId}: sent accepted RR_JoinResponse, master={session.ClientId}");
+                    var masterUpdate = new List<byte> { 102, 1 };
+                    masterUpdate.AddRange(BitConverter.GetBytes(masterId));
+                    SendMessage(session, NgoMessages.BuildRawNamedMessageBody(
+                        NgoMessages.NamedRRServerToClient, masterUpdate.ToArray()));
+                    SendMessage(session, NgoMessages.BuildRawNamedMessageBody(
+                        NgoMessages.NamedRRServerToClient, new byte[] { 7 }));
+                    byte[] joined = new byte[] { 104 }.Concat(session.JoinedPlayerData).ToArray();
+                    foreach (var member in members.Where(s => !ReferenceEquals(s, session)))
+                        SendMessage(member, NgoMessages.BuildRawNamedMessageBody(
+                            NgoMessages.NamedRRServerToClient, joined));
+                    Log($"[room] RR_JoinResponse account={session.AccountId} members={members.Count} master={masterId} full player/room fields");
                     return;
                 }
 
@@ -772,6 +812,31 @@ internal static class Program
                         sent++;
                     }
                     Log($"[room] echoed RRBufferedRoomEvent op 22 from account {session.AccountId} to {sent} client(s), including sender");
+                    return;
+                }
+
+                // Room properties are server-authoritative. A master-authored
+                // update must be returned to its sender too: in a one-player
+                // dorm, forwarding only to "other" peers drops every update.
+                if (rest.Length >= 2 && rest[0] == 102)
+                {
+                    if (rest[1] != 4)
+                    {
+                        Log($"[room] unsupported RR_RoomUpdate mask={rest[1]} from client {session.ClientId}");
+                        return;
+                    }
+                    var members = Sessions.Values
+                        .Where(s => s.Approved && s.InstanceId == session.InstanceId && s.JoinedPlayerData != null)
+                        .OrderBy(s => s.ClientId).ToList();
+                    if (members.Count == 0 || members[0].ClientId != session.ClientId)
+                    {
+                        Log($"[room] rejected RR_RoomUpdate from non-master client {session.ClientId}");
+                        return;
+                    }
+                    byte[] body = NgoMessages.BuildRawNamedMessageBody(
+                        NgoMessages.NamedRRServerToClient, rest);
+                    foreach (var member in members) SendMessage(member, body);
+                    Log($"[room] authoritative RR_RoomUpdate mask={rest[1]} from master {session.ClientId} -> {members.Count} client(s), including sender");
                     return;
                 }
 
