@@ -368,8 +368,8 @@ async fn fetch_single(
         let bytes = chunk.map_err(|e| e.to_string())?;
         file.write_all(&bytes).await.map_err(|e| e.to_string())?;
         written += bytes.len() as u64;
-        if let (Some((p, _)), true) = (progress, total > 0) {
-            p.set_fraction(written as f64 / total as f64);
+        if let Some((p, _)) = progress {
+            p.set_throughput(label, written, total);
         }
     }
     file.flush().await.map_err(|e| e.to_string())?;
@@ -518,7 +518,9 @@ pub async fn download_segmented(
                     let mbps = d.saturating_sub(last_bytes) as f64 / tick_dt / 1_048_576.0;
                     last_bytes = d;
                     last_tick = Instant::now();
-                    let avg_mbps = d as f64 / elapsed / 1_048_576.0;
+                    // Resumed bytes count toward completion but were not received
+                    // during this run; exclude them from the current transfer rate.
+                    let avg_mbps = d.saturating_sub(initial) as f64 / elapsed / 1_048_576.0;
                     let eta = if avg_mbps > 0.05 {
                         let s = ((total.saturating_sub(d)) as f64
                             / (avg_mbps * 1_048_576.0))
@@ -527,12 +529,12 @@ pub async fn download_segmented(
                     } else {
                         String::new()
                     };
-                    let have_mb = d as f64 / 1_048_576.0;
-                    let total_mb = total as f64 / 1_048_576.0;
-                    // v0.2.0: speed/ETA go on the dedicated detail line so the
-                    // stage text stays stable.
+                    // Keep the size, current measured rate and ETA together on
+                    // the detail line while the segmented workers stream.
                     p.set_detail(format!(
-                        "{have_mb:.0} / {total_mb:.0} MB \u{2022} {mbps:.1} MB/s{eta}"
+                        "{} / {} · {mbps:.1} MiB/s{eta}",
+                        crate::progress::format_bytes(d),
+                        crate::progress::format_bytes(total)
                     ));
                 }
             }

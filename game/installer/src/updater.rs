@@ -105,6 +105,7 @@ pub enum UpdateDecision {
     Available {
         version: String,
         download_url: String,
+        size_bytes: Option<u64>,
     },
     /// v1.0.5: the check failed (network error). The UI should tell the
     /// user instead of silently saying "Ready to play".
@@ -230,6 +231,7 @@ fn decision_from_html(html: &str, current: (u64, u64, u64)) -> UpdateDecision {
                     .unwrap_or(&tag)
                     .to_string(),
                 download_url,
+                size_bytes: None,
             };
         }
         return UpdateDecision::UpToDate;
@@ -245,7 +247,7 @@ fn find_update(releases: &[serde_json::Value], current: (u64, u64, u64)) -> Upda
     // GitHub's release list is ordered by release creation time, which can
     // differ from semantic version order when a release is rebuilt.  Select
     // the highest valid newer version rather than trusting list order.
-    let mut candidate: Option<((u64, u64, u64), String, String)> = None;
+    let mut candidate: Option<((u64, u64, u64), String, String, Option<u64>)> = None;
     for rel in releases {
         let tag = rel.get("tag_name").and_then(|v| v.as_str()).unwrap_or("");
         // Only our own installer line. The v0.5.x bootstrap/NSIS line also
@@ -270,16 +272,21 @@ fn find_update(releases: &[serde_json::Value], current: (u64, u64, u64)) -> Upda
         let Some(url) = a.get("browser_download_url").and_then(|u| u.as_str()) else {
             continue;
         };
+        let size_bytes = a.get("size").and_then(|value| value.as_u64());
         let is_better = match candidate.as_ref() {
-            Some((best, _, _)) => ver > *best,
+            Some((best, _, _, _)) => ver > *best,
             None => true,
         };
         if is_better {
-            candidate = Some((ver, tag.to_string(), url.to_string()));
+            candidate = Some((ver, tag.to_string(), url.to_string(), size_bytes));
         }
     }
     match candidate {
-        Some((_, version, download_url)) => UpdateDecision::Available { version, download_url },
+        Some((_, version, download_url, size_bytes)) => UpdateDecision::Available {
+            version,
+            download_url,
+            size_bytes,
+        },
         None => UpdateDecision::UpToDate,
     }
 }
@@ -288,7 +295,12 @@ fn find_update(releases: &[serde_json::Value], current: (u64, u64, u64)) -> Upda
 /// update…"). Verifies the file is a plausible installer: non-empty, sane
 /// size, and a real PE executable (MZ header) — a truncated or HTML error
 /// page download can never be spawned. The caller spawns it.
-pub async fn download_update(url: &str, dest: &Path, progress: &Progress) -> Result<(), String> {
+pub async fn download_update(
+    url: &str,
+    dest: &Path,
+    expected_size: Option<u64>,
+    progress: &Progress,
+) -> Result<(), String> {
     progress.set_status("Downloading update\u{2026}", 8);
     let client = reqwest::Client::builder()
         .user_agent("FluxRec-Launcher")
@@ -299,7 +311,7 @@ pub async fn download_update(url: &str, dest: &Path, progress: &Progress) -> Res
     if !resp.status().is_success() {
         return Err(format!("update download: HTTP {}", resp.status()));
     }
-    let total = resp.content_length().unwrap_or(0);
+    let total = resp.content_length().or(expected_size).unwrap_or(0);
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -316,9 +328,11 @@ pub async fn download_update(url: &str, dest: &Path, progress: &Progress) -> Res
         if total > 0 {
             let pct = 8 + (done as f64 / total as f64 * 72.0) as u8;
             progress.set_status("Downloading update\u{2026}", pct.min(80));
-            // v0.2.0: live MB/s + ETA on the detail line.
-            progress.set_throughput("Downloading update", done, total);
         }
+        // Use the response length when available, falling back to the release
+        // manifest size. If both are absent, show bytes received without
+        // inventing a total or ETA.
+        progress.set_transfer_detail("Downloading update", done, total);
     }
     drop(file);
     // v0.2.0: structural verification — the old check was "non-empty" only.
@@ -393,6 +407,7 @@ mod tests {
             UpdateDecision::Available {
                 version,
                 download_url,
+                ..
             } => {
                 assert_eq!(version, "ripo-team-launcher-v0.1.11");
                 assert_eq!(download_url, "https://dl/0.1.11.exe");
@@ -414,6 +429,7 @@ mod tests {
             UpdateDecision::Available {
                 version,
                 download_url,
+                ..
             } => {
                 assert_eq!(version, "ripo-team-launcher-v1.0.49");
                 assert_eq!(download_url, "https://dl/1.0.49.exe");

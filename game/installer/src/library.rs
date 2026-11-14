@@ -52,6 +52,7 @@ pub enum LibMsg {
         generation: u64,
         update_available: bool,
         update_version: String,
+        update_size_bytes: Option<u64>,
     },
     /// Checks are running (fast path).
     Checking { generation: u64 },
@@ -600,11 +601,12 @@ fn worker_checks(dir: &Path, _ns_host: &str, generation: u64, msg_tx: &Sender<Li
     }
 
     match decision {
-        crate::updater::UpdateDecision::Available { version, .. } => {
+        crate::updater::UpdateDecision::Available { version, size_bytes, .. } => {
             let _ = msg_tx.send(LibMsg::Ready {
                 generation,
                 update_available: true,
                 update_version: version,
+                update_size_bytes: size_bytes,
             });
         }
         // v1.0.5: tell the UI the check failed so it can warn the user.
@@ -619,6 +621,7 @@ fn worker_checks(dir: &Path, _ns_host: &str, generation: u64, msg_tx: &Sender<Li
                 generation,
                 update_available: false,
                 update_version: String::new(),
+                update_size_bytes: None,
             });
         }
     }
@@ -644,11 +647,12 @@ fn force_update_check(dir: &Path, generation: u64, msg_tx: &Sender<LibMsg>) {
         }
     };
     match decision {
-        crate::updater::UpdateDecision::Available { version, .. } => {
+        crate::updater::UpdateDecision::Available { version, size_bytes, .. } => {
             let _ = msg_tx.send(LibMsg::Ready {
                 generation,
                 update_available: true,
                 update_version: version,
+                update_size_bytes: size_bytes,
             });
         }
         crate::updater::UpdateDecision::CheckFailed => {
@@ -662,6 +666,7 @@ fn force_update_check(dir: &Path, generation: u64, msg_tx: &Sender<LibMsg>) {
                 generation,
                 update_available: false,
                 update_version: String::new(),
+                update_size_bytes: None,
             });
         }
     }
@@ -1070,6 +1075,7 @@ fn do_play(
                 crate::updater::UpdateDecision::Available {
                     version,
                     download_url,
+                    size_bytes,
                 } => {
                     mark_network_check(dir);
                     send(84, &format!("Update {version} found — installing…"));
@@ -1088,7 +1094,12 @@ fn do_play(
                                 });
                             }
                         });
-                        r.block_on(crate::updater::download_update(&download_url, &dest, &p2))
+                        r.block_on(crate::updater::download_update(
+                            &download_url,
+                            &dest,
+                            size_bytes,
+                            &p2,
+                        ))
                             .is_ok()
                     };
                     if downloaded {

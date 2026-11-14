@@ -1491,17 +1491,15 @@ describe('auth-gated endpoints', () => {
 		}
 	})
 
-	test('a developer is sent to the same Tachyon host on the dev port', async () => {
-		// Developers run against a Tachyon build listening on 7778 beside the live one, so
-		// only the host carries over from the instance's assignment — the dev build is not an
-		// entry in the pool, so it is named `dev` rather than borrowing that entry's
-		// positional `tachyon-N`.
+	test('a developer and other players use the same live Tachyon endpoint', async () => {
+		// A separate dev port is not provisioned on the public tunnel. All members
+		// of this instance must receive its one reachable endpoint.
 		await env.DB.prepare('INSERT OR IGNORE INTO account (data) VALUES (?1)')
 			.bind(JSON.stringify({ accountId: 974, username: 'Devver', isDeveloper: true }))
 			.run()
 		const original = env.TACHYON_HOST_PORT
 		try {
-			// One entry, so the assignment can't happen to land on 7778 by itself.
+			// One reachable server for the instance.
 			env.TACHYON_HOST_PORT = '198.51.100.12:7777'
 
 			const voiceFor = async (player: string, roomInstanceId: number) => {
@@ -1525,17 +1523,16 @@ describe('auth-gated endpoints', () => {
 				maxCapacity: 12,
 			})
 			expect(await voiceFor('974', instance.roomInstanceId)).toEqual({
-				voiceConnectionInfo: '198.51.100.12:7778',
-				voiceServerId: 'dev',
+				voiceConnectionInfo: '198.51.100.12:7777',
+				voiceServerId: 'tachyon-1',
 			})
-			// Everyone else in that instance keeps the pool entry's own port and id.
+			// Everyone else in that instance gets the same port and id.
 			expect(await voiceFor('975', instance.roomInstanceId)).toEqual({
 				voiceConnectionInfo: '198.51.100.12:7777',
 				voiceServerId: 'tachyon-1',
 			})
 
-			// In no instance there is no server to move the port of: a bare ':7778' would be
-			// an address that answers nothing, named `dev`.
+			// In no instance there is no server to assign.
 			const none = await exports.default.fetch(`${ORIGIN}/player/connection-info`, {
 				headers: await bearer('974'),
 			})

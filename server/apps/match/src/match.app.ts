@@ -230,40 +230,6 @@ function tachyonServerFor(env: Env, roomInstanceId: number): TachyonServer {
 }
 
 /**
- * The Tachyon port a DEVELOPER is handed, in place of the port on the pool entry their
- * instance resolved to. Developers connect to a separate Tachyon build running beside the
- * live one on the same box, so only the PORT moves: the HOST stays whichever one
- * {@link tachyonServerFor} picked, rather than scattering developers off the pool.
- */
-const DEVELOPER_TACHYON_PORT = '7778'
-
-/**
- * The id displayed for that dev server. Not `tachyon-N` — the generated ids are positional
- * names for entries in the pool ({@link tachyonPool}), and the dev build is not one of
- * them: it is a different server that happens to share a host. The id is cosmetic (the
- * client displays it and never sends it anywhere), so it only has to say which server the
- * player is on, and "dev" is that.
- */
-const DEVELOPER_TACHYON_SERVER_ID = 'dev'
-
-/**
- * `server` with its port replaced by {@link DEVELOPER_TACHYON_PORT} and its id by
- * {@link DEVELOPER_TACHYON_SERVER_ID}. An empty address is left alone — the pool is unset or
- * the caller is in no instance, so there is no server to point at another port, and writing
- * a bare `:7778` would hand the client an address that answers nothing (and name a server
- * that isn't there). Splits on the LAST colon so a bracketed IPv6 host survives.
- */
-function developerTachyonServer(server: TachyonServer): TachyonServer {
-	if (server.hostPort === '') return server
-	const colon = server.hostPort.lastIndexOf(':')
-	const host = colon === -1 ? server.hostPort : server.hostPort.slice(0, colon)
-	return {
-		hostPort: `${host}:${DEVELOPER_TACHYON_PORT}`,
-		serverId: DEVELOPER_TACHYON_SERVER_ID,
-	}
-}
-
-/**
  * Networking feature flags the client reads off its connection info. Verbatim from
  * the reference server — the client changes how it replicates based on these, so they
  * are not free to tune. The load-bearing one is `shouldUseGameServerNetworking`:
@@ -2906,9 +2872,7 @@ const app = new Hono<App>()
 				'fields name the Tachyon server that instance was assigned — one entry out of the',
 				'`TACHYON_HOST_PORT` pool, chosen by instance id so every player in a session is',
 				'handed the same one, with a generated `voiceServerId` (`tachyon-1`, `tachyon-2`,',
-				'…). Both are empty when the pool is unset or the caller is in no instance. A',
-				'caller holding the DEVELOPER role gets that same host on port 7778, the dev',
-				'Tachyon build, with a `voiceServerId` of `dev`.',
+					'…). Both are empty when the pool is unset or the caller is in no instance.',
 				'`experiments` carries the client’s networking flags.',
 			].join(' '),
 			security: AUTHED,
@@ -2956,12 +2920,11 @@ const app = new Hono<App>()
 				typeof account?.voiceBanUntil === 'string' &&
 				account.voiceBanUntil !== '' &&
 				Date.parse(account.voiceBanUntil) > Date.now()
-			// The instance's server, the same one every other player in it is handed — except
-			// for a DEVELOPER, who is sent to the same host on the dev port, under the id
-			// `dev` rather than the pool entry's positional name.
+			// Every member of an instance must use the same live server. The old
+			// developer override sent owners to port 7778 even when only the
+			// public 7777 tunnel existed, trapping them at room loading.
 			const assigned = tachyonServerFor(c.env, roomInstanceId)
-			const tachyon =
-				account?.isDeveloper === true ? developerTachyonServer(assigned) : assigned
+			const tachyon = assigned
 
 			// Identifies the player to Photon. Signed with the shared JWT secret; the token's
 			// `aud` is the realtime app it's for. Nothing verifies it while Photon is
@@ -2985,8 +2948,7 @@ const app = new Hono<App>()
 					photonRoomId,
 					// The Tachyon server this instance runs on, picked out of the operator's
 					// pool by {@link tachyonServerFor} — empty strings when the pool is empty
-					// or the caller is in no instance, and on the dev port (id `dev`) for a
-					// developer. Empty rather than null: the client's
+					// or the caller is in no instance. Empty rather than null: the client's
 					// decoder is likelier to accept a missing-value string than a null on a
 					// string field. The presence payload's NULL_CONNECTION_INFO keeps its
 					// nulls — that one never carries credentials.
