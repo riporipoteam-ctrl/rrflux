@@ -395,6 +395,86 @@ type PlatformProof =
 	| { status: 'unconfigured' }
 	| { status: 'rejected'; reason: string }
 
+function firstNonEmptyString(...values: Array<unknown>): string {
+	for (const value of values) {
+		if (typeof value === 'string' && value.trim() !== '') return value.trim()
+	}
+	return ''
+}
+
+function postedField(body: Record<string, string | File>, ...keys: string[]): string {
+	return firstNonEmptyString(...keys.map((key) => body[key]))
+}
+
+/** Client-supplied Rec Room device ids vary by build: SHA-1 hex, GUIDs, or shorter DUIDs. */
+function isRememberableDeviceId(deviceId: string): boolean {
+	const compact = deviceId.replace(/[^a-zA-Z0-9]/g, '')
+	return compact.length >= 8 && compact.length <= 128
+}
+
+async function readCachedLoginDeviceId(c: Context<App>): Promise<string> {
+	const fromQuery = firstNonEmptyString(
+		c.req.query('deviceId'),
+		c.req.query('device_id'),
+		c.req.query('DeviceId')
+	)
+	if (fromQuery) return fromQuery
+	if (c.req.method === 'GET' || c.req.method === 'HEAD') return ''
+	const contentType = c.req.header('content-type') ?? ''
+	if (contentType.includes('json')) {
+		const json: unknown = await c.req.json().catch(() => null)
+		if (json && typeof json === 'object') {
+			const body = json as Record<string, unknown>
+			return firstNonEmptyString(body.deviceId, body.device_id, body.DeviceId)
+		}
+	}
+	const body: Record<string, string | File> = await c.req.parseBody().catch(() => ({}))
+	return postedField(body, 'deviceId', 'device_id', 'DeviceId')
+}
+
+function passwordRememberedLogin(account: Account, steamId: string) {
+	return {
+		platform: PlatformType.Steam,
+		platformId: steamId,
+		accountId: account.accountId,
+		lastLoginTime: account.lastLoginTime ?? account.createdAt,
+		requirePassword: true as const,
+	}
+}
+
+function cannedSteamPasswordEntry(steamId: string) {
+	return {
+		platform: PlatformType.Steam,
+		platformId: steamId,
+		accountId: 0,
+		lastLoginTime: new Date().toISOString(),
+		requirePassword: true as const,
+	}
+}
+
+/**
+ * Steam login-screen picker. Emulator tickets often cannot prove the SteamID, so a
+ * password login is remembered by device id instead. GET and POST both honor that
+ * id — older clients GET this route and never posted a body.
+ */
+async function steamLoginPicker(
+	db: D1Database,
+	steamId: string,
+	deviceId: string
+): Promise<Array<ReturnType<typeof toCachedLogin> | ReturnType<typeof passwordRememberedLogin> | ReturnType<typeof cannedSteamPasswordEntry>>> {
+	const steamLinks = await getLinksForPlatformIdentity(db, PlatformType.Steam, steamId)
+	const linked = await toCachedLogins(db, steamLinks)
+	const linkedIds = new Set(linked.map((entry) => entry.accountId))
+	const remembered = isRememberableDeviceId(deviceId)
+		? (await getAccountsByDeviceId(db, deviceId))
+				.filter((account) => !linkedIds.has(account.accountId))
+				.slice(0, 8)
+				.map((account) => passwordRememberedLogin(account, steamId))
+		: []
+	const combined = [...linked, ...remembered]
+	return combined.length > 0 ? combined : [cannedSteamPasswordEntry(steamId)]
+}
+
 /**
  * Verify a login's `platform_auth` and return the identity it proves.
  *
@@ -577,39 +657,8 @@ const app = new Hono<App>()
 			// username+password account and links this Steam identity to it.
 			// Identities that already have links keep the normal picker below.
 			if (platformInt === PlatformType.Steam) {
-				const steamLinks = await getLinksForPlatformIdentity(c.env.DB, platformInt, id)
-				if (steamLinks.length === 0) {
-					// The standalone client can use a Steam emulator whose ticket cannot be
-					// verified. A password login still records its stable device ID. Offer
-					// those accounts in the picker on the next launch, but always demand
-					// their passwords: a posted device ID is only a hint, never auth.
-					if (c.req.method === 'POST') {
-						const body: Record<string, string | File> = await c.req.parseBody().catch(() => ({}))
-						const deviceId = typeof body.deviceId === 'string' ? body.deviceId : ''
-						if (/^[a-f0-9]{32,64}$/i.test(deviceId)) {
-							const recent = (await getAccountsByDeviceId(c.env.DB, deviceId)).slice(0, 8)
-							if (recent.length > 0) {
-								return c.json(recent.map((account) => ({
-									platform: PlatformType.Steam,
-									platformId: id,
-									accountId: account.accountId,
-									lastLoginTime: account.lastLoginTime ?? account.createdAt,
-									requirePassword: true,
-								})))
-							}
-						}
-					}
-					return c.json([
-						{
-							platform: PlatformType.Steam,
-							platformId: id,
-							accountId: 0,
-							lastLoginTime: new Date().toISOString(),
-							requirePassword: true,
-						},
-					])
-				}
-				return c.json(await toCachedLogins(c.env.DB, steamLinks))
+				const deviceId = await readCachedLoginDeviceId(c)
+				return c.json(await steamLoginPicker(c.env.DB, id, deviceId))
 			}
 			// Listed straight from the link table, which is also what the `cached_login`
 			// grant authorizes against — so the picker can't offer an account the grant
@@ -773,7 +822,7 @@ const app = new Hono<App>()
 			// a credential. Stored on account creation AND refreshed on each successful login,
 			// so the account's device tracks the player across devices — the raw material for
 			// linking accounts that share a device later.
-			const deviceId = typeof body.device_id === 'string' ? body.device_id : ''
+			const deviceId = postedField(body, 'device_id', 'deviceId', 'DeviceId')
 			const deviceClassInt =
 				typeof body.device_class === 'string' ? Number.parseInt(body.device_class, 10) : NaN
 			const deviceClass = Number.isNaN(deviceClassInt) ? 0 : deviceClassInt
@@ -877,6 +926,17 @@ const app = new Hono<App>()
 				if (grantType === 'create_account') {
 					logger.info('create_account proceeding without platform binding', {
 						grantType, status: proof.status,
+					})
+				} else if (
+					grantType === 'cached_login' &&
+					c.env.TRUST_STEAM_TICKET_ID === 'true' &&
+					isRememberableDeviceId(deviceId)
+				) {
+					// Standalone Goldberg/stub clients often cannot prove Steam. The 2026
+					// picker still posts cached_login for remembered accounts; finish that
+					// grant only when the same Rec Room device id last used this account.
+					logger.info('cached_login continuing without steam proof; device match required', {
+						status: proof.status,
 					})
 				} else {
 					// The reason is for the operator; the client is told only that it was rejected.
@@ -1094,7 +1154,13 @@ const app = new Hono<App>()
 				const linked =
 					account !== null &&
 					(await isPlatformIdentityLinked(c.env.DB, account.accountId, platformInt, platformId))
-				if (!account || !linked) {
+				const sameDevice =
+					c.env.TRUST_STEAM_TICKET_ID === 'true' &&
+					account !== null &&
+					isRememberableDeviceId(deviceId) &&
+					typeof account.deviceId === 'string' &&
+					account.deviceId.toLowerCase() === deviceId.toLowerCase()
+				if (!account || (!linked && !sameDevice)) {
 					return c.json(
 						{
 							error: 'invalid_grant',

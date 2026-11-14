@@ -148,6 +148,7 @@ public class Plugin : BasePlugin
         // Presence slider mapping fix (write+read inversion) and the Ultra
         // graphics hook: same retry-on-scene-load pattern as the watch gates.
         Patches.PresenceMappingPatch.Apply();
+        Patches.LowEndGraphicsPatch.Apply();
         Patches.UltraGraphicsPatch.Apply();
 
         // Flux Connect pairing overlay (F8): standalone IMGUI window, no game
@@ -238,6 +239,7 @@ public class Plugin : BasePlugin
         // Retry the presence-mapping fix and the Ultra graphics button until
         // their target types / the settings page are available (no-op once done).
         Patches.PresenceMappingPatch.Apply();
+        Patches.LowEndGraphicsPatch.Apply();
         Patches.UltraGraphicsPatch.Apply();
 
         // Retry the Flux Connect pairing overlay setup (no-op once created).

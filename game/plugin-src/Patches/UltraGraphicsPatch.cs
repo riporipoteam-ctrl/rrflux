@@ -23,7 +23,7 @@ internal static class UltraGraphicsPatch
     // Work done (or the feature disabled): the UiDiscoveryRetry driver stops
     // ticking this patch once settled, and later Apply() calls are no-ops.
     internal static bool IsSettled =>
-        !Plugin.EnableUltraGraphics.Value || _applied;
+        !Plugin.EnableUltraGraphics.Value || LowEndGraphicsPatch.IsLowEnd || _applied;
 
     // Called from Plugin.Load, on each scene load, and on a 2-second timer
     // by UiDiscoveryRetry until IsSettled. Idempotent: the knobs are written
@@ -31,6 +31,8 @@ internal static class UltraGraphicsPatch
     public static void Apply()
     {
         if (!Plugin.EnableUltraGraphics.Value)
+            return;
+        if (LowEndGraphicsPatch.IsLowEnd)
             return;
         if (_applied)
             return;

@@ -501,6 +501,53 @@ fn use_compact_render_profile(width: i32, height: i32) -> bool {
     width > 0 && height > 0 && width <= 1366 && height <= 768
 }
 
+/// Weak laptops often have a 1080p panel and still cannot hold a room load.
+/// Treat 12 GB of RAM or less as a low-power machine even on a large screen.
+fn use_low_power_profile(ram_mb: u64, width: i32, height: i32) -> bool {
+    use_compact_render_profile(width, height) || (ram_mb > 0 && ram_mb <= 12 * 1024)
+}
+
+#[cfg(windows)]
+fn installed_ram_mb() -> u64 {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    unsafe {
+        let mut mem = MEMORYSTATUSEX::default();
+        mem.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        let _ = GlobalMemoryStatusEx(&mut mem);
+        mem.ullTotalPhys / (1024 * 1024)
+    }
+}
+
+#[cfg(not(windows))]
+fn installed_ram_mb() -> u64 {
+    0
+}
+
+fn cap_patch_framerate(dir: &Path, fps: u32) {
+    let path = dir.join("2026patch.ini");
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+    let mut replaced = false;
+    let mut out = String::with_capacity(text.len() + 24);
+    for line in text.lines() {
+        if line.trim_start().starts_with("FramesPerSecond=") {
+            out.push_str(&format!("FramesPerSecond={fps}\n"));
+            replaced = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !replaced {
+        if !out.ends_with('\n') && !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!("FramesPerSecond={fps}\n"));
+    }
+    if let Err(error) = std::fs::write(&path, out) {
+        eprintln!("[launcher] could not cap patch framerate: {error}");
+    }
+}
+
 #[cfg(windows)]
 fn compact_render_profile() -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
@@ -606,12 +653,43 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
                     return;
                 };
                 let log = diagnostic_log_path(dir);
-                let mut args = vec!["+forcemode:screen"];
+                let mut args = vec!["+forcemode:screen", "-force-d3d11"];
                 let log_arg = log.as_ref().map(|path| path.to_string_lossy().into_owned());
                 if let Some(path) = log_arg.as_deref() {
                     args.extend(["-logFile", path]);
                 }
-                if compact_render_profile() {
+                let ram_mb = installed_ram_mb();
+                let low_power = {
+                    #[cfg(windows)]
+                    {
+                        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+                        unsafe {
+                            use_low_power_profile(
+                                ram_mb,
+                                GetSystemMetrics(SM_CXSCREEN),
+                                GetSystemMetrics(SM_CYSCREEN),
+                            )
+                        }
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        use_low_power_profile(ram_mb, 0, 0)
+                    }
+                };
+                if low_power {
+                    args.extend([
+                        "-screen-width",
+                        "1280",
+                        "-screen-height",
+                        "720",
+                        "-screen-fullscreen",
+                        "0",
+                    ]);
+                    cap_patch_framerate(dir, 30);
+                    println!(
+                        "[launcher] low-power profile: 1280x720 windowed, DX11, 30 FPS (ram={ram_mb} MB)"
+                    );
+                } else if compact_render_profile() {
                     args.extend(["-screen-width", "1280", "-screen-height", "720", "-screen-fullscreen", "0"]);
                     println!("[launcher] compact laptop render profile: 1280x720 windowed");
                 }
@@ -639,6 +717,26 @@ mod tests {
         assert!(super::use_compact_render_profile(1280, 720));
         assert!(!super::use_compact_render_profile(1920, 1080));
         assert!(!super::use_compact_render_profile(0, 0));
+    }
+
+    #[test]
+    fn low_power_profile_covers_weak_1080p_laptops() {
+        assert!(super::use_low_power_profile(8 * 1024, 1920, 1080));
+        assert!(super::use_low_power_profile(16 * 1024, 1366, 768));
+        assert!(!super::use_low_power_profile(16 * 1024, 1920, 1080));
+        assert!(!super::use_low_power_profile(0, 1920, 1080));
+    }
+
+    #[test]
+    fn cap_patch_framerate_rewrites_existing_line() {
+        let dir = std::env::temp_dir().join(format!("fluxrec-fps-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("2026patch.ini"), "[config]\nFramesPerSecond=0\n").unwrap();
+        super::cap_patch_framerate(&dir, 30);
+        let text = std::fs::read_to_string(dir.join("2026patch.ini")).unwrap();
+        assert!(text.contains("FramesPerSecond=30\n"));
+        assert!(!text.contains("FramesPerSecond=0\n"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
