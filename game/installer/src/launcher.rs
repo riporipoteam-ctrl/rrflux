@@ -5,16 +5,13 @@
 //! Launch flow, all behind the little Flux Rec window (the console stays
 //! hidden the whole time):
 //!
-//!   0. Self-heal: verify the Steam bypass (emulator/stub DLL + settings +
-//!      VC++ runtime) and repair it automatically before anything else.
-//!   1. "Checking for updates\u{2026}" — live on every launch (5s timeout,
-//!      fail-soft). No skip-cache: a release published after the last
-//!      launch is offered on the next one.
-//!   2. If a newer setup exists: "Downloading update\u{2026}" with progress,
+//!   0. Check for a newer setup before re-checking the installed game files.
+//!   1. If a newer setup exists: "Downloading update\u{2026}" with progress,
 //!      then the new setup is spawned with `--updated`. The current launcher
 //!      exits so the setup can replace its executable; the setup shows its own
 //!      progress window and launches the game after a successful update.
-//!   3. Otherwise: "Launching game…" — `Injector.exe` is started first (it
+//!   2. Otherwise self-heal the installed components, then launch the game.
+//!      `Injector.exe` is started first (it
 //!      injects 2025Patch.dll once the game loads), then
 //!      `Recroom_Release.exe +forcemode:screen` is spawned with no console
 //!      window, the window lingers a moment, then this exits.
@@ -93,6 +90,61 @@ pub fn run_launcher(
             let _ = gui_thread.join();
             std::process::exit(1);
         }
+    }
+
+    // Update first, before expensive local component verification and repairs.
+    // Reuse a recent successful
+    // no-update result so repeated game launches do not block on GitHub.
+    let decision = match &rt {
+        Ok(r) => r.block_on(crate::updater::check_for_updates_cached(dir, &progress)),
+        Err(_) => UpdateDecision::CheckFailed,
+    };
+    match decision {
+        UpdateDecision::Available {
+            version,
+            download_url,
+            size_bytes,
+        } => {
+            progress.set_status(
+                &format!("Update {version} found \u{2014} installing\u{2026}"),
+                84,
+            );
+            let dest = std::env::temp_dir().join("FluxRec-Setup-update.exe");
+            let downloaded = match &rt {
+                Ok(r) => r
+                    .block_on(crate::updater::download_update(
+                        &download_url,
+                        &dest,
+                        size_bytes,
+                        &progress,
+                    ))
+                    .is_ok(),
+                Err(_) => false,
+            };
+            if downloaded {
+                // Hand off to the fresh setup. This launcher is itself the file
+                // being replaced, so it must exit before the installer copies
+                // the new build into the game directory.
+                let dir_s = dir.to_string_lossy().to_string();
+                let update_ok = spawn_update(&dest, &dir_s, &progress);
+                if update_ok {
+                    progress.done();
+                    let _ = gui_thread.join();
+                    std::process::exit(0);
+                }
+                progress.set_status(
+                    "Update failed \u{2014} launching installed version\u{2026}",
+                    90,
+                );
+            }
+            // Download or update failed: fall through and launch the installed
+            // game anyway.
+        }
+        UpdateDecision::CheckFailed => progress.set_status(
+            "Update check unavailable \u{2014} launching installed version\u{2026}",
+            90,
+        ),
+        UpdateDecision::UpToDate => {}
     }
 
     // 1b. Self-heal: the Steam bypass must be intact or the game crashes at
@@ -257,60 +309,6 @@ pub fn run_launcher(
                 eprintln!("[launcher] logo bundle failed ({e}); continuing.");
             }
         }
-    }
-
-    // 2. Update check (fast + fail-soft by design). Reuse a recent successful
-    // no-update result so repeated game launches do not block on GitHub.
-    let decision = match &rt {
-        Ok(r) => r.block_on(crate::updater::check_for_updates_cached(dir, &progress)),
-        Err(_) => UpdateDecision::CheckFailed,
-    };
-    match decision {
-        UpdateDecision::Available {
-            version,
-            download_url,
-            size_bytes,
-        } => {
-            progress.set_status(
-                &format!("Update {version} found \u{2014} installing\u{2026}"),
-                84,
-            );
-            let dest = std::env::temp_dir().join("FluxRec-Setup-update.exe");
-            let downloaded = match &rt {
-                Ok(r) => r
-                    .block_on(crate::updater::download_update(
-                        &download_url,
-                        &dest,
-                        size_bytes,
-                        &progress,
-                    ))
-                    .is_ok(),
-                Err(_) => false,
-            };
-            if downloaded {
-                // Hand off to the fresh setup. This launcher is itself the file
-                // being replaced, so it must exit before the installer copies
-                // the new build into the game directory.
-                let dir_s = dir.to_string_lossy().to_string();
-                let update_ok = spawn_update(&dest, &dir_s, &progress);
-                if update_ok {
-                    progress.done();
-                    let _ = gui_thread.join();
-                    std::process::exit(0);
-                }
-                progress.set_status(
-                    "Update failed \u{2014} launching installed version\u{2026}",
-                    90,
-                );
-            }
-            // Download or update failed: fall through and launch the installed
-            // game anyway.
-        }
-        UpdateDecision::CheckFailed => progress.set_status(
-            "Update check unavailable \u{2014} launching installed version\u{2026}",
-            90,
-        ),
-        UpdateDecision::UpToDate => {}
     }
 
     // 2b. Flux account linking prompt (v0.6.13). Offer once: the choice is
@@ -497,6 +495,21 @@ fn diagnostic_log_path(dir: &Path) -> Option<std::path::PathBuf> {
     None
 }
 
+/// A compact render target cuts the pixel workload on small laptop displays.
+/// Desktop monitors and explicit player settings keep their chosen resolution.
+fn use_compact_render_profile(width: i32, height: i32) -> bool {
+    width > 0 && height > 0 && width <= 1366 && height <= 768
+}
+
+#[cfg(windows)]
+fn compact_render_profile() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+    unsafe { use_compact_render_profile(GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) }
+}
+
+#[cfg(not(windows))]
+fn compact_render_profile() -> bool { false }
+
 /// safe. Infallible: a missing exe shows a readable status instead of panicking.
 ///
 /// v0.3.2: pre-flight check — the game is USELESS without the patch (it
@@ -592,11 +605,17 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
                     progress.set_status("2026 game executable is missing. Verify files.", 100);
                     return;
                 };
-                if let Some(log) = diagnostic_log_path(dir) {
-                    crate::stealth::launch_hidden(&game_exe, &["+forcemode:screen", "-logFile", &log.to_string_lossy()]);
-                } else {
-                    crate::stealth::launch_hidden(&game_exe, &["+forcemode:screen"]);
+                let log = diagnostic_log_path(dir);
+                let mut args = vec!["+forcemode:screen"];
+                let log_arg = log.as_ref().map(|path| path.to_string_lossy().into_owned());
+                if let Some(path) = log_arg.as_deref() {
+                    args.extend(["-logFile", path]);
                 }
+                if compact_render_profile() {
+                    args.extend(["-screen-width", "1280", "-screen-height", "720", "-screen-fullscreen", "0"]);
+                    println!("[launcher] compact laptop render profile: 1280x720 windowed");
+                }
+                crate::stealth::launch_hidden(&game_exe, &args);
                 return;
             }
             println!("[launcher] starting game: {}", exe.display());
@@ -613,6 +632,14 @@ pub fn launch_game(dir: &Path, progress: &Progress) {
 #[cfg(test)]
 mod tests {
     use super::game_exe_for_launch;
+
+    #[test]
+    fn compact_render_profile_only_targets_small_displays() {
+        assert!(super::use_compact_render_profile(1366, 768));
+        assert!(super::use_compact_render_profile(1280, 720));
+        assert!(!super::use_compact_render_profile(1920, 1080));
+        assert!(!super::use_compact_render_profile(0, 0));
+    }
 
     #[test]
     fn creates_writable_game_folder_diagnostics() {
