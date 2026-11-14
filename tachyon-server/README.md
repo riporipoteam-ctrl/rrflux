@@ -12,7 +12,9 @@ transport**, not just voice — no working Tachyon server, no multiplayer.
   `tachyon-server/TachyonServer.exe` (+ `.sha256` sidecar). The Ripo Team
   Launcher (v1.0.83, `game/installer` in this repo) hash-syncs it on every
   `--play`, kills any stale running copy (spawned-hash staleness check), and
-  starts it hidden on `127.0.0.1:7777`. Matchmaking (match worker,
+  starts it hidden on `127.0.0.1:7777`. Set `TACHYON_PRESENCE_BASE` to your match
+  worker URL so concurrent players land in separate voice shards (see
+  `src/TachyonServer/PresenceShard.cs`). Matchmaking (match worker,
   `RECFLARE_TACHYON_HOST_PORT`) points clients at the host's playit.gg UDP
   tunnel (`147.185.221.214:17346` → host `127.0.0.1:7777`).
 - Full build-by-build history, protocol notes and test evidence: **STATUS.md**.

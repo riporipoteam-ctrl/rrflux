@@ -210,6 +210,7 @@ internal static class Program
         {
             try
             {
+                // InstanceId is set at handshake approval; placeholder until then.
                 Sessions[peer] = new VoiceSession { Peer = peer, InstanceId = _defaultInstance };
                 Log($"[transport] LiteNetLib peer connected: id={peer.Id} endpoint={peer} (ConnectAccept flowed through RecRoomClientEncryptLayer)");
             }
@@ -579,6 +580,7 @@ internal static class Program
         session.ClientId = (ulong)Interlocked.Increment(ref _nextClientId); // first client = 1 (0 is the server)
         session.DissonancePlayerId = _nextDissonanceId++;
         session.AccountId = outcome.AccountId;
+        session.InstanceId = PresenceShard.Resolve(outcome.AccountId ?? "?", Log);
         session.Versions = req.Versions;
         session.NamedMessageIndex = NgoMessages.FindTypeIndex(req.Versions, "NamedMessage");
         session.TimeSyncIndex = NgoMessages.FindTypeIndex(req.Versions, "TimeSyncMessage");

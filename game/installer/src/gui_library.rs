@@ -1,6 +1,6 @@
 //! Ripo Team Launcher — multi-game storefront and library UI.
 //!
-//! A game-library style launcher (inspired by Steam/EGS):
+//! A game-library style launcher (Epic Games Launcher–inspired shell):
 //! - Ripo Team shell with Store, Library, Downloads and Settings navigation.
 //! - Flux Rec game card: banner, logo, description, live player count,
 //!   PLAY button, uninstall.
@@ -261,13 +261,13 @@ mod imp {
     // Window size.
     const WIN_W: i32 = 1440;
     const WIN_H: i32 = 880;
-    // The launcher uses a compact top navigation and gives the game artwork
-    // the full window width. This replaces the cramped permanent sidebar.
+    // Epic-style shell: dark left rail for navigation, content on the right.
     const TITLE_H: i32 = 72;
+    const SIDE_W: i32 = 248;
     const CORNER: i32 = 22;
 
     fn content_left(_win_w: i32) -> i32 {
-        42
+        SIDE_W + 28
     }
 
     const SPLASH_W: i32 = 480;
@@ -330,28 +330,28 @@ mod imp {
     };
 
     const DARK: Palette = Palette {
-        bg: COLORREF(0x00211B16),
-        bg_title: COLORREF(0x00191410),
-        bg_side: COLORREF(0x00191410),
-        bg_card: COLORREF(0x002F2720),
-        bg_alt: COLORREF(0x003B3127),
-        bg_hover: COLORREF(0x004C4033),
-        text: COLORREF(0x00EAF0F4),
-        text_dim: COLORREF(0x00BEB2A6),
-        nav_text: COLORREF(0x00F8F3EB),
-        nav_text_dim: COLORREF(0x00C0B9B2),
-        nav_card: COLORREF(0x002A3036),
-        accent: COLORREF(0x003671FA),
-        accent_dark: COLORREF(0x001E4ECC),
-        accent_soft: COLORREF(0x003A2B20),
-        game_accent: COLORREF(0x00D28617),
-        game_accent_soft: COLORREF(0x003B2C21),
+        bg: COLORREF(0x00121212),
+        bg_title: COLORREF(0x000E0E0E),
+        bg_side: COLORREF(0x00181818),
+        bg_card: COLORREF(0x00232323),
+        bg_alt: COLORREF(0x002B2B2B),
+        bg_hover: COLORREF(0x00363636),
+        text: COLORREF(0x00F2F2F2),
+        text_dim: COLORREF(0x00A8A8A8),
+        nav_text: COLORREF(0x00F2F2F2),
+        nav_text_dim: COLORREF(0x00999999),
+        nav_card: COLORREF(0x002D2D2D),
+        accent: COLORREF(0x00FC822F),
+        accent_dark: COLORREF(0x00D56A1F),
+        accent_soft: COLORREF(0x00233647),
+        game_accent: COLORREF(0x00FC822F),
+        game_accent_soft: COLORREF(0x00233647),
         success: COLORREF(0x006FCB93),
-        shadow: COLORREF(0x00110D0A),
-        track: COLORREF(0x00463E37),
-        border: COLORREF(0x004D443B),
-        banner_top: COLORREF(0x00F28E38),
-        banner_bot: COLORREF(0x00D06E28),
+        shadow: COLORREF(0x000A0A0A),
+        track: COLORREF(0x00333333),
+        border: COLORREF(0x00383838),
+        banner_top: COLORREF(0x0048A0FF),
+        banner_bot: COLORREF(0x002F82FC),
     };
 
     fn pal(theme: Theme) -> &'static Palette {
@@ -1188,9 +1188,11 @@ mod imp {
         let content_x = content_left(win_w) + 2;
         let content_right = win_w - 42;
         let content_w = (content_right - content_x).max(420);
-        let nav_left = 222;
-        let nav_right = win_w - if win_w >= 1180 { 322 } else { 116 };
-        let nav_w = ((nav_right - nav_left) / 5).clamp(108, 190);
+        let nav_left = 14;
+        let nav_right = SIDE_W - 14;
+        let nav_item_h = 44;
+        let nav_gap = 4;
+        let nav_top = TITLE_H + 92;
         let hero_top = TITLE_H + 82;
         let hero_bottom = hero_top + ((win_h - TITLE_H - 48) * 54 / 100).clamp(320, 430);
         let store_panel_w = (content_w / 3).clamp(266, 320);
@@ -1269,12 +1271,21 @@ mod imp {
         let account_right = content_right - 10;
         let account_card_w = ((account_right - account_left - 24) / 2).max(240);
         let account_button_w = ((account_card_w - 48) / 2).clamp(112, 250);
+        let nav_row = |row: i32| {
+            let top = nav_top + row * (nav_item_h + nav_gap);
+            RECT {
+                left: nav_left,
+                top,
+                right: nav_right,
+                bottom: top + nav_item_h,
+            }
+        };
         Rects {
-            nav_store: RECT { left: nav_left, top: 12, right: nav_left + nav_w, bottom: 60 },
-            nav_library: RECT { left: nav_left + nav_w, top: 12, right: nav_left + nav_w * 2, bottom: 60 },
-            nav_downloads: RECT { left: nav_left + nav_w * 2, top: 12, right: nav_left + nav_w * 3, bottom: 60 },
-            nav_account: RECT { left: nav_left + nav_w * 3, top: 12, right: nav_left + nav_w * 4, bottom: 60 },
-            nav_settings: RECT { left: nav_left + nav_w * 4, top: 12, right: nav_left + nav_w * 5, bottom: 60 },
+            nav_store: nav_row(0),
+            nav_library: nav_row(1),
+            nav_downloads: nav_row(2),
+            nav_account: nav_row(3),
+            nav_settings: nav_row(4),
             // Home hero.
             card: RECT {
                 left: content_x,
@@ -1645,18 +1656,39 @@ mod imp {
         };
         fill_rect(mem, &full, p.bg)?;
 
-        // New storefront shell: brand and five clear destinations live in one
-        // top bar. The main content gets the full width instead of a permanent
-        // 246-pixel rail.
         let title_r = RECT { left: 0, top: 0, right: paint_w, bottom: TITLE_H };
         fill_rect(mem, &title_r, p.bg_title)?;
-        let title_rule = RECT { left: 0, top: TITLE_H - 2, right: paint_w, bottom: TITLE_H };
-        fill_gradient(mem, &title_rule, p.accent, p.game_accent)?;
-        if draw_logo_bitmap(mem, st.team_logo_bitmap, 22, 16, 40).is_err() {
-            draw_text(mem, "RT", 24, 22, 36, 24, p.accent, 14, true, true)?;
+        let side_r = RECT {
+            left: 0,
+            top: TITLE_H,
+            right: SIDE_W,
+            bottom: paint_h,
+        };
+        fill_rect(mem, &side_r, p.bg_side)?;
+        let rail_rule = RECT {
+            left: SIDE_W - 1,
+            top: TITLE_H,
+            right: SIDE_W,
+            bottom: paint_h,
+        };
+        fill_rect(mem, &rail_rule, p.border)?;
+        if draw_logo_bitmap(mem, st.team_logo_bitmap, 18, 16, 40).is_err() {
+            draw_text(mem, "RT", 20, 22, 36, 24, p.accent, 14, true, true)?;
         }
-        draw_text(mem, "RIPO TEAM", 72, 15, 136, 24, p.nav_text, 14, true, false)?;
-        draw_text(mem, "FLUX REC  ·  PC", 72, 39, 136, 15, p.nav_text_dim, 8, true, false)?;
+        draw_text(mem, "RIPO TEAM", 66, 15, 168, 24, p.nav_text, 14, true, false)?;
+        draw_text(mem, "Launcher", 66, 39, 168, 15, p.nav_text_dim, 8, true, false)?;
+        draw_text(
+            mem,
+            "NAVIGATE",
+            22,
+            TITLE_H + 62,
+            SIDE_W - 44,
+            14,
+            p.nav_text_dim,
+            8,
+            true,
+            false,
+        )?;
         if !matches!(st.view, View::Welcome | View::Onboarding) {
             draw_nav(
                 mem,
@@ -1809,10 +1841,10 @@ mod imp {
         }
         if active {
             let marker = RECT {
-                left: r.left + (r.right - r.left) / 2 - 16,
-                top: r.bottom - 4,
-                right: r.left + (r.right - r.left) / 2 + 16,
-                bottom: r.bottom - 2,
+                left: r.left + 2,
+                top: r.top + 8,
+                right: r.left + 5,
+                bottom: r.bottom - 8,
             };
             round_rect_path(hdc, &marker, 2, p.accent)?;
         }

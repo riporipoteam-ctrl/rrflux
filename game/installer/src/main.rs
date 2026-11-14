@@ -2437,7 +2437,7 @@ fn main() {
         && find_game_exe(&dir).is_some()
         && tachyon::is_provisioned_host(&dir)
     {
-        tachyon::ensure_server_ready(&dir);
+        tachyon::ensure_server_ready(&dir, &tachyon::match_presence_base(&ns_host));
         tachyon::kick_off(&dir);
     }
 

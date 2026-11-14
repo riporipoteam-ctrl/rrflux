@@ -575,8 +575,14 @@ async function notifyFriendsPresence(c: Context<App>, playerId: number): Promise
  * only happens on that no-presence path; a normal matchmake carries `prev` forward.
  */
 async function enterRoom(c: Context<App>, id: number, roomInstance: RoomInstance): Promise<void> {
+	const postedLock = await readLoginLock(c)
 	const prev = await getPresence<RoomInstance>(c.env.DB, id)
 	const account = prev ? null : await getAccount(c.env.DB, id)
+	const loginLock = postedLock ?? prev?.loginLock
+	const loginSessions = { ...(prev?.loginSessions ?? {}) }
+	if (loginLock !== undefined) {
+		loginSessions[loginLock] = { roomInstance }
+	}
 	await setPresence(c.env.DB, {
 		accountId: id,
 		roomInstance,
@@ -588,9 +594,8 @@ async function enterRoom(c: Context<App>, id: number, roomInstance: RoomInstance
 		// making this call, while `prev` can be a row left by an earlier session on an
 		// older build.
 		appVersion: (await callerVersion(c)) ?? prev?.appVersion ?? GAME_VERSION,
-		// Carry the session lock recorded at login forward, so matchmake doesn't wipe it
-		// and the heartbeat can keep verifying against it.
-		loginLock: prev?.loginLock,
+		loginLock,
+		loginSessions,
 	})
 
 	// Count the visit. Every matchmake route funnels through here with the instance the
@@ -1189,6 +1194,33 @@ async function readLoginLock(c: Context<App>): Promise<string | undefined> {
 	return fieldString(await readRequestFields(c), 'LoginLock')
 }
 
+/** Which instance this session should load — per-lock when parallel devices are active. */
+function roomForCaller(
+	presence: StoredPresence<RoomInstance> | null | undefined,
+	postedLock: string | undefined
+): RoomInstance | null | undefined {
+	if (!presence) return undefined
+	const sessionRoom = postedLock ? presence.loginSessions?.[postedLock]?.roomInstance : undefined
+	if (sessionRoom !== undefined) return sessionRoom
+	if (
+		postedLock !== undefined &&
+		presence.loginLock !== undefined &&
+		presence.loginLock !== postedLock
+	) {
+		return undefined
+	}
+	return presence.roomInstance ?? null
+}
+
+/** Another client is live under a different `LoginLock` on the same account. */
+function anotherDeviceSessionActive(
+	presence: StoredPresence<RoomInstance> | null | undefined,
+	postedLock: string | undefined
+): boolean {
+	if (!presence || postedLock === undefined || presence.loginLock === undefined) return false
+	return presence.loginLock !== postedLock
+}
+
 /** Read the `JoinMode` field (2 = private instance). */
 async function readJoinMode(c: Context<App>): Promise<number> {
 	return fieldInt(await readRequestFields(c), 'JoinMode') ?? 0
@@ -1504,12 +1536,22 @@ async function matchmakeIntoRoom(c: Context<App>) {
  * empty past the grace window, and they simply get a fresh one on the next visit.
  */
 async function playerDormInstance(c: Context<App>, accountId: number): Promise<RoomInstance> {
+	const postedLock = await readLoginLock(c)
+	const presence = await getPresence<RoomInstance>(c.env.DB, accountId)
 	const room = await getOrCreateDormRoom(c.env.DB, accountId)
 	const f = instanceFieldsFromRoom(room)
 	const gameVersion = await callerGameVersion(c)
-	// Reuse this build's dorm instance (private, so getJoinableInstance won't find it).
+
+	const sessionRoom = postedLock ? roomForCaller(presence, postedLock) : undefined
+	if (sessionRoom != null && sessionRoom.roomId === f.roomId) {
+		return sessionRoom
+	}
+
+	// Reuse this build's dorm instance (private, so getJoinableInstance won't find it),
+	// unless another device is already playing on a different LoginLock — sharing one
+	// Photon dorm id across two clients is what hangs load at ~18–25%.
 	let instance = (await getRoomInstancesByRoom(c.env.DB, f.roomId, gameVersion))[0]
-	if (!instance) {
+	if (!instance || anotherDeviceSessionActive(presence, postedLock)) {
 		instance = await createRoomInstance(c.env.DB, {
 			ownerAccountId: accountId,
 			roomId: f.roomId,
@@ -1813,7 +1855,13 @@ const app = new Hono<App>()
 			if (!Number.isInteger(playerId)) return c.json(NO_INSTANCE)
 
 			const presence = await getPresence<RoomInstance>(c.env.DB, playerId)
-			return c.json(presence?.roomInstance?.roomInstanceId ?? NO_INSTANCE)
+			const primary = presence?.roomInstance?.roomInstanceId
+			if (primary != null && primary !== NO_INSTANCE) return c.json(primary)
+			for (const session of Object.values(presence?.loginSessions ?? {})) {
+				const id = session?.roomInstance?.roomInstanceId
+				if (id != null && id !== NO_INSTANCE) return c.json(id)
+			}
+			return c.json(NO_INSTANCE)
 		}
 	)
 
@@ -1894,15 +1942,19 @@ const app = new Hono<App>()
 			// isn't in a room yet, so roomInstance=null / isOnline=false.
 			const presence = await getPresence<RoomInstance>(c.env.DB, id)
 			if (presence) {
-				// A heartbeat whose LoginLock disagrees with the one recorded at login belongs
-				// to a superseded session — return nothing so that stale client stops acting as
-				// the live one. (No posted lock, or none recorded yet, skips the check.)
+				// A heartbeat whose LoginLock disagrees with the primary lock is either a
+				// parallel device (when we have a per-lock session row) or a superseded client.
 				if (
 					postedLock !== undefined &&
 					presence.loginLock !== undefined &&
 					presence.loginLock !== postedLock
 				) {
-					return c.body(null, 200)
+					const parallel = presence.loginSessions?.[postedLock]?.roomInstance
+					if (parallel === undefined) {
+						return c.body(null, 200)
+					}
+					const forClient = { ...presence, roomInstance: parallel }
+					return c.json(playerPayload(id, forClient, version))
 				}
 
 				// Adopt the token's build when it differs from what the row holds, so the
@@ -2813,8 +2865,11 @@ const app = new Hono<App>()
 			// A BANNED caller gets their dorm whatever their presence says. The ban gate let them
 			// this far so the client can finish loading in and draw the block screen; answering
 			// the instance a stale presence row names would walk them back into a public room.
+			const postedLock = await readLoginLock(c)
 			const presence = c.get('bannedToDorm') ? null : await getPresence<RoomInstance>(c.env.DB, id)
-			const current = presence?.roomInstance ?? (await playerDormInstance(c, id))
+			const fromPresence = roomForCaller(presence, postedLock)
+			const current =
+				(c.get('bannedToDorm') ? null : fromPresence) ?? (await playerDormInstance(c, id))
 			await enterRoom(c, id, current)
 			return matchmakeResult(c, 0, current)
 		}
@@ -2895,14 +2950,18 @@ const app = new Hono<App>()
 			if (id === null) return unauthorized(c)
 
 			const apps = photonApps(c.env)
+			const postedLock = await readLoginLock(c)
 			const presence = await getPresence<RoomInstance>(c.env.DB, id)
 			// Presence first (it's the instance the player is actually in); the query param
 			// only stands in when there's no live presence to read. The instance id travels
 			// with the Photon room because the Tachyon server is derived from it — resolving
 			// one without the other would hand a joiner the right Photon room on a different
 			// game server than the rest of their session.
-			let roomInstanceId = presence?.roomInstance?.roomInstanceId ?? 0
-			let photonRoomId = presence?.roomInstance?.photonRoomId ?? ''
+			const roomFromSession = roomForCaller(presence, postedLock)
+			const activeRoom =
+				roomFromSession !== undefined ? roomFromSession : (presence?.roomInstance ?? null)
+			let roomInstanceId = activeRoom?.roomInstanceId ?? 0
+			let photonRoomId = activeRoom?.photonRoomId ?? ''
 			if (!photonRoomId) {
 				const requested = Number.parseInt(c.req.query('roomInstanceId') ?? '', 10)
 				if (!Number.isNaN(requested)) {

@@ -1627,6 +1627,47 @@ describe('auth-gated endpoints', () => {
 		expect(await dorm('20250718.01')).toMatchObject({ roomInstance: newer.roomInstance })
 	})
 
+	test('parallel LoginLocks on one account get separate dorm instances', async () => {
+		const headers = {
+			...(await bearer('44')),
+			'Content-Type': 'application/x-www-form-urlencoded',
+		}
+		const dorm = async (lock: string) =>
+			(await (
+				await exports.default.fetch(`${ORIGIN}/matchmake/dorm`, {
+					method: 'POST',
+					headers,
+					body: `LoginLock=${lock}`,
+				})
+			).json()) as {
+				roomInstance: { roomInstanceId: number; photonRoomId: string }
+			}
+
+		const pc = await dorm('device-pc-lock')
+		const laptop = await dorm('device-laptop-lock')
+		expect(laptop.roomInstance.roomInstanceId).not.toBe(pc.roomInstance.roomInstanceId)
+		expect(laptop.roomInstance.photonRoomId).not.toBe(pc.roomInstance.photonRoomId)
+
+		const heartbeat = async (lock: string) =>
+			(await (
+				await exports.default.fetch(`${ORIGIN}/player/heartbeat`, {
+					method: 'POST',
+					headers,
+					body: `LoginLock=${lock}`,
+				})
+			).json()) as { roomInstance: { roomInstanceId: number } }
+
+		expect((await heartbeat('device-pc-lock')).roomInstance.roomInstanceId).toBe(
+			pc.roomInstance.roomInstanceId
+		)
+		expect((await heartbeat('device-laptop-lock')).roomInstance.roomInstanceId).toBe(
+			laptop.roomInstance.roomInstanceId
+		)
+
+		// Same lock on the same build still re-enters the same dorm session.
+		expect((await dorm('device-pc-lock')).roomInstance).toMatchObject(pc.roomInstance)
+	})
+
 	test('a matchmake echoes the request’s CorrelationId (and mirrors errorCode as result)', async () => {
 		// The client tags each attempt with a GUID and won't accept a session whose
 		// response doesn't carry the same one back ("Unable to connect to game session").

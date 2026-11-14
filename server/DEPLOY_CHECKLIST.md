@@ -55,6 +55,12 @@ environment and deploy `match`. Do not set this to `127.0.0.1`: every client
 would connect to its own computer. When unset, `GET /player/connection-info`
 returns an empty voice connection address and the client takes its offline path.
 
+On the machine that runs `TachyonServer.exe`, set `TACHYON_PRESENCE_BASE` to your
+match worker origin (for example `https://match.<your-domain>`). The server calls
+`GET /tachyon?id=<accountId>` on each voice connect so players in different dorm
+instances do not share one relay shard. Without it, Tachyon still isolates by account
+(`acc-<id>`), which is enough for two people on two accounts loading dorms at once.
+
 The legacy 2023 plugin also uses Photon. Its Realtime, Voice and Chat app IDs are
 separate from Tachyon; the match Worker returns them through
 `RECFLARE_PHOTON_REALTIME_APP_ID`, `RECFLARE_PHOTON_VOICE_APP_ID`, and

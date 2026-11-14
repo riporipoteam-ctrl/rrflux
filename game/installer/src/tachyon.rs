@@ -100,6 +100,24 @@ const SERVER_SPAWNED_HASH_NAME: &str = "tachyon-server.spawned-hash";
 /// by matchmaking for local sessions).
 pub(crate) const SERVER_PORT: u16 = 7777;
 
+/// Match worker origin for the Playit host's Tachyon (`TACHYON_PRESENCE_BASE`).
+/// The NS hostname is `fluxrec-api.<domain>`; match lives at `match.<domain>`.
+pub(crate) fn match_presence_base(ns_host: &str) -> String {
+    let host = ns_host
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap_or(ns_host)
+        .trim();
+    let domain = host
+        .strip_prefix("fluxrec-api.")
+        .or_else(|| host.strip_prefix("api."))
+        .unwrap_or_else(|| host.find('.').map(|i| &host[i + 1..]).unwrap_or(host));
+    format!("https://match.{domain}")
+}
+
 /// Hard total budget for the synchronous readiness gate: the mirror
 /// sync, the spawn and the listen wait together may hold the game
 /// launch for at most this long. A 67 MB first-run download on a slow
@@ -961,7 +979,7 @@ fn yes_no(value: bool) -> &'static str {
 /// Returns true when a server is listening. Every failure path
 /// returns false and NEVER propagates an error: worst case the
 /// launch behaves exactly like the pre-Tachyon launcher.
-pub(crate) fn ensure_server_ready(game_dir: &Path) -> bool {
+pub(crate) fn ensure_server_ready(game_dir: &Path, presence_base: &str) -> bool {
     let started = Instant::now();
     if !udp_port_free(SERVER_PORT) {
         // No more unconditional fast path (that was the v1.0.80
@@ -1185,7 +1203,7 @@ pub(crate) fn ensure_server_ready(game_dir: &Path) -> bool {
     }
 
     // (b) Spawn hidden/detached if the port is (still) free.
-    ensure_running(game_dir);
+    ensure_running(game_dir, presence_base);
     gate_log(
         game_dir,
         &format!(
@@ -1384,7 +1402,7 @@ fn sha256_file(path: &Path) -> Option<String> {
 /// counts — the missing record just makes the listener look stale
 /// to the next launch, where the ownership proofs still gate any
 /// replacement.
-pub(crate) fn ensure_running(game_dir: &Path) -> Option<u32> {
+pub(crate) fn ensure_running(game_dir: &Path, presence_base: &str) -> Option<u32> {
     let exe = server_exe(game_dir);
     if !exe.is_file() {
         return None;
@@ -1392,7 +1410,7 @@ pub(crate) fn ensure_running(game_dir: &Path) -> Option<u32> {
     if !udp_port_free(SERVER_PORT) {
         return None; // already running (or another listener owns the port)
     }
-    let pid = spawn_server(&exe)?;
+    let pid = spawn_server(&exe, presence_base)?;
     write_server_pid(game_dir, pid);
     if let Some(hash) = sha256_file(&exe) {
         write_spawned_hash(game_dir, &hash);
@@ -1409,7 +1427,7 @@ fn udp_port_free(port: u16) -> bool {
 /// The `Child` handle itself is deliberately dropped: the server is
 /// detached and must outlive the launcher, not be reaped by it.
 #[cfg(windows)]
-fn spawn_server(exe: &Path) -> Option<u32> {
+fn spawn_server(exe: &Path, presence_base: &str) -> Option<u32> {
     use std::os::windows::process::CommandExt;
 
     // CREATE_NO_WINDOW | DETACHED_PROCESS: no console window, ever, and
@@ -1422,6 +1440,7 @@ fn spawn_server(exe: &Path) -> Option<u32> {
         .current_dir(dir)
         .arg("--log-path")
         .arg(dir.join("playit.log"))
+        .env("TACHYON_PRESENCE_BASE", presence_base)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -1755,6 +1774,18 @@ mod tests {
     };
     use std::path::Path;
     use std::time::Duration;
+
+    #[test]
+    fn match_presence_base_strips_fluxrec_api_prefix() {
+        assert_eq!(
+            super::match_presence_base("fluxrec-api.ripo-ripoteam.workers.dev"),
+            "https://match.ripo-ripoteam.workers.dev"
+        );
+        assert_eq!(
+            super::match_presence_base("https://api.flux.sitey.my/foo"),
+            "https://match.flux.sitey.my"
+        );
+    }
 
     #[test]
     fn parses_sha256sum_sidecar() {

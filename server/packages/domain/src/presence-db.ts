@@ -98,6 +98,13 @@ export interface PresenceInput<TRoomInstance = unknown> {
 	 * matchmake supplies one.
 	 */
 	loginLock?: string
+	/**
+	 * Additional live sessions for the same account (a second PC or laptop). Each client
+	 * posts a distinct `LoginLock`; the row's primary `loginLock`/`roomInstance` fields
+	 * track the most recent writer while per-lock entries keep parallel devices from
+	 * sharing one dorm Photon room or clobbering each other's load-in.
+	 */
+	loginSessions?: Record<string, { roomInstance: TRoomInstance | null }>
 }
 
 /** A stored presence row — the input plus its absolute expiry (epoch seconds). */

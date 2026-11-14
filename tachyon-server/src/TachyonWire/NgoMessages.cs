@@ -20,7 +20,7 @@ public sealed class MessageVersionData
 public static class NgoMessages
 {
     /// <summary>Server build version. Used in the startup self-identification line.</summary>
-    public const string ServerBuildVersion = "v13";
+    public const string ServerBuildVersion = "v14";
 
     /// <summary>Sentinel named type for the stock-NGO u64-header fallback path (v6).</summary>
     public const ushort NamedStockU64Unknown = 0xFFFF;
