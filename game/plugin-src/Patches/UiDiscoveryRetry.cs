@@ -146,6 +146,7 @@ internal static class UiDiscoveryRetry
                 // TickPatch(0, () => PlayButtonPatch.IsSettled, () => PlayButtonPatch.Apply());
                 TickPatch(1, () => FluxConnectButton.IsSettled, () => FluxConnectButton.Apply());
                 TickPatch(2, () => UltraGraphicsPatch.IsSettled, () => UltraGraphicsPatch.Apply());
+                TickPatch(5, () => LowEndGraphicsPatch.IsSettled, () => LowEndGraphicsPatch.Apply());
                 TickPatch(3, () => IsHomeLogoSettled(), () => HomeLogoPatch.Apply());
                 TickPatch(4, () => HomeLabelsPatch.IsSettled, () => HomeLabelsPatch.Apply());
                 _firstTick = false;

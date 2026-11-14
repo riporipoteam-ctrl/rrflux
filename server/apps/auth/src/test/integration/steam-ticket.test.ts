@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 
 import {
 	parseSteamTicket,
+	parseSteamTicketIdentityUnverified,
 	verifySteamTicket,
 	verifySteamTicketSignature,
 } from '../../steam-ticket'
@@ -56,5 +57,22 @@ describe('steam-ticket', () => {
 		expect(await verifySteamTicket('{}')).toBeNull()
 		expect(await verifySteamTicket(JSON.stringify({ Ticket: 'zzzz' }))).toBeNull()
 		expect(await verifySteamTicket(JSON.stringify({ Ticket: '1400' }))).toBeNull()
+	})
+
+	test('emulator parser trusts a JSON SteamId when the ticket blob is unusable', () => {
+		expect(
+			parseSteamTicketIdentityUnverified(
+				JSON.stringify({ Ticket: 'zzzz', AppId: '471710', SteamId: '76561198050191709' })
+			)
+		).toEqual({ steamId: '76561198050191709', appId: 471710 })
+	})
+
+	test('emulator parser ignores ticket expiry', () => {
+		const { expiresAt } = parseSteamTicket(hex(TICKET_HEX))!
+		const payload = JSON.stringify({ Ticket: TICKET_HEX, AppId: '471710' })
+		expect(parseSteamTicketIdentityUnverified(payload, expiresAt + 60_000)).toEqual({
+			steamId: '76561197962463211',
+			appId: 471710,
+		})
 	})
 })

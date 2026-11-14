@@ -37,4 +37,13 @@ public static class UltraQuality
 
     /// <summary>LOD bias for Ultra (higher = crisper detail further away).</summary>
     public const float LodBias = 2.0f;
+
+    /// <summary>GHCCKFEJDOA Low = 0.</summary>
+    public const int LowEnumValue = 0;
+
+    public const int LowAntiAliasing = 0;
+    public const int LowPixelLightCount = 1;
+    public const float LowShadowDistance = 40f;
+    public const float LowLodBias = 0.6f;
+    public const int LowTargetFrameRate = 30;
 }

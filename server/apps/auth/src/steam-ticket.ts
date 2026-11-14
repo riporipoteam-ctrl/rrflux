@@ -87,7 +87,10 @@ export interface SteamTicket {
  * Parse a Steam app/session ticket into its fields WITHOUT verifying the signature.
  * Returns null when the buffer isn't a well-formed, signed ticket.
  */
-export function parseSteamTicket(buf: Uint8Array): SteamTicket | null {
+export function parseSteamTicket(
+	buf: Uint8Array,
+	opts?: ParseSteamTicketOptions
+): SteamTicket | null {
 	const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
 	const r = new Reader(view)
 	const limit = buf.byteLength
@@ -137,18 +140,59 @@ export function parseSteamTicket(buf: Uint8Array): SteamTicket | null {
 		}
 		r.u16() // reserved
 
-		if (r.offset + 128 !== limit) return null // require a signature
-		return {
-			steamId,
-			appId,
-			expiresAt,
-			signedStart: ownershipTicketOffset,
-			signedEnd: ownershipTicketOffset + ownershipTicketLength,
-			signature: buf.subarray(r.offset, r.offset + 128),
+		const remaining = limit - r.offset
+		if (remaining === 128) {
+			return {
+				steamId,
+				appId,
+				expiresAt,
+				signedStart: ownershipTicketOffset,
+				signedEnd: ownershipTicketOffset + ownershipTicketLength,
+				signature: buf.subarray(r.offset, r.offset + 128),
+			}
 		}
+		// Goldberg / local Steam stubs often omit the 128-byte Steam System
+		// signature. Verified logins still require it; emulator mode does not.
+		if (opts?.requireSignature === false && remaining >= 0) {
+			return {
+				steamId,
+				appId,
+				expiresAt,
+				signedStart: ownershipTicketOffset,
+				signedEnd: ownershipTicketOffset + ownershipTicketLength,
+				signature: new Uint8Array(0),
+			}
+		}
+		return null
 	} catch {
 		return null // ran off the end / malformed
 	}
+}
+
+export interface ParseSteamTicketOptions {
+	/** Default true. Emulator tickets are allowed to omit the RSA blob. */
+	requireSignature?: boolean
+}
+
+/** Decode a Steam `platform_auth` JSON blob without verifying it. */
+function readPlatformAuthJson(platformAuth: string): Record<string, unknown> | null {
+	try {
+		const parsed = JSON.parse(platformAuth) as unknown
+		return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: null
+	} catch {
+		return null
+	}
+}
+
+function claimedSteamId(obj: Record<string, unknown>): string | null {
+	for (const key of ['SteamId', 'steamId', 'steamid', 'steam_id']) {
+		const value = obj[key]
+		if (typeof value === 'string' && /^\d{5,20}$/.test(value)) return value
+		if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return String(value)
+	}
+	return null
 }
 
 /** Verify a parsed ticket's ownership signature against Steam's System public key. */
@@ -213,22 +257,32 @@ export async function verifySteamTicket(
  */
 export function parseSteamTicketIdentityUnverified(
 	platformAuth: string,
-	now: number = Date.now()
+	_now: number = Date.now()
 ): VerifiedSteamIdentity | null {
-	let ticketHex: string
-	try {
-		const parsed = JSON.parse(platformAuth) as { Ticket?: unknown }
-		if (typeof parsed.Ticket !== 'string') return null
-		ticketHex = parsed.Ticket
-	} catch {
-		return null
+	const parsed = readPlatformAuthJson(platformAuth)
+	if (!parsed) return null
+
+	const ticketHex = typeof parsed.Ticket === 'string' ? parsed.Ticket : ''
+	if (ticketHex) {
+		const buf = hexToBytes(ticketHex)
+		if (buf) {
+			const ticket = parseSteamTicket(buf, { requireSignature: false })
+			if (ticket) {
+				// Emulator clocks and Goldberg expiry fields are often wrong;
+				// a private server cannot treat that as a hard login failure.
+				return { steamId: ticket.steamId, appId: ticket.appId }
+			}
+		}
 	}
 
-	const buf = hexToBytes(ticketHex)
-	if (!buf) return null
-	const ticket = parseSteamTicket(buf)
-	if (!ticket) return null
-	if (ticket.expiresAt !== 0 && ticket.expiresAt < now) return null // expired
-
-	return { steamId: ticket.steamId, appId: ticket.appId }
+	const steamId = claimedSteamId(parsed)
+	if (!steamId) return null
+	const appIdRaw = parsed.AppId ?? parsed.appId
+	const appId =
+		typeof appIdRaw === 'number'
+			? appIdRaw
+			: typeof appIdRaw === 'string'
+				? Number.parseInt(appIdRaw, 10)
+				: 471710
+	return { steamId, appId: Number.isFinite(appId) ? appId : 471710 }
 }

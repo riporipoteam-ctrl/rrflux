@@ -268,6 +268,42 @@ describe('auth worker routes', () => {
 		expect(picker[0]?.accountId).toBe(0)
 	})
 
+	test('GET Steam lookup remembers a password login when the device id is on the query string', async () => {
+		const deviceId = '69640e6ae1b54ae5b0ca8eeb4a8872ec6cf8fd88'
+		const steamId = '76561198050191711'
+		await env.DB.prepare('INSERT OR IGNORE INTO account (data) VALUES (?1)')
+			.bind(JSON.stringify({ accountId: 2026088, username: 'LaptopGetPlayer',
+				deviceId, createdAt: '2026-11-14T00:00:00.000Z' }))
+			.run()
+		const res = await exports.default.fetch(
+			`${ORIGIN}/cachedlogin/forplatformid/0/${steamId}?deviceId=${deviceId}`
+		)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual([{
+			platform: 0, platformId: steamId, accountId: 2026088,
+			lastLoginTime: '2026-11-14T00:00:00.000Z', requirePassword: true,
+		}])
+	})
+
+	test('POST Steam lookup accepts device_id and shorter Rec Room DUIDs', async () => {
+		const deviceId = '491e8b9c42ab'
+		const steamId = '76561198050191712'
+		await env.DB.prepare('INSERT OR IGNORE INTO account (data) VALUES (?1)')
+			.bind(JSON.stringify({ accountId: 2026089, username: 'ShortDuidPlayer',
+				deviceId, createdAt: '2026-11-14T00:00:00.000Z' }))
+			.run()
+		const res = await exports.default.fetch(`${ORIGIN}/cachedlogin/forplatformid/0/${steamId}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+ mar			body: new URLSearchParams({ device_id: deviceId }).toString(),
+		})
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual([{
+			platform: 0, platformId: steamId, accountId: 2026089,
+			lastLoginTime: '2026-11-14T00:00:00.000Z', requirePassword: true,
+		}])
+	})
+
 	// The one stubbed identity: `1/1` consults nothing and always answers the canned
 	// entry, which is how a sideloaded APK (no Meta SDK, so no real identity) gets off
 	// the platform login screen and onto username/password.
@@ -331,6 +367,29 @@ describe('auth worker routes', () => {
 		expect(res.status).toBe(400)
 		expect(res.json.error).toBe('invalid_grant')
 		expect(res.json.error_description).toContain('platform_auth')
+	})
+
+	test('Steam cached_login on an emulator accepts a remembered device id', async () => {
+		const deviceId = '69640e6ae1b54ae5b0ca8eeb4a8872ec6cf8fd88'
+		await env.DB.prepare('INSERT OR IGNORE INTO account (data) VALUES (?1)')
+			.bind(
+				JSON.stringify({
+					accountId: 2026090,
+					username: 'DeviceBoundPlayer',
+					deviceId,
+				})
+			)
+			.run()
+		const ok = await postToken(
+			`grant_type=cached_login&account_id=2026090&platform=0&platform_id=76561198050191709&device_id=${deviceId}`
+		)
+		expect(ok.status).toBe(200)
+		expect(decodePayload(ok.json.access_token as string).sub).toBe('2026090')
+
+		const otherDevice = await postToken(
+			'grant_type=cached_login&account_id=2026090&platform=0&platform_id=76561198050191709&device_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+		)
+		expect(otherDevice.status).toBe(400)
 	})
 
 	test('Meta create_account requires a platform_auth nonce', async () => {
