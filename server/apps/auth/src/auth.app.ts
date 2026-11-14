@@ -10,6 +10,7 @@ import {
 	GAME_VERSION,
 	getAccount,
 	getAccountByUsername,
+	getAccountsByDeviceId,
 	getAccountsByIds,
 	getPasswordHash,
 	getRoomById,
@@ -578,6 +579,26 @@ const app = new Hono<App>()
 			if (platformInt === PlatformType.Steam) {
 				const steamLinks = await getLinksForPlatformIdentity(c.env.DB, platformInt, id)
 				if (steamLinks.length === 0) {
+					// The standalone client can use a Steam emulator whose ticket cannot be
+					// verified. A password login still records its stable device ID. Offer
+					// those accounts in the picker on the next launch, but always demand
+					// their passwords: a posted device ID is only a hint, never auth.
+					if (c.req.method === 'POST') {
+						const body: Record<string, string | File> = await c.req.parseBody().catch(() => ({}))
+						const deviceId = typeof body.deviceId === 'string' ? body.deviceId : ''
+						if (/^[a-f0-9]{32,64}$/i.test(deviceId)) {
+							const recent = (await getAccountsByDeviceId(c.env.DB, deviceId)).slice(0, 8)
+							if (recent.length > 0) {
+								return c.json(recent.map((account) => ({
+									platform: PlatformType.Steam,
+									platformId: id,
+									accountId: account.accountId,
+									lastLoginTime: account.lastLoginTime ?? account.createdAt,
+									requirePassword: true,
+								})))
+							}
+						}
+					}
 					return c.json([
 						{
 							platform: PlatformType.Steam,

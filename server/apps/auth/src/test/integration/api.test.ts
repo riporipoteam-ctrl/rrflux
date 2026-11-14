@@ -246,6 +246,28 @@ describe('auth worker routes', () => {
 		expect(typeof body[0].lastLoginTime).toBe('string')
 	})
 
+	test('POST Steam lookup remembers a password login on this device without granting passwordless access', async () => {
+		const deviceId = '69640e6ae1b54ae5b0ca8eeb4a8872ec6cf8fd88'
+		const steamId = '76561198050191709'
+		await env.DB.prepare('INSERT OR IGNORE INTO account (data) VALUES (?1)')
+			.bind(JSON.stringify({ accountId: 2026087, username: 'LaptopPlayer',
+				deviceId, createdAt: '2026-11-14T00:00:00.000Z' }))
+			.run()
+		const res = await exports.default.fetch(`${ORIGIN}/cachedlogin/forplatformid/0/${steamId}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({ deviceId }).toString(),
+		})
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual([{
+			platform: 0, platformId: steamId, accountId: 2026087,
+			lastLoginTime: '2026-11-14T00:00:00.000Z', requirePassword: true,
+		}])
+		const withoutDevice = await exports.default.fetch(`${ORIGIN}/cachedlogin/forplatformid/0/${steamId}`)
+		const picker = await withoutDevice.json() as Array<{ accountId: number }>
+		expect(picker[0]?.accountId).toBe(0)
+	})
+
 	// The one stubbed identity: `1/1` consults nothing and always answers the canned
 	// entry, which is how a sideloaded APK (no Meta SDK, so no real identity) gets off
 	// the platform login screen and onto username/password.
