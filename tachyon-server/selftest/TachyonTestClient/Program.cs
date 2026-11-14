@@ -145,6 +145,7 @@ internal static class Program
         bool roomUpdateSent = false;
         bool joinResponseReceived = false;
         bool roomUpdateEchoReceived = false;
+        bool roomBarrierEchoReceived = false;
         ulong ownerClientId = 0;
         bool timeSyncReplyReceived = false;
         int timeSyncReplyTick = -1;
@@ -207,11 +208,18 @@ internal static class Program
                 // answer (HandshakeResponse + ClientState burst).
                 if (index == 3 && NgoMessages.TryParseNamedMessageBody(cursor, out ushort nType, out byte[] rest))
                 {
+                    if (nType == NgoMessages.NamedRRServerToClientProxied && rest.Length >= 5 &&
+                        BitConverter.ToInt32(rest, 0) == (int)ownerClientId && rest[4] == 22)
+                    {
+                        roomBarrierEchoReceived = true;
+                        Console.WriteLine("ROOM_BARRIER_ECHO=PASS");
+                        return;
+                    }
                     if (nType == NgoMessages.NamedRRServerToClient && rest.Length > 0)
                     {
                         if (rest[0] == 101 && rest.Length >= 20 && rest[1] == 1 && rest[2] == 7 &&
                             BitConverter.ToUInt64(rest, 3) == ownerClientId && BitConverter.ToInt32(rest, 11) == 1 &&
-                            rest[15] == 15 && BitConverter.ToUInt64(rest, 16) == ownerClientId)
+                            BitConverter.ToUInt64(rest, 15) == ownerClientId && rest[23] == 15)
                         {
                             joinResponseReceived = true;
                             Console.WriteLine("ROOM_JOIN_RESPONSE=PASS");
@@ -396,12 +404,12 @@ internal static class Program
                     // [payload], no Dissonance i32 wrapper) via
                     // BuildRawNamedMessageBody. The server must log the
                     // kind 3->4 relay line (0 recipients single-client).
-                    var proxiedPayload = new List<byte> { 42 }; // event byte
+                    var proxiedPayload = new List<byte> { 22 }; // RRBufferedRoomEvent
                     proxiedPayload.AddRange(BitConverter.GetBytes(777)); // cache index, int32 LE
                     proxiedPayload.AddRange(Encoding.UTF8.GetBytes("room-proxied-probe"));
                     SendBatch(peer, Frame(3, NgoMessages.BuildRawNamedMessageBody(NgoMessages.NamedRRClientToServerProxied, proxiedPayload.ToArray())));
                     roomProxiedSent = true;
-                    Console.WriteLine("[client] kind-3 proxied room probe sent (event=42 cacheIndex=777, " + proxiedPayload.Count + "B payload)");
+                    Console.WriteLine("[client] kind-3 proxied room probe sent (event=22 cacheIndex=777, " + proxiedPayload.Count + "B payload)");
                     Console.WriteLine("ROOM_PROXIED_PROBE_SENT=PASS");
                 }
                 if (!roomDataSent && sinceApprovalMs > 700)
@@ -449,7 +457,7 @@ internal static class Program
                 }
                 bool holdDone = sinceApprovalMs >= Math.Max(holdMs, 1100);
                 bool relayDone = !expectRelay || relayReceived;
-                if (probeSent && timeSyncSent && stockU64Sent && roomProxiedSent && roomDataSent && joinResponseReceived && roomUpdateEchoReceived && timeSyncReplyReceived && clientStateSent && handshakeSent && handshakeAnswered && clientStateReceived && holdDone && relayDone) break;
+                if (probeSent && timeSyncSent && stockU64Sent && roomProxiedSent && roomBarrierEchoReceived && roomDataSent && joinResponseReceived && roomUpdateEchoReceived && timeSyncReplyReceived && clientStateSent && handshakeSent && handshakeAnswered && clientStateReceived && holdDone && relayDone) break;
             }
             Thread.Sleep(10);
         }
@@ -480,9 +488,9 @@ internal static class Program
             Console.WriteLine($"SELFTEST_RESULT=FAIL v7 checks incomplete (roomProxied={roomProxiedSent} roomData={roomDataSent} timeSyncReply={timeSyncReplyReceived} tick={timeSyncReplyTick})");
             return 1;
         }
-        if (!joinResponseReceived || !roomUpdateEchoReceived)
+        if (!joinResponseReceived || !roomUpdateEchoReceived || !roomBarrierEchoReceived)
         {
-            Console.WriteLine($"SELFTEST_RESULT=FAIL room join/update (join={joinResponseReceived} echo={roomUpdateEchoReceived})");
+            Console.WriteLine($"SELFTEST_RESULT=FAIL room join/update (join={joinResponseReceived} update={roomUpdateEchoReceived} barrier={roomBarrierEchoReceived})");
             return 1;
         }
         if (expectRelay)

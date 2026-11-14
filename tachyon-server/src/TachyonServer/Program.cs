@@ -733,7 +733,10 @@ internal static class Program
                 byte[] fwdBody = NgoMessages.BuildRawNamedMessageBody(
                     NgoMessages.NamedRRServerToClientProxied, fwd.ToArray());
                 int proxiedSent = 0;
-                foreach (var other in Sessions.Values.Where(s => s.Approved && s.InstanceId == session.InstanceId && !ReferenceEquals(s, session)).ToList())
+                // RRBufferedRoomEvent (22) is a loopback barrier. The
+                // sender must receive its own event, even alone in a dorm.
+                foreach (var other in Sessions.Values.Where(s => s.Approved && s.InstanceId == session.InstanceId &&
+                    (eventByte == 22 || !ReferenceEquals(s, session))).ToList())
                 {
                     SendMessage(other, fwdBody);
                     proxiedSent++;
@@ -760,8 +763,12 @@ internal static class Program
                     int platformChars = BitConverter.ToInt32(rest, platformOffset);
                     if (platformChars < 0 || platformChars > 128 || rest.Length < platformOffset + 4 + platformChars * 2 + 5)
                     { Log("[room] invalid join platform/property length"); return; }
-                    var player = new List<byte> { 15 }; // PlayerDataFields.All
+                    // The 2026 reader consumes clientId before the mask.
+                    // Sending mask first makes it skip all optional fields
+                    // and misread the name length as a dictionary variant.
+                    var player = new List<byte>();
                     player.AddRange(BitConverter.GetBytes(session.ClientId));
+                    player.Add(15); // PlayerDataFields.All
                     player.AddRange(rest.Skip(1).Take(platformOffset - 1));
                     player.AddRange(BitConverter.GetBytes(int.TryParse(session.AccountId, out int accountId) ? accountId : 0));
                     player.AddRange(rest.Skip(platformOffset));
