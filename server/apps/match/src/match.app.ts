@@ -72,6 +72,7 @@ import {
 	form,
 	InProgressRequest,
 	InstanceIdResponse,
+	TachyonShardResponse,
 	InviteRequest,
 	InviteResponse,
 	JoinModeRequest,
@@ -1221,6 +1222,36 @@ function anotherDeviceSessionActive(
 	return presence.loginLock !== postedLock
 }
 
+/** Primary plus per-`LoginLock` session rows — every live matchmake target. */
+function presenceRoomInstances(presence: Presence | null | undefined): RoomInstance[] {
+	if (!presence) return []
+	const out: RoomInstance[] = []
+	if (presence.roomInstance) out.push(presence.roomInstance)
+	for (const row of Object.values(presence.loginSessions ?? {})) {
+		if (row?.roomInstance) out.push(row.roomInstance)
+	}
+	return out
+}
+
+/**
+ * Voice/roster shard for the shared public Tachyon host. Concurrent players must not
+ * share the legacy `default` namespace during dorm loads. Active instance ids (including
+ * each parallel device's dorm) share one shard per id; otherwise fall back to per-account.
+ */
+function tachyonVoiceShard(
+	accountId: number,
+	presence: Presence | null | undefined
+): { shard: string; roomInstanceId: number } {
+	let bestId = NO_INSTANCE
+	for (const room of presenceRoomInstances(presence)) {
+		const id = room.roomInstanceId
+		if (id == null || id === NO_INSTANCE || id === ORIENTATION_INSTANCE_ID) continue
+		if (id > bestId) bestId = id
+	}
+	if (bestId !== NO_INSTANCE) return { shard: String(bestId), roomInstanceId: bestId }
+	return { shard: `acc-${accountId}`, roomInstanceId: NO_INSTANCE }
+}
+
 /** Read the `JoinMode` field (2 = private instance). */
 async function readJoinMode(c: Context<App>): Promise<number> {
 	return fieldInt(await readRequestFields(c), 'JoinMode') ?? 0
@@ -1862,6 +1893,36 @@ const app = new Hono<App>()
 				if (id != null && id !== NO_INSTANCE) return c.json(id)
 			}
 			return c.json(NO_INSTANCE)
+		}
+	)
+
+	// Ungated shard resolver for the bundled Tachyon server (`TACHYON_PRESENCE_BASE`).
+	// Answers which relay namespace a player belongs in — not just the primary instance id.
+	.get(
+		'/tachyon/shard',
+		describeRoute({
+			tags: ['Presence'],
+			summary: 'Tachyon voice/roster shard for a player',
+			description:
+				'JSON `{ shard, roomInstanceId }` for the shared UDP host. Picks the highest active instance id across parallel LoginLock sessions; loading players get `acc-{accountId}`.',
+			parameters: [
+				{
+					name: 'id',
+					in: 'query',
+					required: false,
+					description: 'Account id to look up',
+					schema: { type: 'integer' },
+				},
+			],
+			responses: { 200: json(TachyonShardResponse, 'Shard key and instance id') },
+		}),
+		async (c) => {
+			const playerId = Number.parseInt(c.req.query('id') ?? '', 10)
+			if (!Number.isInteger(playerId) || playerId <= 0) {
+				return c.json({ shard: 'default', roomInstanceId: NO_INSTANCE })
+			}
+			const presence = await getPresence<RoomInstance>(c.env.DB, playerId)
+			return c.json(tachyonVoiceShard(playerId, presence))
 		}
 	)
 

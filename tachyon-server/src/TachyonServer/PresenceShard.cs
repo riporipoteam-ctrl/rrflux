@@ -32,23 +32,36 @@ internal static class PresenceShard
             return "default";
         }
 
-        int roomInstanceId = 0;
         if (PresenceBase.Length > 0)
         {
             try
             {
-                roomInstanceId = FetchRoomInstanceIdAsync(id).GetAwaiter().GetResult();
+                string shard = FetchShardAsync(id).GetAwaiter().GetResult();
+                if (!string.IsNullOrWhiteSpace(shard))
+                {
+                    log($"[presence] shard '{shard}' for account {id}");
+                    return shard;
+                }
             }
             catch (Exception e)
             {
                 log($"[presence] shard lookup failed for account {id}: {e.Message}");
             }
-        }
 
-        if (roomInstanceId != 0)
-        {
-            log($"[presence] shard roomInstanceId={roomInstanceId} for account {id}");
-            return roomInstanceId.ToString();
+            try
+            {
+                int roomInstanceId = FetchLegacyRoomInstanceIdAsync(id).GetAwaiter().GetResult();
+                if (roomInstanceId != 0)
+                {
+                    string legacy = roomInstanceId.ToString();
+                    log($"[presence] shard legacy roomInstanceId={legacy} for account {id}");
+                    return legacy;
+                }
+            }
+            catch (Exception e)
+            {
+                log($"[presence] legacy /tachyon lookup failed for account {id}: {e.Message}");
+            }
         }
 
         string solo = $"acc-{id}";
@@ -56,7 +69,23 @@ internal static class PresenceShard
         return solo;
     }
 
-    private static async Task<int> FetchRoomInstanceIdAsync(int accountId)
+    private static async Task<string> FetchShardAsync(int accountId)
+    {
+        string url = $"{PresenceBase}/tachyon/shard?id={accountId}";
+        using var res = await Http.GetAsync(url).ConfigureAwait(false);
+        res.EnsureSuccessStatusCode();
+        await using var stream = await res.Content.ReadAsStreamAsync().ConfigureAwait(false);
+        using var doc = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+        if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+            doc.RootElement.TryGetProperty("shard", out var shardEl) &&
+            shardEl.ValueKind == JsonValueKind.String)
+        {
+            return shardEl.GetString();
+        }
+        return null;
+    }
+
+    private static async Task<int> FetchLegacyRoomInstanceIdAsync(int accountId)
     {
         string url = $"{PresenceBase}/tachyon?id={accountId}";
         using var res = await Http.GetAsync(url).ConfigureAwait(false);

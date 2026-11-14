@@ -439,6 +439,17 @@ describe('public endpoints', () => {
 			.run()
 		expect(await tachyon('?id=4244')).toBe(-2)
 
+		const shardUrl = (id: number) => `${ORIGIN}/tachyon/shard?id=${id}`
+		const shardRes = await exports.default.fetch(shardUrl(4243))
+		expect(shardRes.status).toBe(200)
+		expect(await shardRes.json()).toEqual({
+			shard: String(roomInstance!.roomInstanceId),
+			roomInstanceId: roomInstance!.roomInstanceId,
+		})
+		const loadShard = await exports.default.fetch(shardUrl(4242))
+		expect(loadShard.status).toBe(200)
+		expect(await loadShard.json()).toEqual({ shard: 'acc-4242', roomInstanceId: 0 })
+
 		// An expired row is not presence, so its player is in nothing.
 		await env.DB.prepare('INSERT OR REPLACE INTO presence (data) VALUES (?1)')
 			.bind(

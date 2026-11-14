@@ -377,6 +377,15 @@ pub(crate) async fn ensure_server(game_dir: &Path) -> (SyncOutcome, Option<Strin
     }
     let exe = dir.join(SERVER_EXE_NAME);
 
+    // The public host often ships a newer hand-built server before the HF mirror
+    // catches up (and framework-dependent builds must not be replaced by exe-only
+    // downloads). Never pull from the mirror on a provisioned host when a binary
+    // is already installed — the gate still hashes it for staleness checks.
+    if is_provisioned_host(game_dir) && exe.is_file() {
+        println!("[tachyon] provisioned host — keeping installed server (no mirror overwrite).");
+        return (SyncOutcome::Unchanged, sha256_file(&exe));
+    }
+
     let client = match reqwest::Client::builder()
         .user_agent(concat!("FluxRec-Setup/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(std::time::Duration::from_secs(15))

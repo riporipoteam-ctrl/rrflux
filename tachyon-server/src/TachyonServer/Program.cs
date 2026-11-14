@@ -210,8 +210,8 @@ internal static class Program
         {
             try
             {
-                // InstanceId is set at handshake approval; placeholder until then.
-                Sessions[peer] = new VoiceSession { Peer = peer, InstanceId = _defaultInstance };
+                // Isolated placeholder until handshake picks the presence shard.
+                Sessions[peer] = new VoiceSession { Peer = peer, InstanceId = $"pending-{peer.Id}" };
                 Log($"[transport] LiteNetLib peer connected: id={peer.Id} endpoint={peer} (ConnectAccept flowed through RecRoomClientEncryptLayer)");
             }
             catch (Exception e)
@@ -336,7 +336,7 @@ internal static class Program
         }
         if (!Sessions.TryGetValue(peer, out var session))
         {
-            session = new VoiceSession { Peer = peer, InstanceId = _defaultInstance };
+            session = new VoiceSession { Peer = peer, InstanceId = $"pending-{peer.Id}" };
             Sessions[peer] = session;
         }
 

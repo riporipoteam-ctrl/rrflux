@@ -433,6 +433,18 @@ export const InstanceIdResponse = z
 	.describe('The player’s room instance id, or 0 when they are not in one')
 
 /**
+ * `GET /tachyon/shard?id=…` — which Tachyon voice/roster namespace a player belongs in.
+ * Public clubs share one shard per live instance id; loading or unknown presence uses
+ * a per-account shard so concurrent logins never relay on `default`.
+ */
+export const TachyonShardResponse = z.object({
+	shard: z.string().describe('Relay instance key — a decimal instance id or `acc-{accountId}`'),
+	roomInstanceId: z
+		.int()
+		.describe('The player’s highest active instance id, or 0 when none apply'),
+})
+
+/**
  * `GET /clubhousesearch/mostactivenow` — one row per clubhouse someone is standing in
  * right now, busiest first.
  *
