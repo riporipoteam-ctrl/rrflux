@@ -6,7 +6,7 @@
 2. Connect **GitHub** → install app on **`riporipoteam-ctrl/rrflux`**
 3. **Repository:** `riporipoteam-ctrl/rrflux`
 4. **Branch:** `main` (or `relay-cloud-deploy` until merged)
-5. **Working directory:** `/` (repo root — `hostless.yaml` + `relay-cloud/Dockerfile`)
+5. **Working directory:** `/` (repo root — `hostless.yaml` uses `relay-cloud/Dockerfile`)
 6. **Build system:** Docker (reads `hostless.yaml`)
 7. **Resources:** ≥ **256 MB** RAM (512 MB safer for .NET + playit)
 8. **Environment variables** (app settings → secrets):
@@ -21,7 +21,7 @@ Do **not** set `PORT` — Hostless sets it.
 
 9. **Health check path:** `/health` (already in `hostless.yaml`)
 
-Runtime writes keys/logs under **`/root/.fluxrec-relay`** only (Hostless root fs is read-only).
+Runtime writes only under **`/tmp/fluxrec`** and **`/app/.cache`** (app dir is read-only). playit runs as **`playitd --platform-docker`** (not `playit run`).
 
 ## After first green deploy
 
