@@ -23,6 +23,19 @@ Do **not** set `PORT` — Hostless sets it.
 
 Runtime writes only under **`/tmp/fluxrec`** and **`/app/.cache`** (app dir is read-only). playit runs as **`playitd --platform-docker`** (not `playit run`).
 
+## When Hostless logs won’t load
+
+Use the **GitHub Action** [Build relay Docker](https://github.com/riporipoteam-ctrl/rrflux/actions/workflows/build-relay-docker.yml) — every push to `main` that touches `Dockerfile` / `relay-cloud/` runs the same Docker build as Hostless and shows the full error in GitHub (reliable).
+
+From your PC (after `hostless auth login`):
+
+```powershell
+hostless deploy status --wait
+hostless logs -f
+```
+
+Helper: `powershell -File tachyon-server\relay\hostless-logs.ps1`
+
 ## After first green deploy
 
 1. Open app logs — confirm playit connected.
