@@ -28,8 +28,9 @@ internal static class PresenceShard
     {
         if (!int.TryParse(accountId, out int id) || id <= 0)
         {
-            log("[presence] could not parse account id for shard — using default");
-            return "default";
+            string unknownShard = $"acc-unknown-{accountId.GetHashCode():x8}";
+            log($"[presence] could not parse account id '{accountId}' — using solo shard '{unknownShard}'");
+            return unknownShard;
         }
 
         if (PresenceBase.Length > 0)
@@ -37,7 +38,8 @@ internal static class PresenceShard
             try
             {
                 string shard = FetchShardAsync(id).GetAwaiter().GetResult();
-                if (!string.IsNullOrWhiteSpace(shard))
+                if (!string.IsNullOrWhiteSpace(shard) &&
+                    !string.Equals(shard, "default", StringComparison.OrdinalIgnoreCase))
                 {
                     log($"[presence] shard '{shard}' for account {id}");
                     return shard;
@@ -53,8 +55,8 @@ internal static class PresenceShard
                 int roomInstanceId = FetchLegacyRoomInstanceIdAsync(id).GetAwaiter().GetResult();
                 if (roomInstanceId != 0)
                 {
-                    string legacy = roomInstanceId.ToString();
-                    log($"[presence] shard legacy roomInstanceId={legacy} for account {id}");
+                    string legacy = $"a{id}-i{roomInstanceId}";
+                    log($"[presence] shard legacy '{legacy}' for account {id}");
                     return legacy;
                 }
             }

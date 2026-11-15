@@ -443,7 +443,7 @@ describe('public endpoints', () => {
 		const shardRes = await exports.default.fetch(shardUrl(4243))
 		expect(shardRes.status).toBe(200)
 		expect(await shardRes.json()).toEqual({
-			shard: String(roomInstance!.roomInstanceId),
+			shard: `a4243-i${roomInstance!.roomInstanceId}`,
 			roomInstanceId: roomInstance!.roomInstanceId,
 		})
 		const loadShard = await exports.default.fetch(shardUrl(4242))
@@ -1677,6 +1677,28 @@ describe('auth-gated endpoints', () => {
 
 		// Same lock on the same build still re-enters the same dorm session.
 		expect((await dorm('device-pc-lock')).roomInstance).toMatchObject(pc.roomInstance)
+	})
+
+	test('a second device without LoginLock does not join the first dorm session', async () => {
+		const headers = {
+			...(await bearer('441')),
+			'Content-Type': 'application/x-www-form-urlencoded',
+		}
+		const dorm = async (body?: string) =>
+			(await (
+				await exports.default.fetch(`${ORIGIN}/matchmake/dorm`, {
+					method: 'POST',
+					headers,
+					body,
+				})
+			).json()) as {
+				roomInstance: { roomInstanceId: number; photonRoomId: string }
+			}
+
+		const pc = await dorm('LoginLock=device-pc-only')
+		const laptop = await dorm()
+		expect(laptop.roomInstance.roomInstanceId).not.toBe(pc.roomInstance.roomInstanceId)
+		expect(laptop.roomInstance.photonRoomId).not.toBe(pc.roomInstance.photonRoomId)
 	})
 
 	test('a matchmake echoes the request’s CorrelationId (and mirrors errorCode as result)', async () => {

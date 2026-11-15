@@ -1213,13 +1213,32 @@ function roomForCaller(
 	return presence.roomInstance ?? null
 }
 
-/** Another client is live under a different `LoginLock` on the same account. */
+/**
+ * Another live client session on the same account (PC + laptop, two launchers, etc.).
+ * When true, `playerDormInstance` must mint a separate private instance so two devices
+ * never share one Photon dorm room — that pairing is what hangs load around ~25% and
+ * shows "2 players" in a dorm that should only have this session.
+ */
 function anotherDeviceSessionActive(
 	presence: StoredPresence<RoomInstance> | null | undefined,
 	postedLock: string | undefined
 ): boolean {
-	if (!presence || postedLock === undefined || presence.loginLock === undefined) return false
-	return presence.loginLock !== postedLock
+	if (!presence) return false
+	const sessions = presence.loginSessions ?? {}
+	const liveSessionLocks = Object.entries(sessions)
+		.filter(([, row]) => row?.roomInstance != null)
+		.map(([lock]) => lock)
+	if (postedLock !== undefined) {
+		if (presence.loginLock !== undefined && presence.loginLock !== postedLock) {
+			return true
+		}
+		return liveSessionLocks.some((lock) => lock !== postedLock)
+	}
+	// Client omitted LoginLock: still split if any session was recorded under a lock.
+	if (presence.loginLock !== undefined || liveSessionLocks.length > 0) {
+		return true
+	}
+	return false
 }
 
 /** Primary plus per-`LoginLock` session rows — every live matchmake target. */
@@ -1248,7 +1267,9 @@ function tachyonVoiceShard(
 		if (id == null || id === NO_INSTANCE || id === ORIENTATION_INSTANCE_ID) continue
 		if (id > bestId) bestId = id
 	}
-	if (bestId !== NO_INSTANCE) return { shard: String(bestId), roomInstanceId: bestId }
+	if (bestId !== NO_INSTANCE) {
+		return { shard: `a${accountId}-i${bestId}`, roomInstanceId: bestId }
+	}
 	return { shard: `acc-${accountId}`, roomInstanceId: NO_INSTANCE }
 }
 
@@ -1573,7 +1594,7 @@ async function playerDormInstance(c: Context<App>, accountId: number): Promise<R
 	const f = instanceFieldsFromRoom(room)
 	const gameVersion = await callerGameVersion(c)
 
-	const sessionRoom = postedLock ? roomForCaller(presence, postedLock) : undefined
+	const sessionRoom = roomForCaller(presence, postedLock)
 	if (sessionRoom != null && sessionRoom.roomId === f.roomId) {
 		return sessionRoom
 	}
@@ -1581,8 +1602,20 @@ async function playerDormInstance(c: Context<App>, accountId: number): Promise<R
 	// Reuse this build's dorm instance (private, so getJoinableInstance won't find it),
 	// unless another device is already playing on a different LoginLock — sharing one
 	// Photon dorm id across two clients is what hangs load at ~18–25%.
-	let instance = (await getRoomInstancesByRoom(c.env.DB, f.roomId, gameVersion))[0]
-	if (!instance || anotherDeviceSessionActive(presence, postedLock)) {
+	const instances = await getRoomInstancesByRoom(c.env.DB, f.roomId, gameVersion)
+	const parallelActive = anotherDeviceSessionActive(presence, postedLock)
+	const preferredId =
+		sessionRoom === undefined && presence?.roomInstance?.roomId === f.roomId
+			? presence.roomInstance.roomInstanceId
+			: undefined
+	let instance =
+		!parallelActive && preferredId != null
+			? instances.find((row) => row.roomInstanceId === preferredId)
+			: undefined
+	if (instance === undefined && !parallelActive && instances.length === 1) {
+		instance = instances[0]
+	}
+	if (!instance || parallelActive) {
 		instance = await createRoomInstance(c.env.DB, {
 			ownerAccountId: accountId,
 			roomId: f.roomId,
@@ -1919,7 +1952,7 @@ const app = new Hono<App>()
 		async (c) => {
 			const playerId = Number.parseInt(c.req.query('id') ?? '', 10)
 			if (!Number.isInteger(playerId) || playerId <= 0) {
-				return c.json({ shard: 'default', roomInstanceId: NO_INSTANCE })
+				return c.json({ shard: 'acc-invalid', roomInstanceId: NO_INSTANCE })
 			}
 			const presence = await getPresence<RoomInstance>(c.env.DB, playerId)
 			return c.json(tachyonVoiceShard(playerId, presence))
