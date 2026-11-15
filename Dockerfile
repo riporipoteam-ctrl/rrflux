@@ -18,10 +18,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
   && curl -fsSL -o /usr/local/bin/playit \
     "https://github.com/playit-cloud/playit-agent/releases/download/${PLAYIT_TAG}/${PLAYIT_ASSET}" \
   && chmod +x /usr/local/bin/playit
-WORKDIR /relay
+WORKDIR /app
 COPY relay-cloud/entrypoint.sh relay-cloud/health_server.py ./
 COPY --from=tachyon-build /out/TachyonServer ./TachyonServer
 RUN chmod +x TachyonServer entrypoint.sh
+ENV TACHYON_KEY_DIR=/root/.fluxrec-relay
 EXPOSE 8000
 ENV PORT=8000
 ENTRYPOINT ["./entrypoint.sh"]
