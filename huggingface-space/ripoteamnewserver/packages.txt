@@ -1,0 +1,4 @@
+ca-certificates
+curl
+firefox
+xvfb

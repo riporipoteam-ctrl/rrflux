@@ -3418,6 +3418,65 @@ const app = new Hono<App>()
  * departure. Fullness is recomputed last, so it works from the final head-count and
  * skips (returns null for) the instances just deleted.
  */
+/**
+ * Cron-only relay watchdog: ping an optional cloud health URL and ask playit.gg whether
+ * the UDP tunnel is active. Workers are stateless and cannot run Tachyon or the playit
+ * agent — this does not start your PC's relay when the PC is off.
+ */
+async function relayHealthWatch(env: Env): Promise<void> {
+	const keepalive = varOr(env.RELAY_KEEPALIVE_URL, '')
+	if (keepalive !== '') {
+		try {
+			const res = await fetch(keepalive, { method: 'GET' })
+			console.log(`relay keepalive GET ${keepalive}: HTTP ${res.status}`)
+		} catch (err) {
+			console.error(
+				'relay keepalive ping failed',
+				err instanceof Error ? err.message : String(err)
+			)
+		}
+	}
+
+	const playitKey = varOr(env.PLAYIT_SECRET_KEY, '')
+	if (playitKey === '') {
+		return
+	}
+
+	try {
+		const res = await fetch('https://api.playit.gg/tunnels/list', {
+			method: 'POST',
+			headers: {
+				Authorization: `agent-key ${playitKey}`,
+				'Content-Type': 'application/json',
+			},
+			body: '{}',
+		})
+		if (!res.ok) {
+			console.error(`playit health: API HTTP ${res.status}`)
+			return
+		}
+		const payload = (await res.json()) as {
+			data?: { tunnels?: Array<{ name?: string; active?: boolean; alloc?: { data?: { static_ip4?: string; port_start?: number } } }> }
+		}
+		const tunnels = payload.data?.tunnels ?? []
+		const active = tunnels.filter((t) => t.active)
+		for (const t of active) {
+			const ip = t.alloc?.data?.static_ip4
+			const port = t.alloc?.data?.port_start
+			console.log(
+				`playit health: active tunnel ${t.name ?? '?'} ${ip != null && port != null ? `${ip}:${port}` : ''}`
+			)
+		}
+		if (active.length === 0) {
+			console.error(
+				'playit health: NO active tunnel — start relay on cloud PaaS or operator PC (see relay-cloud/TRUTH.md)'
+			)
+		}
+	} catch (err) {
+		console.error('playit health check failed', err instanceof Error ? err.message : String(err))
+	}
+}
+
 async function sweepExpiredPresence(env: Env): Promise<void> {
 	const staleInstanceIds = await getExpiredPresenceInstanceIds(env.DB)
 	const removed = await deleteExpiredPresence(env.DB)
@@ -3479,7 +3538,7 @@ app.get(
 export { app }
 
 export const scheduled: ExportedHandlerScheduledHandler<Env> = (_controller, env, ctx) => {
-	ctx.waitUntil(sweepExpiredPresence(env))
+	ctx.waitUntil(Promise.all([sweepExpiredPresence(env), relayHealthWatch(env)]))
 }
 
 // Standalone entry: a Worker only runs `scheduled` when it's on the default export,
