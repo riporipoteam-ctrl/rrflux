@@ -288,6 +288,25 @@ fn listener_warrants_replace(
     running_is_stale(spawned_hash, disk_hash, mirror_hash)
 }
 
+/// Every play launch syncs first; when that succeeds, always bounce our own
+/// listener so the process matches the post-sync exe on disk (not an older
+/// image left running from a prior session).
+fn play_launch_should_bounce_listener(
+    outcome: SyncOutcome,
+    port_taken: bool,
+    spawned_hash: Option<&str>,
+    disk_hash: Option<&str>,
+    mirror_hash: Option<&str>,
+) -> bool {
+    if !port_taken {
+        return false;
+    }
+    match outcome {
+        SyncOutcome::Failed => listener_warrants_replace(outcome, spawned_hash, disk_hash, mirror_hash),
+        _ => true,
+    }
+}
+
 fn agent_exe(game_dir: &Path) -> PathBuf {
     server_dir(game_dir).join(AGENT_EXE_NAME)
 }
@@ -1102,8 +1121,9 @@ pub(crate) fn ensure_server_ready(game_dir: &Path, presence_base: &str) -> bool 
     if !udp_port_free(SERVER_PORT) {
         let spawned_hash = read_spawned_hash(game_dir);
         let disk_hash = sha256_file(&server_exe(game_dir));
-        let must_replace = listener_warrants_replace(
+        let must_replace = play_launch_should_bounce_listener(
             outcome,
+            true,
             spawned_hash.as_deref(),
             disk_hash.as_deref(),
             mirror_hash.as_deref(),
@@ -1118,28 +1138,12 @@ pub(crate) fn ensure_server_ready(game_dir: &Path, presence_base: &str) -> bool 
         gate_log(
             game_dir,
             &format!(
-                "[tachyon] replace: stopping listener for update (sync={outcome:?} spawned={} disk={} mirror={})",
+                "[tachyon] play-launch refresh: restart listener on post-sync binary (sync={outcome:?} spawned={} disk={} mirror={})",
                 spawned_hash.as_deref().unwrap_or("none"),
                 disk_hash.as_deref().unwrap_or("none"),
                 mirror_hash.as_deref().unwrap_or("none"),
             ),
         );
-        if outcome == SyncOutcome::Failed {
-            // The sync learned nothing new (client build failure,
-            // early IO error, failed download): leave the stale
-            // listener serving rather than restarting it onto a
-            // binary state this launch could not verify. The next
-            // launch retries with a completed sync.
-            gate_log(
-                game_dir,
-                "[tachyon] takeover: the sync failed, so the stale listener is left running this launch",
-            );
-            gate_log(
-                game_dir,
-                "[tachyon] readiness gate: server already listening on udp/7777",
-            );
-            return true;
-        }
         let pidfile_pid = read_server_pid(game_dir);
         let image_name = pidfile_pid.and_then(process_image_name);
         let primary =
@@ -2221,6 +2225,32 @@ mod tests {
         // Day/month/year boundaries roll over cleanly.
         assert_eq!(format_utc_from_unix(86_399), "1970-01-01T23:59:59Z");
         assert_eq!(format_utc_from_unix(86_400), "1970-01-02T00:00:00Z");
+    }
+
+    #[test]
+    fn play_launch_bounces_listener_after_successful_sync() {
+        let current = "9947d9ffd222d4eb10d180f947277dd3a3af3e46be31c8a29cf96823251cbde0";
+        assert!(play_launch_should_bounce_listener(
+            SyncOutcome::Unchanged,
+            true,
+            Some(current),
+            Some(current),
+            Some(current),
+        ));
+        assert!(!play_launch_should_bounce_listener(
+            SyncOutcome::Unchanged,
+            false,
+            Some(current),
+            Some(current),
+            Some(current),
+        ));
+        assert!(!play_launch_should_bounce_listener(
+            SyncOutcome::Failed,
+            true,
+            Some(current),
+            Some(current),
+            Some(current),
+        ));
     }
 
     #[test]
