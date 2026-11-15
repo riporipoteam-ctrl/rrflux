@@ -777,7 +777,7 @@ async fn restore_missing_file(
     progress: &crate::progress::Progress,
 ) -> Result<(), String> {
     let url = format!(
-        "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/{}",
+        "https://huggingface.co/datasets/riponoob/rrflux-game/resolve/main/{}",
         relative_path
     );
     let dest = dir.join(relative_path);

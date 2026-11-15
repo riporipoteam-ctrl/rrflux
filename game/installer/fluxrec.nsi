@@ -19,7 +19,7 @@
   !define OUTFILE "FluxRec-Setup.exe"
 !endif
 !ifndef MANIFEST_URL
-  !define MANIFEST_URL "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/manifest.json"
+  !define MANIFEST_URL "https://huggingface.co/datasets/riponoob/rrflux-game/resolve/main/manifest.json"
 !endif
 
 Name "Flux Rec ${VERSION}"
