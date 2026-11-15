@@ -55,7 +55,7 @@ internal static class PresenceShard
                 int roomInstanceId = FetchLegacyRoomInstanceIdAsync(id).GetAwaiter().GetResult();
                 if (roomInstanceId != 0)
                 {
-                    string legacy = $"a{id}-i{roomInstanceId}";
+                    string legacy = $"i{roomInstanceId}";
                     log($"[presence] shard legacy '{legacy}' for account {id}");
                     return legacy;
                 }

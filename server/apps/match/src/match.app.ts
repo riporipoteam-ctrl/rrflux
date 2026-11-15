@@ -1253,9 +1253,10 @@ function presenceRoomInstances(presence: Presence | null | undefined): RoomInsta
 }
 
 /**
- * Voice/roster shard for the shared public Tachyon host. Concurrent players must not
- * share the legacy `default` namespace during dorm loads. Active instance ids (including
- * each parallel device's dorm) share one shard per id; otherwise fall back to per-account.
+ * Voice/roster shard for the shared public Tachyon host. Players in the same
+ * `roomInstanceId` must land in the same relay namespace so dorm invites and public
+ * rooms see each other. While loading (no instance yet), isolate per account so two
+ * half-loaded sessions do not cross-talk on the legacy `default` port.
  */
 function tachyonVoiceShard(
 	accountId: number,
@@ -1268,7 +1269,7 @@ function tachyonVoiceShard(
 		if (id > bestId) bestId = id
 	}
 	if (bestId !== NO_INSTANCE) {
-		return { shard: `a${accountId}-i${bestId}`, roomInstanceId: bestId }
+		return { shard: `i${bestId}`, roomInstanceId: bestId }
 	}
 	return { shard: `acc-${accountId}`, roomInstanceId: NO_INSTANCE }
 }
@@ -1937,7 +1938,7 @@ const app = new Hono<App>()
 			tags: ['Presence'],
 			summary: 'Tachyon voice/roster shard for a player',
 			description:
-				'JSON `{ shard, roomInstanceId }` for the shared UDP host. Picks the highest active instance id across parallel LoginLock sessions; loading players get `acc-{accountId}`.',
+				'JSON `{ shard, roomInstanceId }` for the shared UDP host. Same `roomInstanceId` → same `i{roomInstanceId}` shard; loading with no instance → `acc-{accountId}`.',
 			parameters: [
 				{
 					name: 'id',

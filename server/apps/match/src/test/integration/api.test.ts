@@ -443,7 +443,7 @@ describe('public endpoints', () => {
 		const shardRes = await exports.default.fetch(shardUrl(4243))
 		expect(shardRes.status).toBe(200)
 		expect(await shardRes.json()).toEqual({
-			shard: `a4243-i${roomInstance!.roomInstanceId}`,
+			shard: `i${roomInstance!.roomInstanceId}`,
 			roomInstanceId: roomInstance!.roomInstanceId,
 		})
 		const loadShard = await exports.default.fetch(shardUrl(4242))
@@ -1232,6 +1232,16 @@ describe('auth-gated endpoints', () => {
 		expect(a.roomInstance.photonRoomId).toMatch(/^[0-9a-f-]{36}$/)
 		expect(b.roomInstance.photonRoomId).toBe(a.roomInstance.photonRoomId)
 		expect(b.roomInstance.roomInstanceId).toBe(a.roomInstance.roomInstanceId)
+
+		const shard = async (accountId: string) => {
+			const res = await exports.default.fetch(`${ORIGIN}/tachyon/shard?id=${accountId}`)
+			expect(res.status).toBe(200)
+			return res.json() as Promise<{ shard: string; roomInstanceId: number }>
+		}
+		const shardA = await shard('900')
+		const shardB = await shard('901')
+		expect(shardA.shard).toBe(`i${a.roomInstance.roomInstanceId}`)
+		expect(shardB.shard).toBe(shardA.shard)
 
 		// A private matchmake (JoinMode 2) gets its own distinct instance.
 		const priv = await matchmake('902', '2')
