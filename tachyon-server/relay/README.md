@@ -9,7 +9,8 @@ API** — the **Tachyon + playit** pair must run on a machine that stays on.
 | Option | Cost | PC can sleep? |
 |--------|------|----------------|
 | Your gaming PC + playit | $0 | No — relay dies with the PC |
-| **Hugging Face Docker Space `Echoxr/fluxrec-relay`** (recommended) | $0 HF account | **Usually yes** — use GitHub `hf-relay-keepalive` |
+| **Hugging Face Space `Echoxr/fluxrec-relay`** | HF **Pro** (~$9/mo) or org | **Yes** (hosted on HF) |
+| **Self-hosted GitHub runner + `start-relay.ps1`** | $0 | While **PC is on** — see `install-github-runner.md` |
 | Oracle Cloud Always Free VM | $0* (*card often required) | Yes |
 | Home Raspberry Pi / old laptop | ~$0 power | Yes, if *that* box stays on |
 | GitHub `relay-health` workflow | $0 | Monitors only; does **not** host |

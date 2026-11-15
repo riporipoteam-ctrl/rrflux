@@ -15,7 +15,7 @@ except Exception as e:
         api.create_repo(
             repo_id=repo,
             repo_type="space",
-            space_sdk="docker",
+            space_sdk="gradio",
             space_hardware="cpu-basic",
             exist_ok=True,
         )
@@ -43,7 +43,7 @@ for key, value in secrets.items():
     print("space secret", key)
 
 root = Path(__file__).resolve().parents[2] / "huggingface-space" / "fluxrec-relay"
-for name in ("Dockerfile", "README.md", "entrypoint.sh", "health_server.py", "TachyonServer"):
+for name in ("README.md", "app.py", "requirements.txt", "TachyonServer"):
     path = root / name
     if not path.is_file():
         raise SystemExit(f"missing {path}")

@@ -3,7 +3,10 @@ title: Flux Rec Public Relay
 emoji: 🎮
 colorFrom: indigo
 colorTo: blue
-sdk: docker
+sdk: gradio
+sdk_version: "4.44.0"
+app_file: app.py
+python_version: "3.12"
 app_port: 7860
 pinned: true
 license: mit
