@@ -35,6 +35,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: relay-cloud
+          context: .
+          file: relay-cloud/Dockerfile.prebuilt
           push: true
           tags: ghcr.io/riporipoteam-ctrl/fluxrec-relay:latest
