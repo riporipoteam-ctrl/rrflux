@@ -582,6 +582,14 @@ internal static class Program
         session.DissonancePlayerId = _nextDissonanceId++;
         session.AccountId = outcome.AccountId;
         session.InstanceId = PresenceShard.Resolve(outcome.AccountId ?? "?", Log);
+        if (string.Equals(session.InstanceId, "default", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(session.InstanceId))
+        {
+            session.InstanceId = int.TryParse(outcome.AccountId, out int aid) && aid > 0
+                ? $"acc-{aid}"
+                : $"acc-unknown-{session.ClientId}";
+            Log($"[presence] forced per-account instance '{session.InstanceId}' (refused shared default)");
+        }
         session.Versions = req.Versions;
         session.NamedMessageIndex = NgoMessages.FindTypeIndex(req.Versions, "NamedMessage");
         session.TimeSyncIndex = NgoMessages.FindTypeIndex(req.Versions, "TimeSyncMessage");
