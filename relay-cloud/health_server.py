@@ -15,4 +15,7 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
 
 
-HTTPServer(("0.0.0.0", 7860), H).serve_forever()
+import os
+
+port = int(os.environ.get("PORT", "7860"))
+HTTPServer(("0.0.0.0", port), H).serve_forever()

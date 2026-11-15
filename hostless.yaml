@@ -1,0 +1,15 @@
+# Hostless: repo root working directory, Docker relay (Tachyon + playit).
+build:
+  system: docker
+  dockerfile: relay-cloud/Dockerfile
+
+health_check:
+  type: http
+  http_path: /health
+  interval_in_seconds: 30
+
+scaling:
+  min_replicas: 1
+  max_replicas: 1
+
+# Hostless injects PORT (default 8000). health_server.py listens on PORT.
