@@ -21,6 +21,8 @@ Do **not** set `PORT` — Hostless sets it.
 
 9. **Health check path:** `/health` (already in `hostless.yaml`)
 
+Runtime writes keys/logs under **`/root/.fluxrec-relay`** only (Hostless root fs is read-only).
+
 ## After first green deploy
 
 1. Open app logs — confirm playit connected.
