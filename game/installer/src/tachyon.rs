@@ -81,7 +81,7 @@ use std::time::{Duration, Instant};
 /// HF mirror directory holding the server binary and its sha256 sidecar
 /// (same dataset the launcher's other assets sync from).
 const MIRROR_BASE: &str =
-    "https://huggingface.co/datasets/Echoxr/rrflux-game/resolve/main/tachyon-server/";
+    "https://huggingface.co/datasets/riponoob/rrflux-game/resolve/main/tachyon-server/";
 const SERVER_EXE_NAME: &str = "TachyonServer.exe";
 /// Pidfile naming the server process the gate spawned, written next
 /// to the binary. It is the takeover's ownership proof: a later
