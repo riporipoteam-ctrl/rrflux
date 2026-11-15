@@ -55,6 +55,17 @@ internal static class Program
     private static int ServerTick() =>
         (int)((DateTime.UtcNow - _serverStartUtc).TotalSeconds * ServerTickRate);
 
+    /// <summary>
+    /// Cross-account room relays on a shared instance shard (i{'{'}roomInstanceId{'}'}) must not
+    /// run while either peer is still in the loading phase (before RR_JoinRequest). Mixing
+    /// half-loaded dorm state is what stalls around 25%.
+    /// </summary>
+    private static bool RoomPeersMayExchange(VoiceSession a, VoiceSession b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        return a.JoinedPlayerData != null && b.JoinedPlayerData != null;
+    }
+
     private sealed class VoiceSession
     {
         public NetPeer Peer;
@@ -744,11 +755,18 @@ internal static class Program
                 byte[] fwdBody = NgoMessages.BuildRawNamedMessageBody(
                     NgoMessages.NamedRRServerToClientProxied, fwd.ToArray());
                 int proxiedSent = 0;
-                // RRBufferedRoomEvent (22) is a loopback barrier. The
-                // sender must receive its own event, even alone in a dorm.
-                foreach (var other in Sessions.Values.Where(s => s.Approved && s.InstanceId == session.InstanceId &&
-                    (eventByte == 22 || !ReferenceEquals(s, session))).ToList())
+                // RRBufferedRoomEvent (22) is a loopback barrier — sender only, never cross-peer.
+                foreach (var other in Sessions.Values.Where(s => s.Approved && s.InstanceId == session.InstanceId).ToList())
                 {
+                    bool toSelf = ReferenceEquals(other, session);
+                    if (eventByte == 22)
+                    {
+                        if (!toSelf) continue;
+                    }
+                    else if (toSelf || !RoomPeersMayExchange(session, other))
+                    {
+                        continue;
+                    }
                     SendMessage(other, fwdBody);
                     proxiedSent++;
                 }
@@ -813,9 +831,8 @@ internal static class Program
                     return;
                 }
 
-                // Room-load phase changes are buffered event op 22. The
-                // master waits for its own relay on the PROXIED channel;
-                // excluding the sender leaves a one-player dorm at 18%.
+                // Room-load phase changes are buffered event op 22 — loopback only.
+                // Cross-peer op 22 during load is what stalls multi-account dorms ~25%.
                 if (rest.Length > 0 && rest[0] == 22)
                 {
                     var proxied = new List<byte>(4 + rest.Length);
@@ -823,13 +840,8 @@ internal static class Program
                     proxied.AddRange(rest);
                     byte[] body = NgoMessages.BuildRawNamedMessageBody(
                         NgoMessages.NamedRRServerToClientProxied, proxied.ToArray());
-                    int sent = 0;
-                    foreach (var member in Sessions.Values.Where(s => s.Approved && s.InstanceId == session.InstanceId).ToList())
-                    {
-                        SendMessage(member, body);
-                        sent++;
-                    }
-                    Log($"[room] echoed RRBufferedRoomEvent op 22 from account {session.AccountId} to {sent} client(s), including sender");
+                    SendMessage(session, body);
+                    Log($"[room] echoed RRBufferedRoomEvent op 22 from account {session.AccountId} to sender only (load barrier)");
                     return;
                 }
 
@@ -867,6 +879,7 @@ internal static class Program
                 int roomSent = 0;
                 foreach (var other in Sessions.Values.Where(s => s.Approved && s.InstanceId == session.InstanceId && !ReferenceEquals(s, session)).ToList())
                 {
+                    if (!RoomPeersMayExchange(session, other)) continue;
                     SendMessage(other, roomBody);
                     roomSent++;
                 }
