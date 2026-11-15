@@ -1,5 +1,4 @@
-# Same image as relay-cloud/Dockerfile (some hosts expect Dockerfile at repo root).
-FROM ghcr.io/playit-cloud/playit-agent:latest AS playit
+# Same image as relay-cloud/Dockerfile (Hostless hostless.yaml points here).
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS tachyon-build
 WORKDIR /src
 COPY tachyon-server/src/TachyonServer/TachyonServer.csproj tachyon-server/src/TachyonServer/
@@ -12,9 +11,15 @@ RUN dotnet publish -c Release -r linux-x64 --self-contained true \
     -o /out
 
 FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-jammy
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 \
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl python3 gnupg \
+  && curl -fsSL https://playit-cloud.github.io/ppa/key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/playit.gpg \
+  && echo "deb [signed-by=/usr/share/keyrings/playit.gpg] https://playit-cloud.github.io/ppa/data ./" \
+    > /etc/apt/sources.list.d/playit-cloud.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends playit \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=playit /usr/local/bin/playitd /usr/local/bin/playitd
 WORKDIR /relay
 RUN mkdir -p /app/.cache
 COPY relay-cloud/entrypoint.sh relay-cloud/health_server.py ./

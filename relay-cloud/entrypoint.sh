@@ -3,6 +3,10 @@
 set -eu
 APP_ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 
+log() {
+  printf '[fluxrec] %s\n' "$*"
+}
+
 BASE="/tmp/fluxrec"
 STATE="${TACHYON_KEY_DIR:-$BASE/state}"
 PLAYIT_DATA="${PLAYIT_DATA_DIR:-$BASE/playit}"
@@ -16,19 +20,27 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/app/.cache}"
 export TACHYON_KEY_DIR="$STATE"
 export TACHYON_CONSOLE_ONLY="${TACHYON_CONSOLE_ONLY:-1}"
 
+log "boot (PORT=${PORT:-?})"
 mkdir -p "$STATE" "$PLAYIT_DATA" "$CERT_DIR" "$DOTNET_EXTRACT" "${XDG_CACHE_HOME:-/app/.cache}"
 
-[ -n "${TACHYON_SERVER_KEY_B64:-}" ] || { echo "missing TACHYON_SERVER_KEY_B64" >&2; exit 1; }
-[ -n "${PLAYIT_SECRET_KEY:-}" ] || { echo "missing PLAYIT_SECRET_KEY" >&2; exit 1; }
+[ -n "${TACHYON_SERVER_KEY_B64:-}" ] || { log "FATAL: missing TACHYON_SERVER_KEY_B64"; exit 1; }
+[ -n "${PLAYIT_SECRET_KEY:-}" ] || { log "FATAL: missing PLAYIT_SECRET_KEY"; exit 1; }
 
 echo "$TACHYON_SERVER_KEY_B64" | base64 -d > "$STATE/server-key.xml"
 secret=$(printf '%s' "$PLAYIT_SECRET_KEY" | tr -d '\r\n' ' ')
-[ -n "$secret" ] || { echo "PLAYIT_SECRET_KEY is empty" >&2; exit 1; }
+[ -n "$secret" ] || { log "FATAL: PLAYIT_SECRET_KEY is empty"; exit 1; }
 
 export TACHYON_PRESENCE_BASE="${TACHYON_PRESENCE_BASE:-https://match.ripo-ripoteam.workers.dev}"
 
-python3 "$APP_ROOT/health_server.py" &
-"$APP_ROOT/TachyonServer" --key-dir "$STATE" &
+PLAYITD=$(command -v playitd 2>/dev/null || true)
+[ -n "$PLAYITD" ] || { log "FATAL: playitd not in PATH"; exit 1; }
+log "playitd=$PLAYITD"
 
-# playit agent (foreground): official Docker image uses playitd, not `playit run`.
-exec /usr/local/bin/playitd --secret="$secret" --platform-docker --cert-dir="$CERT_DIR"
+log "starting HTTP health on 0.0.0.0:${PORT:-8000}"
+python3 "$APP_ROOT/health_server.py" &
+
+log "starting Tachyon (key-dir=$STATE)"
+"$APP_ROOT/TachyonServer" --key-dir "$STATE" 2>&1 &
+
+log "starting playit agent"
+exec "$PLAYITD" --secret="$secret" --platform-docker --cert-dir="$CERT_DIR" 2>&1
