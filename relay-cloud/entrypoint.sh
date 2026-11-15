@@ -11,4 +11,4 @@ mkdir -p /root/.config/playit_gg && cp playit.toml /root/.config/playit_gg/playi
 export TACHYON_PRESENCE_BASE="${TACHYON_PRESENCE_BASE:-https://match.ripo-ripoteam.workers.dev}"
 python3 health_server.py &
 ./TachyonServer --log-path /relay/server.log &
-exec /usr/local/bin/playitd
+exec /usr/local/bin/playit run
