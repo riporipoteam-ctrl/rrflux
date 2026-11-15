@@ -1,13 +1,9 @@
-"""
-Ripo Team Server on Hugging Face — Linux Gradio Space (like ripobot-desktop).
-
-Gradio stays on 7860; Tachyon + playit run as background processes in the same container.
-"""
+"""Flux Rec cloud relay — Gradio + optional ZeroGPU decorator."""
 from __future__ import annotations
 
 import base64
-import json
 import os
+import stat
 import subprocess
 import time
 import urllib.request
@@ -15,102 +11,90 @@ from pathlib import Path
 
 import gradio as gr
 
+try:
+    import spaces
+
+    _HAS_SPACES = True
+except ImportError:
+    spaces = None
+    _HAS_SPACES = False
+
 ROOT = Path(__file__).resolve().parent
 PLAYIT_URL = (
-    "https://github.com/playit-cloud/playit-agent/releases/download/v2.0.0-r1/"
-    "playitd-linux-x86_64"
+    "https://github.com/playit-cloud/playit-agent/releases/download/v2.0.2/"
+    "playit-cli-linux-amd64"
 )
 
 
-def ensure_playit() -> Path:
-    dest = ROOT / "playitd"
+def tachyon_url() -> str:
+    custom = os.environ.get("TACHYON_DATASET_URL", "").strip()
+    if custom:
+        return custom
+    ds = os.environ.get("TACHYON_DATASET", "riponoob/fluxrec-tachyon-linux")
+    return f"https://huggingface.co/datasets/{ds}/resolve/main/TachyonServer"
+
+
+def _download(url: str, dest: Path) -> None:
     if dest.is_file():
-        return dest
-    urllib.request.urlretrieve(PLAYIT_URL, dest)
-    dest.chmod(0o755)
-    return dest
+        return
+    urllib.request.urlretrieve(url, dest)
+    dest.chmod(dest.stat().st_mode | stat.S_IEXEC)
 
 
-def linux_tools_note() -> str:
-    lines: list[str] = []
-    for cmd in (("firefox", "--version"), ("curl", "--version")):
-        try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=False)
-            if out.returncode == 0:
-                lines.append(out.stdout.splitlines()[0] if out.stdout else " ".join(cmd))
-        except Exception:
-            pass
-    return "\n".join(lines) if lines else "(system packages still installing or unavailable)"
-
-
-def start_relay() -> str:
+def boot() -> str:
     key_b64 = os.environ.get("TACHYON_SERVER_KEY_B64", "")
-    playit_key = os.environ.get("PLAYIT_SECRET_KEY", "")
+    playit_key = os.environ.get("PLAYIT_SECRET_KEY", "").strip()
     if not key_b64 or not playit_key:
-        return (
-            "Secrets missing — in Space Settings add PLAYIT_SECRET_KEY and "
-            "TACHYON_SERVER_KEY_B64 (deploy script can push them)."
-        )
-    (ROOT / "server-key.xml").write_bytes(base64.b64decode(key_b64))
-    playit_key = playit_key.strip()
-    (ROOT / "playit.toml").write_text(f'secret_key = "{playit_key}"\n', encoding="utf-8")
-    cfg = Path.home() / ".config" / "playit_gg"
-    cfg.mkdir(parents=True, exist_ok=True)
-    (cfg / "playit.toml").write_text((ROOT / "playit.toml").read_text(encoding="utf-8"), encoding="utf-8")
+        return "missing secrets"
+
+    state = ROOT / "state"
+    state.mkdir(exist_ok=True)
+    (state / "server-key.xml").write_bytes(base64.b64decode(key_b64))
 
     env = os.environ.copy()
     env["TACHYON_PRESENCE_BASE"] = os.environ.get(
         "TACHYON_PRESENCE_BASE", "https://match.ripo-ripoteam.workers.dev"
     )
-    tachyon = ROOT / "TachyonServer"
-    if not tachyon.is_file():
-        return f"Missing {tachyon} — run deploy with --build"
+    env["TACHYON_CONSOLE_ONLY"] = "1"
+    env["DOTNET_BUNDLE_EXTRACT_BASE_DIR"] = str(state / "dotnet-extract")
 
+    _download(tachyon_url(), ROOT / "TachyonServer")
+    _download(PLAYIT_URL, ROOT / "playit")
     subprocess.Popen(
-        [str(tachyon), "--log-path", str(ROOT / "server.log")],
-        cwd=ROOT,
+        [str(ROOT / "TachyonServer"), "--key-dir", str(state)],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    subprocess.Popen([str(ensure_playit())], cwd=ROOT)
-    return "Relay starting (Tachyon + playit) on this Linux Space."
-
-
-_status = start_relay()
-time.sleep(2)
-
-
-def poll_playit() -> str:
-    key = os.environ.get("PLAYIT_SECRET_KEY", "").strip()
-    if not key:
-        return "no playit key"
-    try:
-        req = urllib.request.Request(
-            "https://api.playit.gg/tunnels/list",
-            data=b"{}",
-            method="POST",
-            headers={
-                "Authorization": f"agent-key {key}",
-                "Content-Type": "application/json",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode())
-        active = [t for t in data.get("data", {}).get("tunnels", []) if t.get("active")]
-        return json.dumps(active, indent=2) if active else "no active tunnel yet"
-    except Exception as err:
-        return f"playit API: {err}"
-
-
-def panel() -> str:
-    return (
-        f"{_status}\n\n"
-        f"Linux tools:\n{linux_tools_note()}\n\n"
-        f"UTC: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())}\n\n"
-        f"Tunnels:\n{poll_playit()}"
+    subprocess.Popen(
+        [str(ROOT / "playit"), "--secret", playit_key, "--platform-docker"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
+    return "cloud relay started"
 
 
-demo = gr.Interface(fn=panel, inputs=None, outputs="text", title="Ripo Team Server — Flux Rec relay")
+def _status_text() -> str:
+    return f"{MSG} @ {time.strftime('%H:%M:%S', time.gmtime())}"
+
+
+if _HAS_SPACES:
+
+    @spaces.GPU(duration=300)
+    def status_gpu() -> str:
+        return _status_text()
+
+    _poll = status_gpu
+else:
+    _poll = _status_text
+
+MSG = boot()
+time.sleep(1)
+
+with gr.Blocks(title="Flux Rec relay") as demo:
+    gr.Markdown("**Flux Rec relay** — keeps this Space awake; Tachyon + playit run in the background.")
+    st = gr.Textbox(value=MSG, label="status")
+    demo.load(_poll, outputs=st)
+
 demo.launch(server_name="0.0.0.0", server_port=7860)

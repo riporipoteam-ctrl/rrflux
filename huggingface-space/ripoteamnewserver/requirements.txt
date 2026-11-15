@@ -1,1 +1,2 @@
-gradio>=4.0.0
+gradio==6.32.0
+spaces>=0.30.0

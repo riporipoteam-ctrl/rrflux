@@ -9,32 +9,24 @@ API** — the **Tachyon + playit** pair must run on a machine that stays on.
 | Option | Cost | PC can sleep? |
 |--------|------|----------------|
 | Your gaming PC + playit | $0 | No — relay dies with the PC |
-| **Hugging Face Space `Echoxr/ripoteamnewserver` (Gradio Linux)** | Same as your **ripobot-desktop** pattern | **Yes** — `packages.txt` + Tachyon + playit in the Space |
+| **Hugging Face Space `riponoob/fluxrec-relay` (ZeroGPU Gradio)** | Free tier on a **dedicated HF account** | **Yes** — Tachyon on dataset + playit in the Space |
 | **Self-hosted GitHub runner + `start-relay.ps1`** | $0 | While **PC is on** — see `install-github-runner.md` |
 | Oracle Cloud Always Free VM | $0* (*card often required) | Yes |
 | Home Raspberry Pi / old laptop | ~$0 power | Yes, if *that* box stays on |
 | GitHub `relay-health` workflow | $0 | Monitors only; does **not** host |
 
-### Fully automated HF path (you already have Echoxr)
+### Cloud relay (live)
 
-1. Repo secrets (CI sets most of this once from your PC):
+- **Space:** https://huggingface.co/spaces/riponoob/fluxrec-relay  
+- **Keepalive / ping:** https://riponoob-fluxrec-relay.hf.space/  
+- **Tachyon dataset:** `riponoob/fluxrec-tachyon-linux`  
+- **Deploy:** `python tachyon-server/relay/deploy_hf_upload.py --build` with  
+  `HF_SPACE=riponoob/fluxrec-relay`, `TACHYON_DATASET=riponoob/fluxrec-tachyon-linux`, `HF_TOKEN` (write).  
+  New accounts: use **ZeroGPU** hardware (`HF_SPACE_HARDWARE=zero-a10g`); `app.py` includes `@spaces.GPU`.
 
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File tachyon-server\relay\publish-github-secrets.ps1
-   ```
+**Stop playit on your gaming PC** while the Space is running (one agent per secret).
 
-   Needs `HF_TOKEN` (write) and `PLAYIT_SECRET_KEY` in GitHub already.
-
-2. Push workflows to `main` (or add them in GitHub UI).
-
-3. Run **Actions → Deploy HF relay (24/7)** once.
-
-4. **Stop playit on your gaming PC** so only the Space agent holds the tunnel.
-
-5. `hf-relay-keepalive` pings the Space every 8 minutes so free `cpu-basic` stays awake.
-
-Space URL: https://huggingface.co/spaces/Echoxr/ripoteamnewserver  
-Dataset (game files): https://huggingface.co/datasets/Echoxr/rrflux-game
+GitHub variable **`RELAY_KEEPALIVE_URL`** should point at the Space URL above.
 
 Players worldwide still use **Workers** + **`RECFLARE_TACHYON_HOST_PORT`**; only **one**
 machine must keep playit connected to the same tunnel.
