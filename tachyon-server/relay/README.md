@@ -9,7 +9,7 @@ API** — the **Tachyon + playit** pair must run on a machine that stays on.
 | Option | Cost | PC can sleep? |
 |--------|------|----------------|
 | Your gaming PC + playit | $0 | No — relay dies with the PC |
-| **Hugging Face Space `Echoxr/fluxrec-relay`** | HF **Pro** (~$9/mo) or org | **Yes** (hosted on HF) |
+| **Hugging Face Space `Echoxr/ripoteamnewserver` (Gradio Linux)** | Same as your **ripobot-desktop** pattern | **Yes** — `packages.txt` + Tachyon + playit in the Space |
 | **Self-hosted GitHub runner + `start-relay.ps1`** | $0 | While **PC is on** — see `install-github-runner.md` |
 | Oracle Cloud Always Free VM | $0* (*card often required) | Yes |
 | Home Raspberry Pi / old laptop | ~$0 power | Yes, if *that* box stays on |
@@ -33,7 +33,8 @@ API** — the **Tachyon + playit** pair must run on a machine that stays on.
 
 5. `hf-relay-keepalive` pings the Space every 8 minutes so free `cpu-basic` stays awake.
 
-Space URL: https://huggingface.co/spaces/Echoxr/fluxrec-relay
+Space URL: https://huggingface.co/spaces/Echoxr/ripoteamnewserver  
+Dataset (game files): https://huggingface.co/datasets/Echoxr/rrflux-game
 
 Players worldwide still use **Workers** + **`RECFLARE_TACHYON_HOST_PORT`**; only **one**
 machine must keep playit connected to the same tunnel.

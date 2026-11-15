@@ -69,6 +69,13 @@ export type Env = SharedHonoEnv & {
 	 */
 	TACHYON_HOST_PORT?: string
 	/**
+	 * playit agent secret (64 hex). Used only by the cron heartbeat to ask playit.gg
+	 * whether any tunnel is active — it does NOT run the agent (Workers cannot).
+	 */
+	PLAYIT_SECRET_KEY?: string
+	/** Optional HTTP URL to GET every cron tick (wake a cloud relay Space / PaaS health port). */
+	RELAY_KEEPALIVE_URL?: string
+	/**
 	 * The Photon region every session is pinned to — both the region named in the connection
 	 * info and the one stamped on every room instance, which must agree. Optional; unlike the
 	 * app ids this DOES default (`us`, us-east1 in the QoS list), because an instance stamped
