@@ -10,6 +10,7 @@ service-account*.json
 config/secrets.*
 .env
 .env.*
+.hf-token
 
 # Build outputs
 dist/
