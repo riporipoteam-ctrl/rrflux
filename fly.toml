@@ -1,0 +1,33 @@
+# Flux Rec UDP relay (Tachyon + playit). Prefer this over Hostless.
+# See relay-cloud/FLY.md
+
+app = 'fluxrec-relay'
+primary_region = 'ams'
+
+[build]
+  dockerfile = 'relay-cloud/Dockerfile.prebuilt'
+
+[env]
+  PORT = '8000'
+  TACHYON_CONSOLE_ONLY = '1'
+  TACHYON_PRESENCE_BASE = 'https://match.ripo-ripoteam.workers.dev'
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [[http_service.checks]]
+    grace_period = '90s'
+    interval = '30s'
+    method = 'GET'
+    path = '/health'
+    timeout = '10s'
+
+[[vm]]
+  memory = '1024mb'
+  cpu_kind = 'shared'
+  cpus = 1

@@ -1,3 +1,4 @@
+# DEPRECATED — use fly.toml + relay-cloud/FLY.md (Hostless deploys kept crashing).
 # Hostless: repo root working directory, Docker relay (Tachyon + playit).
 build:
   system: docker

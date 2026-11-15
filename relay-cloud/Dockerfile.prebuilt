@@ -1,0 +1,20 @@
+# Fast deploy: Tachyon built on your PC or in GitHub Actions (no SDK in this image).
+FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-jammy
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl python3 gnupg \
+  && curl -fsSL https://playit-cloud.github.io/ppa/key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/playit.gpg \
+  && echo "deb [signed-by=/usr/share/keyrings/playit.gpg] https://playit-cloud.github.io/ppa/data ./" \
+    > /etc/apt/sources.list.d/playit-cloud.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends playit \
+  && rm -rf /var/lib/apt/lists/* \
+  && command -v playitd
+WORKDIR /relay
+RUN mkdir -p /app/.cache
+COPY relay-cloud/entrypoint.sh relay-cloud/health_server.py ./
+COPY relay-cloud/publish/TachyonServer ./TachyonServer
+RUN chmod +x TachyonServer entrypoint.sh
+ENV TACHYON_KEY_DIR=/tmp/fluxrec/state
+EXPOSE 8000
+ENTRYPOINT ["./entrypoint.sh"]

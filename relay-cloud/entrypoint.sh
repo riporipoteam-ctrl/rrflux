@@ -27,7 +27,7 @@ mkdir -p "$STATE" "$PLAYIT_DATA" "$CERT_DIR" "$DOTNET_EXTRACT" "${XDG_CACHE_HOME
 [ -n "${PLAYIT_SECRET_KEY:-}" ] || { log "FATAL: missing PLAYIT_SECRET_KEY"; exit 1; }
 
 echo "$TACHYON_SERVER_KEY_B64" | base64 -d > "$STATE/server-key.xml"
-secret=$(printf '%s' "$PLAYIT_SECRET_KEY" | tr -d '\r\n' ' ')
+secret=$(printf '%s' "$PLAYIT_SECRET_KEY" | tr -d '\r\n')
 [ -n "$secret" ] || { log "FATAL: PLAYIT_SECRET_KEY is empty"; exit 1; }
 
 export TACHYON_PRESENCE_BASE="${TACHYON_PRESENCE_BASE:-https://match.ripo-ripoteam.workers.dev}"
