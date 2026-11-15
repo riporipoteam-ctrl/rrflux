@@ -56,14 +56,28 @@ internal static class Program
         (int)((DateTime.UtcNow - _serverStartUtc).TotalSeconds * ServerTickRate);
 
     /// <summary>
-    /// Cross-account room relays on a shared instance shard (i{'{'}roomInstanceId{'}'}) must not
-    /// run while either peer is still in the loading phase (before RR_JoinRequest). Mixing
-    /// half-loaded dorm state is what stalls around 25%.
+    /// Cross-account peers must finish scene load before room relays mix state (dorm ~25% stall).
+    /// RR_JoinRequest fires early in load — JoinedPlayerData alone is not enough.
     /// </summary>
     private static bool RoomPeersMayExchange(VoiceSession a, VoiceSession b)
     {
         if (ReferenceEquals(a, b)) return true;
-        return a.JoinedPlayerData != null && b.JoinedPlayerData != null;
+        if (a.JoinedPlayerData == null || b.JoinedPlayerData == null) return false;
+        if (!string.Equals(a.AccountId, b.AccountId, StringComparison.Ordinal))
+            return a.RoomSceneReady && b.RoomSceneReady;
+        return true;
+    }
+
+    /// <summary>Proxied room events observed at end-of-load in live captures (solo dorm).</summary>
+    private static bool TryMarkRoomSceneReady(VoiceSession session, byte eventByte, int payloadBytes)
+    {
+        if (session.RoomSceneReady) return true;
+        bool ready = eventByte is 23 or 29 or 31;
+        if (!ready && payloadBytes > 512) ready = eventByte is not 22;
+        if (!ready) return false;
+        session.RoomSceneReady = true;
+        Log($"[room] scene-ready account={session.AccountId} client={session.ClientId} (event={eventByte} payload={payloadBytes}B)");
+        return true;
     }
 
     private sealed class VoiceSession
@@ -79,6 +93,8 @@ internal static class Program
         public string AccountId;
         public string InstanceId;
         public byte[] JoinedPlayerData;
+        /// <summary>True after this client finished loading the room scene (not just RR_Join).</summary>
+        public bool RoomSceneReady;
         public List<MessageVersionData> Versions;
         public int NamedMessageIndex = -1;
         public int TimeSyncIndex = -1;
@@ -754,6 +770,7 @@ internal static class Program
                 fwd.AddRange(rest);
                 byte[] fwdBody = NgoMessages.BuildRawNamedMessageBody(
                     NgoMessages.NamedRRServerToClientProxied, fwd.ToArray());
+                TryMarkRoomSceneReady(session, eventByte, rest.Length);
                 int proxiedSent = 0;
                 // RRBufferedRoomEvent (22) is a loopback barrier — sender only, never cross-peer.
                 foreach (var other in Sessions.Values.Where(s => s.Approved && s.InstanceId == session.InstanceId).ToList())
@@ -802,6 +819,7 @@ internal static class Program
                     player.AddRange(BitConverter.GetBytes(int.TryParse(session.AccountId, out int accountId) ? accountId : 0));
                     player.AddRange(rest.Skip(platformOffset));
                     session.JoinedPlayerData = player.ToArray();
+                    session.RoomSceneReady = false;
 
                     var members = Sessions.Values
                         .Where(s => s.Approved && s.InstanceId == session.InstanceId && s.JoinedPlayerData != null)
@@ -874,6 +892,8 @@ internal static class Program
                 // no header is measured for kinds 5/6, so none is added —
                 // to every OTHER approved session in the instance, as the
                 // server->client kind 6, raw named framing (no i32 wrapper).
+                if (rest.Length > 0)
+                    TryMarkRoomSceneReady(session, rest[0], rest.Length);
                 byte[] roomBody = NgoMessages.BuildRawNamedMessageBody(
                     NgoMessages.NamedRRServerToClient, rest);
                 int roomSent = 0;
