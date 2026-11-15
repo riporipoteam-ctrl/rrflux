@@ -143,7 +143,8 @@ internal static class Program
         _defaultInstance = GetArg(args, "--instance") ?? Environment.GetEnvironmentVariable("TACHYON_INSTANCE") ?? "default";
         int autoStopSeconds = GetEnvInt("TACHYON_AUTOSTOP_SECONDS") ?? 0;
 
-        InitFileLog(keyDir);
+        if (Environment.GetEnvironmentVariable("TACHYON_CONSOLE_ONLY") != "1")
+            InitFileLog(keyDir);
 
         // v6 startup self-identification: build version + sha256 of the
         // OWN running executable (Environment.ProcessPath). Up to v5 the

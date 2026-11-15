@@ -1,4 +1,5 @@
-# Flux Rec UDP relay — build context is repo root (Hostless: set root directory or use root Dockerfile).
+# Same image as relay-cloud/Dockerfile (some hosts expect Dockerfile at repo root).
+FROM ghcr.io/playit-cloud/playit-agent:latest AS playit
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS tachyon-build
 WORKDIR /src
 COPY tachyon-server/src/TachyonServer/TachyonServer.csproj tachyon-server/src/TachyonServer/
@@ -11,18 +12,15 @@ RUN dotnet publish -c Release -r linux-x64 --self-contained true \
     -o /out
 
 FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-jammy
-ARG PLAYIT_TAG=v2.0.2
-ARG PLAYIT_ASSET=playit-linux-amd64
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl python3 \
-  && rm -rf /var/lib/apt/lists/* \
-  && curl -fsSL -o /usr/local/bin/playit \
-    "https://github.com/playit-cloud/playit-agent/releases/download/${PLAYIT_TAG}/${PLAYIT_ASSET}" \
-  && chmod +x /usr/local/bin/playit
-WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 \
+  && rm -rf /var/lib/apt/lists/*
+COPY --from=playit /usr/local/bin/playitd /usr/local/bin/playitd
+WORKDIR /relay
+RUN mkdir -p /app/.cache
 COPY relay-cloud/entrypoint.sh relay-cloud/health_server.py ./
 COPY --from=tachyon-build /out/TachyonServer ./TachyonServer
 RUN chmod +x TachyonServer entrypoint.sh
-ENV TACHYON_KEY_DIR=/root/.fluxrec-relay
+ENV TACHYON_KEY_DIR=/tmp/fluxrec/state
 EXPOSE 8000
 ENV PORT=8000
 ENTRYPOINT ["./entrypoint.sh"]
