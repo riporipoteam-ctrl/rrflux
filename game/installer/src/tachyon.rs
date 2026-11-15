@@ -224,6 +224,12 @@ fn write_spawned_hash(game_dir: &Path, hash: &str) {
     let _ = std::fs::write(server_spawned_hash_file(game_dir), hash);
 }
 
+/// Drop the spawned-hash record after we stop the server so the next
+/// spawn always re-records which binary is listening.
+fn clear_spawned_hash_record(game_dir: &Path) {
+    let _ = std::fs::remove_file(server_spawned_hash_file(game_dir));
+}
+
 /// Is the server listening on udp/7777 running a stale binary?
 /// Pure, so the whole matrix is unit-tested.
 ///
@@ -260,6 +266,26 @@ fn running_is_stale(
         }
     }
     false
+}
+
+/// Whether a listener on udp/7777 must be stopped before play — the mirror
+/// shipped a new binary, the on-disk exe disagrees with the mirror, or the
+/// running process was started from something other than what is on disk now.
+fn listener_warrants_replace(
+    outcome: SyncOutcome,
+    spawned_hash: Option<&str>,
+    disk_hash: Option<&str>,
+    mirror_hash: Option<&str>,
+) -> bool {
+    if sync_warrants_takeover(outcome) {
+        return true;
+    }
+    if let (Some(disk), Some(mirror)) = (disk_hash, mirror_hash) {
+        if disk != mirror {
+            return true;
+        }
+    }
+    running_is_stale(spawned_hash, disk_hash, mirror_hash)
 }
 
 fn agent_exe(game_dir: &Path) -> PathBuf {
@@ -1076,12 +1102,13 @@ pub(crate) fn ensure_server_ready(game_dir: &Path, presence_base: &str) -> bool 
     if !udp_port_free(SERVER_PORT) {
         let spawned_hash = read_spawned_hash(game_dir);
         let disk_hash = sha256_file(&server_exe(game_dir));
-        let stale = running_is_stale(
+        let must_replace = listener_warrants_replace(
+            outcome,
             spawned_hash.as_deref(),
             disk_hash.as_deref(),
             mirror_hash.as_deref(),
         );
-        if !stale {
+        if !must_replace {
             gate_log(
                 game_dir,
                 "[tachyon] readiness gate: server already listening on udp/7777",
@@ -1091,7 +1118,7 @@ pub(crate) fn ensure_server_ready(game_dir: &Path, presence_base: &str) -> bool 
         gate_log(
             game_dir,
             &format!(
-                "[tachyon] staleness: the running server is STALE (spawned={} disk={} mirror={}) — checking ownership proofs",
+                "[tachyon] replace: stopping listener for update (sync={outcome:?} spawned={} disk={} mirror={})",
                 spawned_hash.as_deref().unwrap_or("none"),
                 disk_hash.as_deref().unwrap_or("none"),
                 mirror_hash.as_deref().unwrap_or("none"),
@@ -1155,9 +1182,10 @@ pub(crate) fn ensure_server_ready(game_dir: &Path, presence_base: &str) -> bool 
                         gate_log(
                             game_dir,
                             &format!(
-                                "[tachyon] takeover: stale server pid {pid} stopped — udp/7777 is free"
+                                "[tachyon] takeover: server pid {pid} stopped — udp/7777 is free"
                             ),
                         );
+                        clear_spawned_hash_record(game_dir);
                         if outcome == SyncOutcome::UpdatePending && install_pending_server(game_dir)
                         {
                             gate_log(
@@ -2193,6 +2221,36 @@ mod tests {
         // Day/month/year boundaries roll over cleanly.
         assert_eq!(format_utc_from_unix(86_399), "1970-01-01T23:59:59Z");
         assert_eq!(format_utc_from_unix(86_400), "1970-01-02T00:00:00Z");
+    }
+
+    #[test]
+    fn listener_warrants_replace_on_mirror_update() {
+        let current = "9947d9ffd222d4eb10d180f947277dd3a3af3e46be31c8a29cf96823251cbde0";
+        let older = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(listener_warrants_replace(
+            SyncOutcome::Updated,
+            Some(current),
+            Some(current),
+            Some(current),
+        ));
+        assert!(listener_warrants_replace(
+            SyncOutcome::UpdatePending,
+            Some(current),
+            Some(current),
+            Some(current),
+        ));
+        assert!(!listener_warrants_replace(
+            SyncOutcome::Unchanged,
+            Some(current),
+            Some(current),
+            Some(current),
+        ));
+        assert!(listener_warrants_replace(
+            SyncOutcome::Unchanged,
+            Some(current),
+            Some(older),
+            Some(current),
+        ));
     }
 
     #[test]
