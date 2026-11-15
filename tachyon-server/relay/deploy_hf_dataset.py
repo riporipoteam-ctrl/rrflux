@@ -4,7 +4,7 @@ from pathlib import Path
 
 from huggingface_hub import HfApi
 
-REPO = "Echoxr/rrflux-game"
+REPO = "riponoob/rrflux-game"
 api = HfApi(token=os.environ["HF_TOKEN"])
 root = Path(__file__).resolve().parents[2] / "huggingface-space" / "fluxrec-relay"
 binary = root / "TachyonServer"
