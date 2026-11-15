@@ -1,7 +1,7 @@
 # Hostless: repo root working directory, Docker relay (Tachyon + playit).
 build:
   system: docker
-  dockerfile: relay-cloud/Dockerfile
+  dockerfile: Dockerfile
 
 health_check:
   type: http
